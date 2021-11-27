@@ -1,0 +1,66 @@
+---
+permalink: "/2010/11/16/How-Optimized-Are-High-Traffic-Websites/"
+layout: post
+date: 2010-11-16
+title: "How Optimized Are High Traffic Websites?"
+tags: [performance]
+---
+<p>I'm a performance junkie. I like to build things and use things that are fast. Performance is a feature, and if you don't
+stay on top of it, it'll cripple you. I've blogged about <a href="http://www.google.com/search?hl=en&q=site%3acodebetter.com+%22ASP.NET+Performance+-+Part%22&aq=f&aqi=&aql=&oq=&gs_rfai=">steps web developers can take</a> to speed up their websites, and have an <a href="http://github.com/karlseguin/Metsys.WebOp">open source library to help ASP.NET developers</a> build faster websites. Today, I decided to look at a few popular websites and see how well they are doing.</p>
+
+<p>First, the setup. I ran this with YSlow 2.1.0, I disabled the CDN, DOM and Empty SRC rules (I thought the DOM might have an impact when comparing, say Google to Facebook, but it was negligible). The results, from fastest to slowest are:</p>
+
+{% highlight text %}
+Yahoo!
+http://search.yahoo.com/search?p=momford+and+sons
+Score: 98
+
+Bing
+http://www.bing.com/search?q=momford+and+sons
+Score: 98
+
+Google
+http://www.google.com/search?q=momford+and+sons
+Score: 96
+
+Baidu
+http://www.baidu.com/s?wd=momford+and+sons
+Score: 96
+
+Twitter
+http://twitter.com/nytimeskrugman
+Score: 83 (old)
+Score: 94 (new)
+
+Facebook
+http://www.facebook.com/mumfordandsons
+Score: 91
+
+Amazon
+http://www.amazon.co.uk/Sigh-No-More-Limited-Digipack/dp/B002L5R75S
+Score: 86
+
+YouTube
+http://www.youtube.com/user/MumfordandSons
+Score: 84
+
+Wikipedia
+http://en.wikipedia.org/wiki/Mumford_%26_Sons
+Score: 77
+{% endhighlight %}
+
+<p>The sites that don't have great scores largely don't combine their css/js/sprites and/or don't set expiration headers on all their assets.</p>
+
+<p>I have mixed feelings about YouTube's score. On the one hand, all of these are probably irrelevant when 99% of your bandwidth and load time are videos. On the other hand, its YouTube/Google, you expect them to cross their Ts and dot their Is.</p>
+
+<p>Wikipedia trailing the pack, by a considerable margin, is unfortunate. A site that sees so much traffic, is based on an open source platform, and isn't profitable should be doing much better.</p>
+
+<p>Amazon's score is shocking. There's an oft cited study by amazon that showed their sales dropped 1% for every 100ms slower their page was. Maybe things have changed in 3 years and we should all stop quoting it. Amazon's homepage scores a more respectable 93, but even here there's obvious room for improvement.</p>
+
+<p>Twitter has obviously worked hard to improve its load time.</p>
+
+<p>Facebook didn't have the best score, but that 1 page loaded insanely fast. Obviously that tells us that YSlow's score isn't the end all and be all, but I still think its a useful tool.</p>
+
+<p>Bing was another surprise. I've been critical of Microsoft's developer-focused sites, yet had no doubt that bing would do much better. I didn't think it would be the best (or even above google). This, again, makes me believe that there's a disconnect between devdiv and developers (remember, Rails has a lot of this stuff built-in).</p>
+
+<p>My latest project, <a href="http://www.mogade.com/">mogade.com</a> scores 98. This is done through aggressive (yet simple) nginx tuning, and a small ruby library (very similiar to <a href="http://github.com/karlseguin/Metsys.WebOp">Metsys.WebOp for .NET</a>) which leverages the YUI jar and <a href="https://gist.github.com/643625">this little CSS cache busting class</a>.</p>

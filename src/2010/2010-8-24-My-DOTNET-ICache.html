@@ -1,0 +1,484 @@
+---
+permalink: "/2010/8/24/My-DOTNET-ICache/"
+layout: post
+date: 2010-08-24
+title: "My .NET ICache"
+---
+<p><h3>UPDATE: I posted the code on github: <a href="http://github.com/karlseguin/Metsys.Caching">http://github.com/karlseguin/Metsys.Caching</a></h3></p>
+
+<p>In my last post on <a href="http://openmymind.net/2010/8/19/Design-Through-Testability-An-Example">design and testability</a>, some questions were raised about the <code>ICache</code> interface I was using. This is going to be a code heavy post - largely meant to be copy and pasted. If you don't understand it, don't use it.</p>
+
+<p>The API is meant to remove some of the repetition that comes from using a cache, by making use of my very good friends <code>Action<T></code> and <code>Func<T></code>.</p>
+
+<p>First, the interface:</p>
+
+{% highlight clike %}
+using System;
+using System.Web.Caching;
+
+public interface ICache
+{
+    T Get<T>(string key, params object[] keyArgs);
+
+    T Fetch<T>(string key, Func<T> callIfGetReturnsNull, params object[] keyArgs);
+    T Fetch<T>(string key, Func<T> callIfGetReturnsNull, DateTime absoluteExpiration, params object[] keyArgs);
+    T Fetch<T>(string key, Func<T> callIfGetReturnsNull, TimeSpan slidingExpiration, params object[] keyArgs);
+    T Fetch<T>(string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, params object[] keyArgs);
+    T Fetch<T>(string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs);
+    T Fetch<T>(string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs);
+
+    T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, params object[] keyArgs);
+    T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, DateTime absoluteExpiration, params object[] keyArgs);
+    T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, TimeSpan slidingExpiration, params object[] keyArgs);
+    T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, params object[] keyArgs);
+    T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs);
+    T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs);
+
+
+    void Insert(string key, object data, params object[] keyArgs);
+    void Insert(string key, object data, DateTime absoluteExpiration, params object[] keyArgs);
+    void Insert(string key, object data, TimeSpan slidingExpiration, params object[] keyArgs);
+    void Insert(string key, object data, CacheDependency dependencies, params object[] keyArgs);
+    void Insert(string key, object data, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs);
+    void Insert(string key, object data, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs);
+
+    void Remove(string key, params object[] keyArgs);
+
+    void RemoveAll();
+
+    int Count();        
+}
+{% endhighlight %}
+
+<p>Next we beef up the <code>System.Web.Caching.Cache</code> class with extension methods so that it can do what we need it to:</p>
+
+{% highlight clike %}
+using System;
+using System.Web.Caching;
+
+public static class CacheExtensions
+{
+    public static T Get<T>(this Cache cache, string key, params object[] keyArgs)
+    {
+        return (T)cache.Get(BuildKey(key, keyArgs));
+    }
+
+    public static T Fetch<T>(this Cache cache, string key, Func<T> callIfGetReturnsNull, params object[] keyArgs)
+    {
+        return cache.Fetch(key, null, callIfGetReturnsNull, keyArgs);
+    }
+    public static T Fetch<T>(this Cache cache, string key, Func<T> callIfGetReturnsNull, DateTime absoluteExpiration, params object[] keyArgs)
+    {
+        return cache.Fetch(key, null, callIfGetReturnsNull, absoluteExpiration, keyArgs);
+    }
+    public static T Fetch<T>(this Cache cache, string key, Func<T> callIfGetReturnsNull, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        return cache.Fetch(key, null, callIfGetReturnsNull, slidingExpiration, keyArgs);
+    }
+    public static T Fetch<T>(this Cache cache, string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, params object[] keyArgs)
+    {
+        return cache.Fetch(key, null, callIfGetReturnsNull, dependencies, keyArgs);
+    }
+    public static T Fetch<T>(this Cache cache, string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        return cache.Fetch(key, null, callIfGetReturnsNull, dependencies, absoluteExpiration, slidingExpiration, keyArgs);
+    }
+    public static T Fetch<T>(this Cache cache, string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs)
+    {
+        return cache.Fetch(key, null, callIfGetReturnsNull, dependencies, absoluteExpiration, slidingExpiration, priority, onRemoveCallback, keyArgs);
+    }
+
+    public static T Fetch<T>(this Cache cache, string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, params object[] keyArgs)
+    {
+        var item = (T)cache.Get(BuildKey(key, keyArgs));
+        if (item == null)
+        {
+            item = callIfGetReturnsNull();
+            cache.Insert(key, item, keyArgs);
+        }
+        else if (callIfGetReturnsValue != null)
+        {
+            callIfGetReturnsValue(item);
+        }
+        return item;
+    }
+    public static T Fetch<T>(this Cache cache, string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, DateTime absoluteExpiration, params object[] keyArgs)
+    {
+        var item = cache.Get(BuildKey(key, keyArgs));
+        if (item == null)
+        {
+            item = callIfGetReturnsNull();
+            cache.Insert(key, item, absoluteExpiration, keyArgs);
+            return (T)item;
+        }
+        if (callIfGetReturnsValue != null)
+        {
+            callIfGetReturnsValue((T)item);
+        }
+        return (T)item;
+    }
+    public static T Fetch<T>(this Cache cache, string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        var item = (T)cache.Get(BuildKey(key, keyArgs));
+        if (item == null)
+        {
+            item = callIfGetReturnsNull();
+            cache.Insert(key, item, slidingExpiration, keyArgs);
+        }
+        else if (callIfGetReturnsValue != null)
+        {
+            callIfGetReturnsValue(item);
+        }
+        return item;
+    }
+    public static T Fetch<T>(this Cache cache, string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, params object[] keyArgs)
+    {
+        var item = (T)cache.Get(BuildKey(key, keyArgs));
+        if (item == null)
+        {
+            item = callIfGetReturnsNull();
+            cache.Insert(key, item, dependencies, keyArgs);
+        }
+        else if (callIfGetReturnsValue != null)
+        {
+            callIfGetReturnsValue(item);
+        }
+        return item;
+    }
+    public static T Fetch<T>(this Cache cache, string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        var item = (T)cache.Get(BuildKey(key, keyArgs));
+        if (item == null)
+        {
+            item = callIfGetReturnsNull();
+            cache.Insert(key, item, dependencies, absoluteExpiration, slidingExpiration, keyArgs);
+        }
+        else if (callIfGetReturnsValue != null)
+        {
+            callIfGetReturnsValue(item);
+        }
+        return item;
+    }
+    public static T Fetch<T>(this Cache cache, string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs)
+    {
+        var item = (T)cache.Get(BuildKey(key, keyArgs));
+        if (item == null)
+        {
+            item = callIfGetReturnsNull();
+            cache.Insert(key, item, dependencies, absoluteExpiration, slidingExpiration, priority, onRemoveCallback, keyArgs);
+        }
+        else if (callIfGetReturnsValue != null)
+        {
+            callIfGetReturnsValue(item);
+        }
+        return item;
+    }
+
+    public static void Insert(this Cache cache, string key, object data, params object[] keyArgs)
+    {
+        if (data != null)
+        {
+            cache.Insert(BuildKey(key, keyArgs), data);
+        }
+    }
+    public static void Insert(this Cache cache, string key, object data, DateTime absoluteExpiration, params object[] keyArgs)
+    {
+        if (data != null)
+        {
+            cache.Insert(BuildKey(key, keyArgs), data, null, absoluteExpiration, Cache.NoSlidingExpiration);
+        }
+    }
+    public static void Insert(this Cache cache, string key, object data, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        if (data != null)
+        {
+            cache.Insert(BuildKey(key, keyArgs), data, null, Cache.NoAbsoluteExpiration, slidingExpiration);
+        }
+    }
+    public static void Insert(this Cache cache, string key, object data, CacheDependency dependencies, params object[] keyArgs)
+    {
+        if (data != null)
+        {
+            cache.Insert(BuildKey(key, keyArgs), data, dependencies);
+        }
+    }
+    public static void Insert(this Cache cache, string key, object data, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        if (data != null)
+        {
+            cache.Insert(BuildKey(key, keyArgs), data, dependencies, absoluteExpiration, slidingExpiration);
+        }
+    }
+    public static void Insert(this Cache cache, string key, object data, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs)
+    {
+        if (data != null)
+        {
+            cache.Insert(BuildKey(key, keyArgs), data, dependencies, absoluteExpiration, slidingExpiration, priority, onRemoveCallback);
+        }
+    }
+
+    public static void Remove(this Cache cache, string key, params object[] keyArgs)
+    {
+        cache.Remove(BuildKey(key, keyArgs));
+    }
+    public static void RemoveAll(this Cache cache)
+    {
+        var enumerator = cache.GetEnumerator();
+        while (enumerator.MoveNext())
+        {
+            cache.Remove((string)enumerator.Key);
+        }
+    }
+
+    private static string BuildKey(string key, params object[] keyArgs)
+    {
+        return (keyArgs == null || keyArgs.Length == 0) ? key : string.Format(key, keyArgs);
+    }
+}
+{% endhighlight %}
+
+<p>Now we wrap the actual <code>System.Web.Caching.Cache</code> class in a wrapper which implements our interface:</p>
+
+{% highlight clike %}
+using System;
+using System.Web;
+using System.Web.Caching;
+
+public sealed class InMemoryCache : ICache
+{
+    public T Get<T>(string key, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Get<T>(key, keyArgs);
+    }
+
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsNull, keyArgs);
+    }
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, DateTime absoluteExpiration, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsNull, absoluteExpiration, keyArgs);
+    }
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsNull, slidingExpiration, keyArgs);
+    }
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsNull, dependencies, keyArgs);
+    }
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsNull, dependencies, absoluteExpiration, slidingExpiration, keyArgs);
+    }
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsNull, dependencies, absoluteExpiration, slidingExpiration, priority, onRemoveCallback, keyArgs);
+    }
+
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsValue, callIfGetReturnsNull, keyArgs);
+    }
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, DateTime absoluteExpiration, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsValue, callIfGetReturnsNull, absoluteExpiration, keyArgs);
+    }
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsValue, callIfGetReturnsNull, slidingExpiration, keyArgs);
+    }
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsValue, callIfGetReturnsNull, dependencies, keyArgs);
+    }
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsValue, callIfGetReturnsNull, dependencies, absoluteExpiration, slidingExpiration, keyArgs);
+    }
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs)
+    {
+        return HttpRuntime.Cache.Fetch(key, callIfGetReturnsValue, callIfGetReturnsNull, dependencies, absoluteExpiration, slidingExpiration, priority, onRemoveCallback, keyArgs);
+    }
+
+    public void Insert(string key, object data, params object[] keyArgs)
+    {
+        HttpRuntime.Cache.Insert(key, data, keyArgs);
+    }
+    public void Insert(string key, object data, DateTime absoluteExpiration, params object[] keyArgs)
+    {
+        HttpRuntime.Cache.Insert(key, data, absoluteExpiration, keyArgs);
+    }
+    public void Insert(string key, object data, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        HttpRuntime.Cache.Insert(key, data, slidingExpiration, keyArgs);
+    }
+    public void Insert(string key, object data, CacheDependency dependencies, params object[] keyArgs)
+    {
+        HttpRuntime.Cache.Insert(key, data, dependencies, keyArgs);
+    }
+    public void Insert(string key, object data, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        HttpRuntime.Cache.Insert(key, data, dependencies, absoluteExpiration, slidingExpiration, keyArgs);
+    }
+    public void Insert(string key, object data, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs)
+    {
+        HttpRuntime.Cache.Insert(key, data, dependencies, absoluteExpiration, slidingExpiration, priority, onRemoveCallback, keyArgs);
+    }
+
+    public void Remove(string key, params object[] keyArgs)
+    {
+        HttpRuntime.Cache.Remove(key, keyArgs);
+    }
+    public void RemoveAll()
+    {
+        HttpRuntime.Cache.RemoveAll();
+    }
+
+    public int Count()
+    {
+        return HttpRuntime.Cache.Count;
+    }
+}
+{% endhighlight %}
+
+<p>Finally, we need a no-cache solution. This is useful in a number of cases, such as development, and easy testing - when testing, you often don't even need a mock, you just want to circumvent the cache mechanism:</p>
+
+{% highlight clike %}
+using System;
+using System.Web.Caching;
+
+public class NoCache : ICache
+{
+    public T Get<T>(string key, params object[] keyArgs)
+    {
+        return default(T);
+    }
+
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, params object[] keyArgs)
+    {
+        return callIfGetReturnsNull();
+    }
+
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, DateTime absoluteExpiration, params object[] keyArgs)
+    {
+        return callIfGetReturnsNull();
+    }
+
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        return callIfGetReturnsNull();
+    }
+
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, params object[] keyArgs)
+    {
+        return callIfGetReturnsNull();
+    }
+
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        return callIfGetReturnsNull();
+    }
+
+    public T Fetch<T>(string key, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs)
+    {
+        return callIfGetReturnsNull();
+    }
+
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, params object[] keyArgs)
+    {
+        var r = callIfGetReturnsNull();
+        return r == null ? callIfGetReturnsNull() : r;            
+    }
+
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, DateTime absoluteExpiration, params object[] keyArgs)
+    {
+        var r = callIfGetReturnsNull();
+        return r == null ? callIfGetReturnsNull() : r;
+    }
+
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        var r = callIfGetReturnsNull();
+        return r == null ? callIfGetReturnsNull() : r;
+    }
+
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, params object[] keyArgs)
+    {
+        var r = callIfGetReturnsNull();
+        return r == null ? callIfGetReturnsNull() : r;
+    }
+
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs)
+    {
+        var r = callIfGetReturnsNull();
+        return r == null ? callIfGetReturnsNull() : r;
+    }
+
+    public T Fetch<T>(string key, Action<T> callIfGetReturnsValue, Func<T> callIfGetReturnsNull, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs)
+    {
+        var r = callIfGetReturnsNull();
+        return r == null ? callIfGetReturnsNull() : r;
+    }
+
+    public void Insert(string key, object data, params object[] keyArgs){}
+    public void Insert(string key, object data, DateTime absoluteExpiration, params object[] keyArgs) { }
+    public void Insert(string key, object data, TimeSpan slidingExpiration, params object[] keyArgs) { }
+    public void Insert(string key, object data, CacheDependency dependencies, params object[] keyArgs) { }
+    public void Insert(string key, object data, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, params object[] keyArgs) { }
+    public void Insert(string key, object data, CacheDependency dependencies, DateTime absoluteExpiration, TimeSpan slidingExpiration, CacheItemPriority priority, CacheItemRemovedCallback onRemoveCallback, params object[] keyArgs) { }
+
+    public void Remove(string key, params object[] keyArgs) { }
+
+    public void RemoveAll() { }
+
+    public int Count()
+    {
+        return 0;
+    }
+}
+{% endhighlight %}
+
+<p>That's it. Here's how you might use it in a test. You can greatly clean up the constraints by encapsulating that in a custom constraint - but I don't want to make it too easy for you.</p>
+
+{% highlight clike %}
+[Fact]
+  public void GetsTheUserFromTheCache()
+  {
+      var user = new User();
+      var userId = new Guid("11c2deee-0794-4874-a581-4a75aa85eca5");
+      var cache = Dynamic<ICache>();
+      var repository = new UserRepository(cache);
+       
+
+      cache.Expect(c => c.Fetch(Arg<string>.Is.Equal("user_{0}"), Arg<Func<User>>.Is.Anything, Arg<DateTime>.Is.Anything, Arg<object[]>.Matches(o => (Guid)o[0] == userId && o.Length == 1)))
+          .Return(user);
+      ReplayAll();
+
+      Assert.Same(user, repository.GetUser(userId));
+      cache.VerifyAllExpectations();
+  }
+
+  [Fact]
+  public void GetsTheUserFromTheStoreIfNotInTheCache()
+  {
+      var userId = new Guid("11c2deee-0794-4874-a581-4a75aa85eca5");
+      var user = new User{Id = userId, Name = "Goku", IsPowerLevelOver900 = true};
+      var repository = new UserRepository(new NoCache());
+      SomeTestDbHelper.Insert(user);            
+      Assert.Equal(user.Id, repository.GetUser(userId).Id);            
+  }
+
+  [Fact]
+  public void StoresTheUserInTheCache()
+  {
+      var userId = new Guid("11c2deee-0794-4874-a581-4a75aa85eca5");
+      var user = new User{Id = userId, Name = "Vegeta", IsPowerLevelOver900 = false};
+      var cache = new InMemoryCache();
+      var repository = new UserRepository(cache);
+      
+      SomeTestDbHelper.Insert(user);            
+      var expected = repository.GetUser(userId);
+      Assert.Same(expected, cache.Get<User>("user_{0}", user.Id));
+  }
+{% endhighlight %}

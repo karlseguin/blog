@@ -1,0 +1,176 @@
+---
+permalink: "/2011/3/23/Stop-Using-Mocks/"
+layout: post
+date: 2011-03-23
+title: "Stop Using Mocks"
+tags: [testing]
+---
+<p><strong>After you are done reading this, you might want to head over to Darren Cauthon's blog to <a href="https://docs.google.com/file/d/0B_zwMmx15DL8NDdVT2gxLWk1OHc/edit?pli=1">read his rebuttal</a></strong></p>
+<p>I want to share something that'll challenge a pretty fundamental belief you have on unit testing. Knowing this, I ask that you hear me out, because your first thought will be that I'm an idiot. Mocks make for poor tests.</p>
+
+<p>I SAID HEAR ME OUT! Please notice that I said <strong>mocks</strong>, which is very different than <strong>stubs</strong>. Part of the problem is that people don't really understand the different between mocks and stubs. Part of the reason for that is that the implementation of a mock and a stub is virtually the same. What differs is how you use them.</p>
+
+<p>I consider this a serious problem, almost a plague, facing the .NET community. This is something I didn't get until fairly recently, so I played my part is spreading the poison. The fact though is that if you aren't testing properly, you might as well not test at all. So let's fix the problem.</p>
+
+<p>Let's look at a method that we want to test:</p>
+
+{% highlight clike %}
+//i don't want to hear how this isn't a repository
+public class UserRepository
+{
+  private readonly IDataStore _store;
+  private readonly IEncryption _encryption;
+
+  public UserRepository(IDataStore store, IEncryption encryption)
+  {
+    _store = store;
+    _encryption = encryption;
+  }
+
+  public User FindByCredentials(string username, string password)
+  {
+    var user = _store.FindOneByNamedQuery("FindUserByUserName", username);
+    if (user == null) { return null; }
+    return _encryption.CheckPassword(user.Password, password) ? user : null;
+  }
+}
+{% endhighlight %}
+
+<p>Our method relies on two dependencies: <code>_store</code> and <code>_encryption</code>. These are injected, as interfaces, into our constructor.</p>
+
+<p>When I look at this method, I see 5 distinct things that I want to test:
+<ol>
+  <li>Null is returned when the user doesn't exist</li>
+  <li>Null is returned when the password don't match</li>
+  <li>The user is returned when the passwords do match</li>
+  <li>The user gets loaded from the data store</li>
+  <li>The passwords are compared by the encryption code</li>
+</ol>
+</p>
+
+<p>A cardinal sin of unit testing is doing too much. If you are tempted to verify more than one of these within the same test, don't. You see, there are two things that you care about when writing unit test. First, and most obviously, that you are testing something worthwhile/correctly. Secondly, and equally as important, is that you are creating a <strong>robust test</strong>. Between having no tests, and tests that fail when you make unrelated changes to your code, I'd rather have no tests.</p>
+
+<p>I want to reiterate the last point. If we swap the order of the parameters of <code>_store.FindOneByNamedQuery</code>, only 1 test should fail. None of the other tests have <strong>any</strong> reason to care about that change. If that isn't the case, then your tests are not focused, they are doing too much, and they are brittle. They'll be harder to read, harder to maintain and harder to change. </p>
+
+<p>I want to show you the wrong way to test our 2nd expectation, which is that null should be returned when the passwords don't match:</p>
+
+{% highlight clike %}
+[Test]
+public void ReturnsNullIfThePasswordsDontMatch()
+{
+  var store = A.Fake<IDataStore>();
+  var encryption = A.Fake<IEncryption>();
+
+  A.CallTo(() => store.FindOneByNamedQuery("FindUserByUserName", "leto")).Returns(new User{Password = "Ghanima"});
+  A.CallTo(() => encryption.CheckPassword("Ghanima", "Duncan")).Returns(false);
+  var user = new UserRepository(store, encryption).FindByCredentials("leto", "Duncan");
+
+  Assert.IsNull(user)
+}{% endhighlight %}
+
+<p>This is how I'd expect most developers to write their test. If you really think about it, this test is doing much more than it's advertising. Want proof? Change the name of our named query, or of the data store method, or the order the parameters are passed to either dependencies, and this test will break. But, I ask you, what do any of those have to do with returning null if the supplied password doesn't match the password of the returned user?</p>
+
+<p>Let's write this same test using stubs. Before though, I should point out that I'm using <a href="http://code.google.com/p/fakeiteasy/">FakeItEasy</a> as my mock/stub library (free/oss). While a lot of .NET mocking libraries support both mocks and stubs, FakeItEasy has the best stubbing implementation and the most intuitive api. With FakeItEasy, there's only 1 type of object (a fake) and what determines whether it's a stub or a mock is how you use it.</p>
+
+<p>So, the proper way to test this:</p>
+
+{% highlight clike %}
+[Test]
+public void ReturnsNullIfThePasswordsDontMatch()
+{
+  var store = A.Fake<IDataStore>();
+  var encryption = A.Fake<IEncryption>();
+
+  A.CallTo(() => encryption.CheckPassword(null, null)).WithAnyArguments().Returns(false);
+  var user = new UserRepository(store, encryption).FindByCredentials(null, null);
+
+  Assert.IsNull(user)
+}
+{% endhighlight %}
+
+<p>Suddenly you can change a lot about of the non-relevant details in <code>FindByCredentials</code> before breaking this test. Change the method name, parameters, add more parameters, remove some, none of it matter. This test doesn't even care about the input parameters. Another test will, but that'll be the focus on that other test. Again, it isn't that failing tests are bad, its that failing tests that break because of some irrelevant change are bad.</p>
+
+<p>You might be wondering about a seemingly missing setup to for <code>FindOneByNamedQuery</code>. FakeItEasy automatically provides canned (or stubbed) responses (in this case, a dynamically created user) to any query we make against the interface. We really don't need anymore. By leaving out the call, our code is as decoupled as it can be</p>
+
+<p>Remember that this is only 1 of our 5 tests we plan on writing. On its own, it doesn't give us the coverage that we need. That should be true of almost any unit test though. Let's look at a complementary test, which is that the passwords are compared by the encryption code:</p>
+
+{% highlight clike %}
+[Test]
+public void VerifiesTheSubmittedPasswordAgainstTheStoredOne()
+{
+  var store = A.Fake<IDataStore>();
+  var encryption = A.Fake<IEncryption>();
+  var user = new User{Password = "Ghanima"};
+
+  Any.CallTo(store).WithReturnType<User>().Returns(user);
+  new UserRepository(store, encryption).FindByCredentials(null, "Duncan");
+
+  A.CallTo(() => encryption.CheckPassword("Ghanima", "Duncan"))).MustHaveHappened();
+}
+{% endhighlight %}
+
+<p>When you combine these two tests, you have focused and robust code. Here we specify a setup to return a specific user (with a controllable password) - but do so by being as generic in our specification as our framework lets us. Let's look at all 5 tests now (2 of these we've already seen):</p>
+
+{% highlight clike %}
+[Test]
+public void ReturnsNullWhenTheUserDoesntExist()
+{
+  var store = A.Fake<IDataStore>();
+
+  A.CallTo(() => store.FindOneByNamedQuery(null, null)).WithAnyArguments().Returns(null);
+  var user = new UserRepository(store, null).FindByCredentials(null, null);
+  Assert.IsNull(user)
+}
+
+[Test]
+public void ReturnsNullIfThePasswordsDontMatch()
+{
+  var store = A.Fake<IDataStore>();
+  var encryption = A.Fake<IEncryption>();
+
+  A.CallTo(() => encryption.CheckPassword(null, null)).WithAnyArguments().Returns(false);
+  var user = new UserRepository(store, encryption).FindByCredentials(null, null);
+
+  Assert.IsNull(user)
+}
+
+[Test]
+public void ReturnTheValidUser()
+{
+  var store = A.Fake<IDataStore>();
+  var encryption = A.Fake<IEncryption>();
+  var expected = new User();
+
+  Any.CallTo(store).WithReturnType<User>().Returns(expected);
+  Any.CallTo(encryption).WithReturnType<bool>().Returns(true);
+  var user = new UserRepository(store, encryption).FindByCredentials(null, null);
+
+  Assert.AreSame(expected, user);
+}
+
+[Test]
+public void LoadsTheUserFromTheDataStore()
+{
+  var store = A.Fake<IDataStore>();
+  new UserRepository(store, A.Fake<IEncryption>()).FindByCredentials("Leto", null);
+
+  A.CallTo(() => store.FindOneByNamedQuery("FindUserByUserName", "Leto")).MustHaveHappened();
+}
+
+[Test]
+public void VerifiesTheSubmittedPasswordAgainstTheStoredOne()
+{
+  var store = A.Fake<IDataStore>();
+  var encryption = A.Fake<IEncryption>();
+  var user = new User{Password = "Ghanima"};
+
+  Any.CallTo(store).WithReturnType<User>().Returns(user);
+  new UserRepository(store, encryption).FindByCredentials(null, "Duncan");
+
+  A.CallTo(() => encryption.CheckPassword("Ghanima", "Duncan"))).MustHaveHappened();
+}
+{% endhighlight %}
+
+<p>Ultimately, this comes down to numbers. If we mixed the last two interaction tests with the first three behavioral tests you might think it would be less maintenance because we have less tests. However, if you do that, changing how your code interacts (which is irrelevant to most of the behavior of your code) would break 3 tests rather than 1.</p>
+
+<p>In conclusion, by their very nature, mocks are all about testing interactions. This doesn't decrease coupling like most think. There's actually no way to create greater coupling than to us a mock - because you have to specify every possible detail of each interaction. When you want to test interactions, which you should test, use a mock. But I guarantee you that the ratio of behavioral tests to interaction tests will be in the neighborhood of 5 to 1. Which means mocks should be in the minority. When you can, you should always favor either stubs or the real implementation. I haven't talked about using the real implementation (again, something the .NET community avoids like a plague), but hopefully you can see how even that isn't as crazy an idea as you've been told.</p>

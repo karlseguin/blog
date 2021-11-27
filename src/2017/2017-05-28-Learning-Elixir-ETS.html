@@ -1,0 +1,126 @@
+---
+layout: post
+date: 2017-05-28
+title: "Learning Elixir's ETS - Part 1"
+description: "An introduction to Elixir's ETS module for efficient concurrent programming"
+tags: [concurrency, elixir]
+---
+
+<p>This post, the first of two, continues our previous discussion about concurrent programming in Elixir. From what we've looked at so far though, calling things "concurrent" is a stretch. Elixir favors safety above everything else. To this end, one Elixir process owns a piece of data. Through various OTP modules like GenServer, other processes can ask the owning process to manipulate this data. At best, we can let other processes ask for a copy of the data. Put differently, everything we've looked at so far is specifically structured to serialize concurrency.</p>
+
+<p>This gives some insight into why they're called processes: their memory is isolated. If we wanted to scale an Agent or GenServer, we'd need to apply the same techniques that we'd use to scale an OS process. Namely, we could duplicate the data per process or shard the data and distribute a request to the owning shard. There are a lot of cases where the disadvantages to these approach are unpalatable.</p>
+
+<p>Where does that leave us? There's another OTP module, called Erlang Term Storage (ETS), that we can use. On the downside, there isn't an idiomatic Elixir layer around like we have with GenServer. So, using it is a bit ugly (but the API is simple enough, so no big deal). On the plus side, the performance characteristics (and I believe even the implementation) is going to feel a lot more natural to people used to threads.</p>
+
+<p>What do I mean by this last point? Well, as far as I can tell, ETS is implemented using a read-write mutex against an actual hashtable. Maps in elixir are trees and have Log(N) performance for typical operations. ETS, backed by a hashtable, not only provides O(1) access, but also allows concurrent reads and writes from multiple processes.</p>
+
+<p>Let's first look at a very basic example, then go over it in more details:</p>
+
+{% highlight elixir %}:ets.new(:players, [:set, :public, :named_table])
+:ets.insert(:players, {1, "leto", 28.1, 29.5})
+:ets.insert(:players, {2, "paul", 28.1, 44.4})
+:ets.lookup(:players, 2)
+out => [{2, "paul", 28.1, 44.4}]{% endhighlight %}
+
+<p>First, we create the table and give it the name <code>:players</code>. Because we passed the <code>:named_table</code> option, we can use this name, from any process, to access the table. Without the <code>:named_table</code> option, we'd have to use the id returned by <code>:ets.new</code>.</p>
+
+<p>Now, if the process that creates the table dies, the table disappears. For this reason, you'll want to create a GenServer to create the table and add it to our supervisor tree as a <code>worker</code>:</p>
+
+{% highlight elixir %}defmodule Game.Board do
+  use GenServer
+
+  def start_link(_) do
+    {:ok, pid} = GenServer.start_link(__MODULE__, [])
+    GenServer.call(pid, :create_tables)
+    {:ok, pid}
+  end
+
+  # It's important that we do this in a GenServer.call,
+  # since start_link executes under the calling processes,
+  # not the GenServer process.
+  def handle_call(:create_tables, _from, _) do
+    :ets.new(:players, [:set, :public, :named_table])
+  end
+end{% endhighlight %}
+
+<p>Our GenServer does nothing, so it hopefully won't crash. If it does, the supervisor will restart it, but our <code>players</code> table will be empty (this is also true of using a GenServer or Agent directly). There are more advanced recovery options possible though.</p>
+
+<p>Although our GenServer owns the table, any process can read and write to it directly. This is only true because we passed the <code>public</code> flag. The other two options are <code>protected</code> which allows any process to read, but only the owning process to write, and <code>private</code> which only allows the owning process to read and write. (If you're using <code>private</code> maybe you should just use a GenServer.)</p>
+
+<p>The last option that we passed was <code>set</code>. Other options include <code>sorted_set</code>, <code>bag</code> and <code>duplicate_bag</code>. To understand the difference between these, first know that ETS deals with tuples. By default, the first element of our tuple is the key. This can be changed by passing <code>keypos: index</code> as another option to <code>:ets.new</code>. A <code>set</code> only allows one value with a given key. An <code>ordered_set</code> has the same restriction, but also keeps all your data in order. The order is done by comparing the entire tuple. Therefore, if the key is the first value, and since this is a set and the key must be unique, it would order by the key.</p>
+
+<p>A <code>bag</code> allows multiple values for a given key, as long as those values are unique. If we had a table that gave us the family members of a person, we could use a bag:</p>
+
+{% highlight elixir %}:ets.new(:family, [:bag, :public, :named_table])
+:ets.insert(:family, {"leto", "ghanima"})
+:ets.insert(:family, {"leto", "paul"})
+:ets.insert(:family, {"leto", "chani"})
+:ets.lookup(:family, "leto")
+out => [{"leto", "ghanima"}, {"leto", "paul"}, {"leto", "chani"}]{% endhighlight %}
+
+<p>Inserting <code>{"leto", "chani"}</code> again would not cause a duplicate entry. That is, unless we use the last type: <code>duplicate_bag</code>. It's worth noting that insert into a <code>duplicate_code</code> bag is faster than inserting into a <code>bag</code> so, if your application already makes it impossible to get duplicates, you might want to use a <code>duplicate_bag</code>.</p>
+
+<p>So far, we've only looked at <code>insert</code> and <code>lookup</code>. You probably already guessed that there's a <code>delete</code> function. There's also a number of other things we can do, such as checking for membership, inserting only if new, iterating (though read the documentation carefully for the steps needed to do this safely, or just use the <code>foldl</code> function). There are specialized function for dealing with counters and a convenient <code>update_element</code> function that lets you update a specific element of the tuple without having to first select it.</p>
+
+<p>However, what I want to talk about are the various <code>match</code> function which largely all take a "pattern". They are useful but a little confusing. The important thing to remember is that they work just like all the other matching in Elixir. So, if your tuple has 5 element, you need to provide a 5 element tuple (though some of  those elements can be wildcards). And, if you add a 6th element, then all your matches will fail because, just like in normal Elixir, {1, 2, 3, 4, 5} does not match {1, 2, 3, 4, 5, 6}.</p>
+
+<p>To match, we use the <code>:_</code> atom as a wildcard. So, if we go back to our original table, which looks like:</p>
+
+{% highlight elixir %}:ets.insert(:players, {1, "leto", 28.1, 29.5})
+:ets.insert(:players, {2, "paul", 28.1, 44.4})
+{% endhighlight %}
+
+<p>Then</p>
+
+{% highlight elixir %}
+# these will match
+:ets.match(:players, {1, :_, :_, :_})
+:ets.match(:players, {:_, "leto", :_, :_})
+:ets.match(:players, {2, "paul", 28.1, 44.4})
+
+# this will match both
+:ets.match(:players, {:_, :_, 28.1, :_})
+
+# these will match nothing
+:ets.match(:players, 1)
+:ets.match(:players, {:_, "leto"})
+:ets.match(:players, {2, "paul", 28.1, 44.4, "spice"}){% endhighlight %}
+
+<p>If you run the above though, you'll see that the "matching" lines all return <code>[[]]</code> and all the non-matching line returns <code>[]</code>. What gives?</p>
+
+<p>First, one simple solution is to use <code>match_object</code> instead, which will return the full tuple. However, if you only want some of the data, you can "select" it by specifying <code>:"$INDEX"</code> where index is the position you want that element returned in. Consider:</p>
+
+{% highlight elixir %}:ets.match(:players, {1, :"$1", :"$2", :_})
+out => [["leto", 32.4]]{% endhighlight %}
+
+<p>If we switch the <code>:"$1"</code> and <code>:"$2"</code>, the order of the returned data will be reversed:</p>
+
+{% highlight elixir %}:ets.match(:players, {1, :"$2", :"$1", :_})
+out => [[32.4, "leto"]]{% endhighlight %}
+
+<p>Note that it doesn't matter what numbers you use. They will be returned in numeric order. We could replace <code>:"$2", :"$1"</code> with <code>:"$4994822", :"$0"</code> and get the same result.</p>
+
+<p>From what I can tell, there's no way to both match and select.  If you need this, use <code>match_object</code>.</p>
+
+<p>If your match includes the key, the query will be fast (but <code>lookup</code> appears quite a bit faster, so use that if you just was the record by id). Otherwise, it'll scan the entire table. <code>match</code> can also take a 3rd integer parameter to <code>limit</code> the number of matched results return (and in such a case, it'll return a <code>continuation</code> that can be passed as the sole parameter to a subsequent <code>match</code> to page through the results). There's also a <code>match_delete</code> function that lets us delete based on a match.</p>
+
+<p>Beyond <code>match</code> there are a number of <code>select</code> function which accepts an even more powerful structure (called a MatchSpec) to query the table. We can use the <code>:ets.fun2ms</code> to convert an elixir function into a match spec. It's really cool. Look:</p>
+
+{% highlight elixir %}
+ms = :ets.fun2ms fn {_, name, x, y} when name == "leto" -> {x, y} end
+out => [
+  {{:_, :"$1", :"$2", :"$3"}, [{:==, :"$1", "leto"}], [{{:"$2", :"$3"}}]}
+]
+
+ets.select(:players, ms)
+out => [{32.4, 29.5}]
+{% endhighlight %}
+
+<p>The above is the same as matching on <code>{:_, "leto", "$1", $2}</code>, but hopefully you can see how much more powerful a MatchSpec is. Of course, this is also going to be a linear scan through the table.</p>
+
+<p>Maybe you're thinking "ETS all-the-things". But, as a generalization, you should favor Agents and GenServers and only switch to ETS after some deliberation.</p>
+
+<div id=pager>
+  <a class=prev></a>
+  <a class=next href=/Learning-Elixir-ETS-Part-2/>part 2</a>
+</div>

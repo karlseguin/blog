@@ -1,0 +1,23 @@
+---
+layout: post
+date: 2013-08-22
+title: "On Sharing Infrastructure"
+description: "I'm convinced that ownership and control are key to quality, does that rule out sharing infrastructure?"
+tags: [devops]
+---
+
+<p>One of the major factors that helped Viki get ahead of its scalability needs was the shift towards ownership of the entire stack. As a consequence of us spearheading this effort, we ended up being responsible for the shared infrastructure pieces; in particular, PostgreSQL, RabbitMQ and a custom reverse proxy that does all the routing and caching across our many services.</p>
+
+<p>Obvious perhaps, but the biggest lesson that I've learned is <strong>Shared Infrastructure Is Hard</strong>.</p>
+
+<p>Consider the seemingly innocent addition of a new subtitle format. From the community team's point of view, this is a small feature that'll help unlock something important: an HTML5 video player. There's no reason not to spend a few hours on this and push it to production. Only problem is that our shared cache is suddenly managing gigs of new data. The result is a higher miss ratio and more load on all the other services.</p>
+
+<p>Ideally, when you share infrastructure, you still want to provide some isolation. In some cases, that's easy. For example, by introducing PgBouncer, we were able to limit the damage caused when one application consumed all available connections (because each user/database pair now has its own isolated pool). But in the case of custom software, like our cache, it really seems like a lot of work for a small team to take on.</p>
+
+<p>The idealist in me thinks that isolation should be unnecessary. Isolation doesn't solve the problem, it just hides it. I'm happy when seemingly unrelated systems affect each other. It not only highlights unexpected dependencies, but it makes it more likely that the root cause will get fixed.</p>
+
+<p>The reality though is that, while I see huge benefits in sharing infrastructure, given a do-over, I'd make each team responsible for their own infrastructure. Need a DB? Get a machine, set it up however you want and take care of your own backups. Beyond making my own life easier I see two huge benefits:</p>
+
+<p>First, there'd obviously be more isolation between systems. Secondly, and more importantly, systems built by teams/individuals which have embraced owning their entire stack have generally performed better. Know why? Because they have greater control and are more accountable. They end up with more knowledgeable and have broadened their perspective.</p>
+
+<p>Even if our team was larger, I'd continue to oppose hiring dedicated devops. At some point I'm sure it doesn't scale, but until then, the ability to own the request from port 80 to 5432 is an opportunity you shouldn't pass up. Both as a developer, because you'll learn so much and become so much better, and as a company, because it'll highlight your stars.</p>

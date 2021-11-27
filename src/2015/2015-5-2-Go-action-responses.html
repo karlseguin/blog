@@ -1,0 +1,148 @@
+---
+layout: post
+date: 2015-05-02
+title: "Go actions responses"
+tags: [golang]
+description: "Creating cleaner HTTP actions / handlers in Go with explicit responses"
+---
+
+<p>Anyone who's written a website or webservice in Go is probably familiar with the <code>http.Handler</code> interface and its <code>ServeHTTP(res http.ResponseWriter, req *http.Request)</code> function. Many of the 3rd party web frameworks expose something similar, often with a custom <code>Request</code> parameter.</p>
+
+<p>Personally, I've never been a fan of having the response passed into actions like that. I understand why the standard library took this approach: some scenarios require the consumer to have access and control over the response. In most cases though, I find it more natural to think of the response as the action's return value.</p>
+
+<p>To achieve this, the first thing I do is create a <code>Response</code> interface and a simple implementation:</p>
+
+{% highlight go %}
+var (
+  NotFound    = Empty(404)
+  ServerError = Empty(500)
+)
+
+type Response interface {
+  WriteTo(out http.ResponseWriter)
+}
+
+type NormalResponse struct {
+  status int
+  body   []byte
+  header http.Header
+}
+
+func (r *NormalResponse) WriteTo(out http.ResponseWriter) {
+  header := out.Header()
+  for k, v := range r.header {
+    header[k] = v
+  }
+  out.WriteHeader(r.status)
+  out.Write(r.body)
+}
+
+func (r *NormalResponse) Cache(ttl string) *NormalResponse {
+  return r.Header("Cache-Control", "public,max-age=" + ttl)
+}
+
+func (r *NormalResponse) Header(key, value string) *NormalResponse {
+  r.header.Set(key, value)
+  return r
+}
+
+// functions to create responses
+
+func Empty(status int) *NormalResponse {
+  return Respond(status, nil)
+}
+
+func Json(status int, body interface{}) *NormalResponse {
+  return Respond(status, body).Header("Content-Type", "application/json")
+}
+
+func Error(message string, err error) *NormalResponse {
+  log.Println(message, err)
+  return ServerError
+}
+
+func Respond(status int, body interface{}) *NormalResponse {
+  var b []byte
+  var err error
+  switch t := body.(type) {
+  case []byte:
+    b = t
+  case string:
+    b = []byte(t)
+  default:
+    if b, err = json.Marshal(body); err != nil {
+      return Error("body json marshal", err)
+    }
+  }
+  return &NormalResponse{
+     body: b,
+     status: status,
+     header: make(http.Header),
+  }
+}
+{% endhighlight %}
+
+<p>I normally end up with a number of <code>Response</code> implementations to handle different types of bodies, such as streaming from an <code>io.Reader</code>, something that needs to be released after we've written it, or even something more tightly related to a database query which is able to return an array of results and paging information.</p>
+
+<p>With this approach, an action's signature looks like:</p>
+
+{% highlight go %}
+func ListUsers(req *http.Request) Response {
+  return NotFound
+}
+{% endhighlight %}
+
+<p>We then create a wrapper function to glue the two worlds together:</p>
+
+{% highlight go %}
+// setup the route:
+http.Handle("/users", wrap(ListUsers))
+
+
+func wrap(action func(req *http.Request) Response) func(http.ResponseWriter, *http.Request) {
+  return func(out http.ResponseWriter, req *http.Request) {
+    res := action(req)
+    if res == nil {
+      res = ServerError
+    }
+    res.WriteTo(out)
+  }
+}
+{% endhighlight %}
+
+<p>Admittedly, it's a small change. I do find that it improves readability and makes the flow much more natural though.</p>
+
+{% highlight go %}
+// let's pretend *http.Request has a Params map
+func ShowUser(out http.ResponseWriter, req *http.Request) {
+  user, err := LoadUser(req.Params["id"])
+  if err != nil {
+    serverError(out, "load user", err)
+    return
+  }
+  if user == nil {
+    notFound(out)
+    return
+  }
+  // yes, could be turned into helper functions like the above
+  // serverError and notFound
+  out.Header().Set("Cache-Control", "public,max-age=60")
+  out.Header().Set("Content-Type", "application/json")
+  out.WriteHeader(200)
+  //todo: serialize
+  out.Write(body)
+}
+
+// VS
+
+func ShowUser(req *http.Request) Response {
+  user, err := LoadUser(req.Params["id"])
+  if err != nil {
+    return Error("load user", err)
+  }
+  if user == nil {
+    return NotFound
+  }
+  return Json(200, user).Cache("60")
+}
+{% endhighlight %}

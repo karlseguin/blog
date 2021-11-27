@@ -1,0 +1,19 @@
+---
+permalink: "/2010/10/7/My-Programming-Sins-2-Manually-Managing-References/"
+layout: post
+date: 2010-10-07
+title: "My Programming Sins - 2. Manually Managing References"
+---
+<p>So you're building a system, simple or complex, and sooner than later you'll need to start thinking about how your objects get loaded from the storage engine. Chances are the solution you pick is to lean heavily on whatever OR mapping framework you're using. Lets say that's Hibernate, not because I want to pick on it, but because if you are doing <em>traditional</em> development (you know, with Java/C# against a RDBMS) that's probably what you ought to be using.
+
+<p>The correct approach is to leverage Hibernate's collection mappings, lazy loading and fetching strategies. Aside from being somewhat complicated to setup the first few times through (more so on the .NET side since MS thoughts its developers needed to get eased into the concept of a Set over a 10 year period), the approach largely works. But to me, it doesn't feel right. First, lazy loading in a statically typed language is a hard nut to crack - and that difficulty <em>will</em> leak over into your app. Secondly, for those of us who feel that performance <em>is</em> a feature, there's often a performance hit to swallow. Finally for those of us who are control freaks, there's the loss of control.</p>
+
+<p>Of course, the right attitude to have is the same attitude you should have whenever you are trying to solve a complex problem: use the generic solution for 90% of the cases where it makes sense, and optimize the other 10% as needed. Since we are speaking of Hibernate, this is one of the many places where it shines.</p>
+
+<p>Its more than worth pointing out that Rail's ActiveRecord <em>does</em> address most of this. Lazy loading is transparent, and gaining explicit control is easy and natural.</p>
+
+<p>I know this'll come as sacrilege, but I generally prefer to store id's and manage fetching related objects more explicitly. This is especially true when performance and scalability is an honest to god concern.</p>
+
+<p>All of this probably explains why I've fallen in love with MongoDB. For the first time, my preference in this matter seems to more or less be an acceptable approach (in fact, I'd say its <strong>the</strong> accepted approach.) More comforting is that MongoDB has first class support for embedded objects (a feature that on its own sells it)...so truly related objects can be joined (so to speak). For the first time and after a couple tries, data modeling feels right to me (not to mention the acceptance of appropriate de-normalization which I've also always shamefully cherished).</p>
+
+<p>But this isn't a post about promoting Mongo and Rails, or to admonish Hibernate and Java/C#. I really am embarrassed at my inability to embrace what peers, whom I respect, clearly believe in. I feel like I'm missing something/being dumb/am wrong. Unlike my sin <a href="http://openmymind.net/2010/9/20/My-Programming-Sins-1-Not-Testing-Javascript"> of not testing JavaScript</a> (which I <a href="http://openmymind.net/2010/9/27/Introducing-jstub">quickly corrected</a>), this is something I've largely moved on from. Nevertheless, I'm actually relieved to have finally put it out there</p>

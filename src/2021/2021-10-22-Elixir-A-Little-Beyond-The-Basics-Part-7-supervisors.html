@@ -1,0 +1,201 @@
+---
+layout: post
+date: 2021-10-22
+title: "Elixir, A Little Beyond The Basics - Part 7: supervisors"
+description: "Demystifying Elixir Supervisors a little to help you understand how processes are supervised"
+tags: [elixir]
+---
+
+<p>In Elixir, when a process dies (e.g. via an exception), it does not stop the application. In the name of robustness, this is great: we generally don't want out entire application to crash when one process crashes. But, that doesn't change the fact that a process died and we probably need it alive. Enter supervisors: specialized processes which monitor other processes and restart them if needed.</p>
+
+<p>Leveraging supervisors via the standard library's <a href="https://hexdocs.pm/elixir/1.12/Supervisor.html">Supervisor module</a> is easy and well-documented. So instead of going over that, let's look at how they actually work.</p>
+
+<h3>Process.monitor/1</h3>
+<p>Supervisors work by invoking the <code>Process.monitor/1</code> function on a given pid or process name. When a monitored process unexpectedly dies or otherwise ends, the supervisor receives a message. At this point, the supervisor can react to the the death of the process however it wants (e.g., by doing nothing if the process ended normally, or restarting otherwise).</p>
+
+{% highlight elixir %}
+pid1 = spawn fn -> :timer.sleep(500); IO.puts("going to sleep") end
+pid2 = spawn fn -> :timer.sleep(1_000); raise "cannot be over 9000!" end
+
+Process.monitor(pid1)
+Process.monitor(pid2)
+
+receive do
+  msg -> IO.inspect(msg)
+end
+
+receive do
+  msg -> IO.inspect(msg)
+end
+{% endhighlight %}
+
+
+<p>The above code starts two processes, monitors them and then prints out the two message it will receive when the two processes die. The first process ends naturally and the received message for it is:</p>
+
+{% highlight clike %}
+{:DOWN, #Reference<0.3580403639.3841196033.194432>, :process, #PID<0.119.0>, :normal}
+{% endhighlight %}
+
+<p>The second processes dies when an exception is raised. The message received for it is:</p>
+
+{% highlight clike %}
+{
+  :DOWN, #Reference<0.3580403639.3841196033.194440>, :process, #PID<0.121.0>,
+  { %RuntimeError{message: "cannot be over 9000!"}, [REDACTED_STACK_TRACE]}
+}
+{% endhighlight %}
+
+<p>The message received when a process exits is always a 5 element tuple, where the first element is <code>:DOWN</code> and the last element is the reason the process exited. The second element, the <code>#Reference&lt;...&gt;</code> matches the value returned when we called <code>Process.monitor/1</code>. Before we talk more about references, let's finish our example and have our supervisor actually restart crashed processes:</p>
+
+{% highlight elixir %}
+defmodule MyApp do
+  def run(main_pid, functions) do
+    state = Enum.into(functions, %{}, fn function ->
+      pid = spawn function
+      ref = Process.monitor(pid)
+      # associate our monitoring ref with the function
+      # so that we know what to restart if we need to
+      {ref, function}
+    end)
+
+    send(main_pid, :ready)
+
+    supervise(state)
+  end
+
+  defp supervise(state) do
+    state =
+      receive do
+        # do nothing if the process exited normally
+        {:DOWN, _ref, :process, _pid, :normal} -> state
+
+        # process crashed, restart it (and re-monitor it)
+        {:DOWN, ref, :process, _pid, _not_normal} ->
+          {function, state} = Map.pop(state, ref)
+          pid = spawn function
+          ref = Process.monitor(pid)
+          Map.put(state, ref, function)
+    end
+    supervise(state)
+  end
+end
+
+defmodule MyApp.Counter do
+  def run() do
+    Process.register(self(), :counter)
+    run(0)
+  end
+
+  defp run(sum) do
+    IO.puts("running total: #{sum}")
+    receive do
+      {:increment, n} ->  run(sum + n)
+      :exit -> :ok
+    end
+  end
+
+  def increment(n \\ 1), do: send(:counter, {:increment, n})
+end
+
+main_pid = self()
+spawn fn ->
+  MyApp.run(main_pid, [&MyApp.Counter.run/0])
+end
+
+receive do
+  :ready -> :ok
+after
+  1000 -> raise "supervisor hasn't started yet"
+end
+
+MyApp.Counter.increment(1)
+MyApp.Counter.increment(3)
+MyApp.Counter.increment("a")
+
+:timer.sleep(500)
+MyApp.Counter.increment(10)
+{% endhighlight %}
+
+<p>There's a lot going on here, including some awkwardness that's worth explaining. Importantly though, we can see that <code>MyApp.run/2</code> is given a list of functions to run as processes and to monitor. After initially starting these functions, it awaits <code>:DOWN</code> messages and, depending on the exist reasons, will restart them. Our supervisor maintains a simple state, a <code>ref => function</code> map which is used to restart the failed process.</p>
+
+<p>Because our supervisor is a process (everything runs in a process in Elixir) and this process needs to receive messages in a loop, it blocks. Hence, for this demo to work, we spawn our supervisor. But we can't start using MyApp.Counter until after we know that the process has started. So our supervisor sends a message to our "main" process to tell it that all it's child processes have been started.</p>
+
+<p>To some degree this startup dance makes our snippet unnecessarily complicated. However, it does let us talk about a very important aspect or how real supervisors work. A real supervisor (those that use the standard library's Supervisor module) will start each of its children sequentially (just like our simple one does). Only after the 1st process in the given list is started will the 2nd one start. Only after the 2nd process is started will the 3rd one start. And so on. This has benefits and drawbacks. The drawback is that a process which is slow to start (or crashes during its initialization) will ripple through the entire application. The benefit is that you can write processes that depend on each other, a fairly common requirement (e.g. you want your database connection pool to be up before you start accepting web requests).</p>
+
+<p>Our counter process crashes when we call it with <code>"a"</code>. Thankfully, our supervisor receives the <code>:DOWN</code> message and restarts it. However, the crash -> message -> restart flow doesn't happen instantaneously, and certainly doesn't happen in a way that blocks other processes. For this reason if we were to immediately call <code>increment(10)</code> after calling <code>increment("a")</code> the message would be lost (it would be sent to a pid which is no longer alive). For the sake of this demo, we simply sleep for half a second, giving it time to restart and re-register the new pid with the <code>:counter</code> name. However, in real applications, when a process crashes, even if it's supervised, message can be sent to dead processes, which can cause issues. Synchronous calls to GenServers, for example, will crash the caller.</p>
+
+<p>There's another important thing to note from the above code: when our supervisor restarts the counter process, the <code>sum</code> (the state of the counter) is reset. To some degree, this is as it must be: the process' state is its own and thus cannot be shared with the supervisor process. But even if it could be shared, having the state be reset is the most sensible default, as it ensures that your process is restarted in a known state. Maybe the process crashed because a bug in your code resulted in an invalid state. Restoring this state would simply cause it to crash again. Instead, if state persistence across process crashes (and maybe even application restarts) is important, then the process must implement this itself (e.g. by saving it to and restoring it from a database).</p>
+
+<p>Finally, if we monitor a process which is already dead, we'll still get the <code>:DOWN</code> message (with the reason being <code>:noproc</code>). This means that if our above <code>Counter</code> dies before we call <code>monitor/1</code> we'll still get the message and be able to restart it. We can easily test this:</p>
+
+{% highlight elixir %}
+pid = spawn fn -> end
+:timer.sleep(100)
+
+# Process.alive?(pid) would return false at this point
+Process.monitor(pid)
+
+receive do
+  msg -> IO.inspect(msg)
+end
+{% endhighlight %}
+
+<p>Will output:</p>
+
+{% highlight clike %}
+{:DOWN, #Reference<0.92016153.3324510209.254540>, :process, #PID<0.123.0>, :noproc}
+{% endhighlight %}
+
+
+<h3>Process Linking</h3>
+<p>Related to the concept of monitoring is linking. When process A monitors process B, process A gets a message when process B exits (normally or otherwise). However, when process A links to process B, if process B terminates abnormally (e.g. an exception), the process A will also exit. On top of that, links are bidirectional, so if process A links to process B and then process  A exits abnormally, then process B will also exit.</p>
+
+{% highlight elixir %}
+pid1 = spawn fn ->
+  :timer.sleep(:timer.minutes(1))
+end
+
+pid2 = spawn fn ->
+  Process.link(pid1)
+  :timer.sleep(100)
+  raise "error"
+end
+
+:timer.sleep(100)
+Process.alive?(pid1)
+Process.alive?(pid2)
+{% endhighlight %}
+
+<p>In the above code, an initial process is started which goes to sleep (but does not immediately exit). Then a second process is started with links to the initial process and promptly crashes. We then check to see if the processes are alive, neither is. If we remove the line that links, i.e. <code>Process.link(pid1)</code> and run the code again, we'll see that the first process is still alive.</p>
+
+<p>It's also possible to trap an exit rather than to let them propagate, which causes links to look more like monitors. But monitors have the advantage that they can be setup even after the process to monitor has gone away, and they're unidirectional. The main reason to use linking is when there's a real dependency between two processes and one cannot exist without the other. Linking is useful, but in my experience, only in very specific situations.</p>
+
+<p>Finally, while we can link by calling <code>Process.link/1</code>, we can also use <code>spawn_link</code> to form the link between the caller and the newly spawned process:</p>
+
+{% highlight elixir %}
+pid1 = spawn fn ->
+  spawn_link fn ->
+    raise "error"
+  end
+  :timer.sleep(:timer.minutes(1))
+end
+:timer.sleep(100)
+Process.alive?(pid1)
+{% endhighlight %}
+
+<p>Since the two processes are linked (via the call to <code>spawn_link/1</code>) they both exit when the exception is raised. Thus, the process represented by <code>pid1</code> will not be alive when we check. If we replace <code>spawn_link/1</code> with <code>spawn/1</code> our last line will return <code>true</code> instead of <code>false</code>.</p>
+
+<h3>References</h3>
+<p>For completeness, a reference, like the one returned from <code>monitor/1</code> is an unique identifier used by various parts of the standard library and runtime. They're generally used as a type of opaque identifier: to us the reference is meaningless, but to code that uses is identifies something. You can create a new one by calling <code>make_ref/0</code>. The one returned by <code>Process.monitor/1</code> can be passed to <code>Process.demonitor/1</code>. In Part 6 we saw how we can send messages to processes using <code>Process.send_after/3</code>. This also returns a reference which we can use to cancel the timer via <code>Process.cancel_timer/1</code>.</p>
+
+<h3>Crashing Supervisor</h3>
+<p>All of the above is handled by the standard library's Supervisor module. Implementing a proper supervisor is just a handful of boilerplate lines plus a line per process you want to supervisor. So unless you're doing something unorthodox, supervisors rarely have reason to exit. Except...</p>
+
+<p>By design, Supervisors will terminate themselves if a supervised process is being restarted too fast and too often. This defaults to 3 restarts within a 5 second window. All but the simplest systems tend to be built with a tree of supervisors (supervisors supervising supervisors). But these failures cascade up the supervisor tree, to the root supervisor (the application) which is also subject to this shutdown rule.</p>
+
+<p>Personally, I think this is something the standard library needs to improve. I believe the majority of developers using Elixir would be better served by supervisors that retry infinitely, with a configurable backoff. I've seen my fair share of short lived errors (e.g. a connectivity issue to the database) take down applications. In the meantime, you should very much be aware of this behavior, and consider <a href="https://hexdocs.pm/elixir/1.12/Supervisor.html#init/2-options">increasing the default restart/window values</a>.</p>
+
+<div id=pager>
+  <a class=prev href=/Elixir-A-Little-Beyond-The-Basics-Part-6-processes/>processes</a>
+  <a class=next href=/Elixir-A-Little-Beyond-The-Basics-Part-8-genservers/>genservers</a>
+</div>

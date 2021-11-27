@@ -1,0 +1,173 @@
+---
+permalink: "/2010/10/18/Weekend-NET-Pains/"
+layout: post
+date: 2010-10-18
+title: "Weekend .NET Pains - Why I Prefer Ruby"
+---
+<p>It's been about 4 months since I've done any .NET programming, in that time I've been largely doing Ruby and Java. I want to contrast the .NET code and Ruby code I came up with to do something quite basic. First though, a honest warning:</p>
+
+<p>The .NET solution is likely over-engineered and the Ruby one likely over-simplified. I'll be the first to admit that my .NET approach doesn't feel right. So this is as much to compare the two as to fix my messed up code.</p>
+
+<p>So what was I trying to do? Read configuration data from a file. Really, that simple. You might wonder why I didn't hook directly into .NET's support for configuration (app/web.config). Personally, I've always found it quite inadequate, as are the mechanism for enhancing it. (for some insight on that, 6 years ago I wrote about <a href="http://www.codeproject.com/KB/aspnet/KarlSegCustomConfig.aspx">writing custom configuration</a> and 10 months ago wrote about <a href="http://codebetter.com/blogs/karlseguin/archive/2010/01/28/beyond-web-config.aspx">a world beyond web.config</a>).</p>
+
+<p>For the purpose of this post, forget about reloading on changes - all I really want is a configuration class, driven by a file using a non-shitty format, and for the whole thing to easily allow me to test. Here's my configuration file:</p>
+
+{% highlight clike %}{
+  "LdapConfiguration":
+   {
+      "Url": "LDAP://someserver",
+      "UserName": "some user",
+      "Password": "some password"
+   },
+
+   "DataStoreConfiguration":
+   {
+      "ConnectionString": "Data Source=SERVER;Initial Catalog=DB;User Id=USER;Password=PASSWORD;"
+   }
+}
+{% endhighlight %}
+
+<p>Now, remember, one of the points is that I want to be able to change these configuration settings on the fly for testing. For example, I want to test that my code properly handles a failure connecting to the LDAP server (and not in some half-assed mock way either). So I decide on the following approach for my configuration (and this may very well be where I made a fundamental design mistake):</p>
+
+{% highlight clike %}public class Configuration
+{
+   private static Data _data = return new JsonConverter().FromFile<Data>(Runtime.ApplicationRoot + "settings.json");;
+
+   private class Data
+   {
+      public ILdapConfiguration LdapConfiguration { get; set; }
+      public IDataStoreConfiguration DataStoreConfiguration { get; set; }
+   }
+
+   public static ILdapConfiguration LdapConfiguration
+   {
+      get { return _data.LdapConfiguration; }
+   }
+
+   public static IDataStoreConfiguration DataStoreConfiguration
+   {
+      get { return _data.DataStoreConfiguration; }
+   }
+
+   private Configuration(){}
+}{% endhighlight %}
+
+<p>Essentially, my singleton Configuration class will be composed of a configuration object for each service. Here's what a specific configuration looks like:</p>
+
+{% highlight clike %}public interface ILdapConfiguration
+{
+   string Url { get; }
+   string UserName { get; }
+   string Password { get; }
+}
+
+public class LdapConfiguration : ILdapConfiguration
+{
+   public string Url { get; internal set; }
+   public string UserName { get; internal set; }
+   public string Password { get; internal set; }
+}{% endhighlight %}
+
+
+<p>Why do all of that? Because it lets me inject the appropriate configuration settings into code using a DI framework:</p>
+
+{% highlight clike %}Bind<LdapConfiguration>().ToConstant(Configuration.LdapConfiguration); //ninject binding{% endhighlight %}
+
+<p>So, if that's all there was to it, I'd probably sigh and be on my way. But it isn't. My JsonConverter is a facade over JSON.NET. Guess what? It wouldn't deserialize my json into the appropriate object. This is the part that got frustrating.</p>
+
+<p><strong>AN IMPORTANT NOTE. I'm not complaining about JSON.NET - even if it sounds like I am. I've written 4 serializers for .NET and I've ran into all of these fundamental issues with .NET and haven't solved any of them as well as JSON.NET has.</strong></p>
+
+<p>Here's what the code started as:</p>
+
+{% highlight clike %}public T FromFile<T>(string path)
+{
+   return FromJson<T>(System.IO.File.ReadAllText(path));
+}
+
+public T FromJson<T>(string json)
+{
+   return JsonConvert.DeserializeObject<T>(json);
+}{% endhighlight %}
+
+<p>The first problem? JSON.NET doesn't like my private constructor. I can't say I agree with that decision, but the JSON.NET library has to make a decision and one way or another people won't be happy with the choice. Thankfully its pretty easy to override the default behavior:</p>
+
+{% highlight clike %}public T FromJson<T>(string json)
+{
+   var settings = new JsonSerializerSettings
+   {
+      ConstructorHandling = ConstructorHandling.AllowNonPublicDefaultConstructor,
+   };
+   return JsonConvert.DeserializeObject<T>(json, settings)
+}{% endhighlight %}
+
+<p>Next? It doesn't like the internal settings on my properties. Another setting:</p>
+
+{% highlight clike %}var settings = new JsonSerializerSettings
+{
+   ConstructorHandling = ConstructorHandling.AllowNonPublicDefaultConstructor,
+   ContractResolver = new DefaultContractResolver { DefaultMembersSearchFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy },
+};
+{% endhighlight %}
+
+<p>I'd specifically like to point out that, despite having used BindingFlags hundreds of times, they are still obscure and confusing to me...I generally take 5 tries before I get something that works.</p>
+
+<p>With those problems solved, its now having a hard time deserializing my interfaces. I don't blame it..how the heck is it supposed to know that LdapConfiguration should be used whenever ILdapConfiguration  is specified? So we have to add some converters. I came up with a simple utility class to do this:</p>
+
+{% highlight clike %}public T FromJson<T>(string json)
+{
+   var settings = new JsonSerializerSettings
+   {
+      ConstructorHandling = ConstructorHandling.AllowNonPublicDefaultConstructor,
+      ContractResolver = new DefaultContractResolver { DefaultMembersSearchFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy },
+   };
+   settings.Converters.Add(new InterfaceConverter<ILdapConfiguration, LdapConfiguration>());
+   settings.Converters.Add(new InterfaceConverter<IDataStoreConfiguration, DataStoreConfiguration>());
+   return JsonConvert.DeserializeObject<T>(json, settings)
+}
+
+internal class InterfaceConverter<To, From> : Newtonsoft.Json.JsonConverter
+{
+   public override bool CanConvert(Type type)
+   {
+      return type == typeof(To);
+   }
+   public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+   {
+      serializer.Serialize(writer, value);
+   }
+
+   public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+   {
+      return serializer.Deserialize<From>(reader);
+   }
+}{% endhighlight %}
+
+<p>And finally, with that, I've managed to walk through the verbosity and rigidness of both C# and the .NET framework.</p>
+
+<p>Do you wanna see my Ruby version?</p>
+
+{% highlight ruby %}class Settings
+  @@settings = YAML::load_file(Rails.root + 'config/config.yml')[Rails.env]
+
+  class MissingSettingOptionError < StandardError;
+  end
+
+  def self.method_missing(key)
+    raise MissingSettingOptionError, "#{key.to_s} is not in the config file" unless @@settings.include?(key.to_s)
+    @@settings[key.to_s]
+  end
+
+end{% endhighlight %}
+
+<p>That's it. Sure I'm leaning a little heavily on method_missing, but there's nothing stopping you from creating a more explicit interface:</p>
+
+{% highlight ruby %}class Settings
+  ...
+  def self.LdapUrl
+    @@settings['ldap']['url']
+  end
+end{% endhighlight %}
+
+<p>And you know what? Its just as easy to test, if not more so, than the C# version. Its also completely reusable from project to project. And it uses YAML which is such a nicer configuration format (which I didn't use in .NET 'cuz I didn't want yet another serialization library referenced).</p>
+
+<p>So, before you criticize my code too harshly, I ask that you at least recognized that I, surprisingly, didn't bash anything. And I readily admit my .NET version might be over-engineered and that I'm even a little rusty.</p>

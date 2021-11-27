@@ -1,0 +1,118 @@
+---
+layout: post
+date: 2021-10-09
+title: "Elixir, A Little Beyond The Basics - Part 4: structures"
+description: "Elixir structures are just thin wrappers around maps. How useful that is really depends on how you use them."
+tags: [elixir]
+---
+
+<p>In languages with mutable data, structures tend to be arranged in a contiguous block of memory. A structure's fields act a bit like an array index: i.e. an offset from the start of the structure. Say we're given the following structure:</p>
+
+{% highlight go %}
+// Go
+type User struct {
+  id int32
+  active bool
+  name string
+}
+{% endhighlight %}
+
+<p>The <code>id</code> is found at offset 0, <code>active</code> is found at offset 4, and name is found at <code>offset</code> 5. This assumes that and <code>int32</code> takes 4 bytes, and a <code>bool</code> takes 1 byte (which, for various reasons, might not always be the case).</p>
+
+<p>The following code creates a user, gets the underlying bytes and changes our 5th byte (which is where we expect the data for <code>active</code> to be found), from 1 to 0.</p>
+
+{% highlight go %}
+// Go
+var SIZE_OF_USER = unsafe.Sizeof(User{})
+
+func main() {
+  u1 := User{
+    id:     10,
+    active: true,
+    name:   "Goku",
+  }
+  fmt.Println(u1)
+
+  data := (*(*[1<<31 - 1]byte)(unsafe.Pointer(&u1)))[:SIZE_OF_USER]
+  fmt.Println(data)
+  data[4] = 0
+  fmt.Println(u1)
+}
+{% endhighlight %}
+
+<p>The output shows that we changed the value of the active field:</p>
+
+{% highlight go %}
+{10 true Goku}
+[10 0 0 0 1 0 0 0 140 72 73 0 0 0 0 0 4 0 0 0 0 0 0 0]
+{10 false Goku}
+{% endhighlight %}
+
+<p>The point that I'm trying to make is that, in some languages, manipulating structures is very efficient. However, such efficiency requires mutability. As we saw in <a href="/Elixir-A-Little-Beyond-The-Basics-Part-1-lists/">part 1 with lists</a>, and as we'll see in the next part with tuples, for the above implementation to work with immutable structures, we'd have to clone the data before being able to change it. This would drastically degrade write performance.</p>
+
+<p>This is why, as you probably already know, Elixir structures are implemented as maps. Maps can be efficiently read from and written to, are immutable and the keys can be any term, such as atoms which make good field names. While the map implementation is amazingly efficient given that we get immutable data, we must acknowledge that it's not as fast as what you'll get from most mutable structures, such as Go's implementation shown above.</p>
+
+<p>Technically, an structure in elixir is simply a map with the special <code>:__struct__</code> key and a value of the module containing the structure definition:</p>
+
+{% highlight elixir %}
+defmodule MyApp.User do
+  defstruct [:id, :active, :name]
+end
+
+u = %{__struct__: MyApp.User, id: 10, active: true, name: "Goku"}
+case u do
+  %MyApp.User{} -> IO.puts("Yes")
+   _ -> IO.puts("No")
+end
+{% endhighlight %}
+
+<p>The above outputs <code>Yes</code> because a structure is really just a map with the <code>__struct__</code> key.</p>
+
+<p>Now, that doesn't mean that structures aren't without value. But it does mean that, if you want to, you can often treat a struct just like a map. In the above code, we could add any other key to <code>u</code>, either when we create the structure or later via <code>Map.put/3</code> and it would still be a <code>MyApp.User</code> structure (by that I mean that it will still pattern match to <code>%MyApp.User</code>).</p>
+
+<p>So what values do structures actually provide? For the most part, they proivde some compile-time error checking. It's true that we can do:</p>
+
+{% highlight elixir %}
+u = %{__struct__: MyApp.User, id: 10, active: true, name: "Goku", hack: true}
+{% endhighlight %}
+
+<p>But if we try to do:</p>
+{% highlight elixir %}
+u = %MyApp.User{id: 10, active: true, name: "Goku", hack: true}
+{% endhighlight %}
+
+<p>We'll get a compile-time error. Similar errors happen if we try to pattern match with an unknown field, e.g. <code>%MyApp.User{hack: true}</code>. Finally, you might have seen the special map update syntax before:</p>
+
+{% highlight elixir %}
+data = %{a: 0, b: 1, c: 3}
+data = %{data | a: 1, b: 2}
+{% endhighlight %}
+
+<p>This will only update <code>data</code> if it already contains the keys being updated. In this case, we're updating the keys <code>a</code> and <code>b</code> which are existing keys, so everything will be ok. If we tried to do either of the following, we're get a <code>KeyError</code>:</p>
+
+{% highlight elixir %}
+%{data | z: 9}
+
+# OR
+
+%{data | a: 1, b: 2, z: 9}
+{% endhighlight %}
+
+<p>But these errors happen at runtime. If we do this with a structure, we'll get compile-time error:</p>
+
+{% highlight elixir %}
+u = %MyApp.User{id: 10, active: true, name: "Goku"}
+
+# this works ok, active is a valid key
+u = %MyApp.User{u | active: false}
+
+# this will give a compile time error:
+u = %MyApp.User{u | z: 9}
+{% endhighlight %}
+
+<p>Finally, one significant difference between structs and maps is that structs do not inherit the protocols or behaviours which exist for maps. So while our <code>MyApp.User</code> structure is implemented as a map, and we kind of treat it like a map, it still represents a <code>MyApp.User</code>. If we want our structure to implement a <code>Size</code> protocol, it's up to us to define it: it would not make sense for Elixir to assume that the size of a <code>MyApp.User</code> is the number of fields.</p>
+
+<div id=pager>
+  <a class=prev href=/Elixir-A-Little-Beyond-The-Basics-Part-3-maps/>maps</a>
+  <a class=next href=/Elixir-A-Little-Beyond-The-Basics-Part-5-tuples-and-records/>tuples</a>
+</div>

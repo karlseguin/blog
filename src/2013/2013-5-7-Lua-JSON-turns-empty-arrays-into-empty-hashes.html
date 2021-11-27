@@ -1,0 +1,33 @@
+---
+layout: post
+date: 2013-05-07
+title: "Lua's JSON turns empty arrays into empty hashes"
+description: "Beware of Lua's JSON handling since it can't always tell whether an empty table should be converted to an empty hash or an empty array"
+tags: [lua]
+---
+
+<p>We recently ran into an issue that took us a while to figure out. Basically, a return value would go from being an empty array:</p>
+
+{% highlight javascript %}
+{
+  genres: []
+}
+{% endhighlight %}
+
+<p>To an empty hash:</p>
+
+{% highlight javascript %}
+{
+  genres: {}
+}
+{% endhighlight %}
+
+<p>Not good. Worse, we couldn't figure it out...it was sporadic...impossible. How could an empty array turn into an empty hash?!</p>
+
+<p>Or...Lua uses tables to represent both arrays and dictionaries, so how can it possibly differentiate? From the <a href="http://www.kyne.com.au/~mark/software/lua-cjson-manual.html">docs</a>:</p>
+
+<blockquote>
+  Lua CJSON uses a heuristic to determine whether to encode a Lua table as a JSON array or an object. A Lua table with only positive integer keys of type number will be encoded as a JSON array. All other tables will be encoded as a JSON object.
+</blockquote>
+
+<p>For us, this meant moving the decoding/encoding out of LUA and passing in the values. Since this is easy to overlook, I hope it saves someone

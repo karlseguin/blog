@@ -1,0 +1,148 @@
+---
+layout: mongly
+title: Multiple Collections vs Embedded Documents
+theme: dark
+multi: true
+css: mc_vs_ed
+tags: [modeling, mongodb]
+---
+<div id="multi">
+  <div>
+    <div id="main">Inevitably, everyone who uses MongoDB has to choose between using multiple collections with id references or embedded documents</div>
+  </div>
+
+  <div>
+    <h2>Use separate collections</h2>
+{% highlight javascript %}
+db.posts.find();
+{_id: 1, title: 'unicorns are awesome', ...}
+
+db.comments.find();
+{_id: 1, post_id: 1, title: 'i agree', ...}
+{_id: 2, post_id: 1, title: 'they kill vampires too!', ...}
+{% endhighlight %}
+
+    <div id="or">- or -</div>
+
+    <h2>Use embedded documents</h2>
+{% highlight javascript %}
+db.posts.find();
+{_id: 1, title: 'unicorns are awesome', ..., comments: [
+  {title: 'i agree', ...},
+  {title: 'they kill vampires too!', ...}
+]}
+{% endhighlight %}
+  </div>
+
+
+  <div>
+    <div id="main">
+      Don't worry, this means that <em>you get it</em>
+    </div>
+
+    <div class="note">Both solutions have their strengths and weaknesses. Learn to use both</div>
+  </div>
+
+
+  <div>
+    <div id="main">Separate collections offer the greatest querying flexibility</div>
+
+{% highlight javascript %}
+// sort comments however you want
+db.comments.find({post_id: 3}).sort({votes: -1}).limit(5)
+
+// pull out one or more specific comment(s)
+db.comments.find({post_id: 3, user: 'leto'})
+
+// get all of a user's comments joining the posts to get the title
+var comments = db.comments.find({user: 'leto'}, {post_id: true})
+var postIds = comments.map(function(c) { return c.post_id; });
+db.posts.find({_id: {$in: postIds}}, {title: true});
+{% endhighlight %}
+  </div>
+
+
+  <div>
+    <div id="main">Selecting embedded documents is more limited</div>
+
+{% highlight javascript %}
+// you can select a range (useful for paging)
+// but can't sort, so you are limited to the insertion order
+db.posts.find({_id: 3}, {comments: {$slice: [0, 5]}})
+
+// you can select the post without any comments also
+db.posts.find({_id: 54}, {comments: -1})
+
+// you <em>can't</em> use the update's position operator ($) for field selections
+db.posts.find({'comments.user': 'leto'}, {title: 1, 'comments.$': 1})
+{% endhighlight %}
+
+    <div class="note">(there are two separate features, currently in planning/development, which should address this)</div>
+  </div>
+
+
+  <div>
+    <div id="main">A document, including all its embedded documents and arrays, cannot exceed 16MB</div>
+    <div class="note">Don't freak out, The Complete Works of William Shakespeare is around 5.5MB</div>
+  </div>
+
+
+  <div>
+    <div id="main">Separate collections require more work</div>
+
+{% highlight javascript %}
+// finding a post + its comments is two queries and requires extra work
+// in your code to make it all pretty (or your ODM might do it for you)
+db.posts.find({_id: 9001});
+db.comments.find({post_id: 9001})
+{% endhighlight %}
+
+    <div class="note">this also takes [a bit] more space (+1 field, +1 index)</div>
+  </div>
+
+
+  <div>
+    <div id="main">Embedded documents are easy and fast (single seek)</div>
+{% highlight javascript %}
+// finding a post + its comments
+db.posts.find({_id: 9001});
+{% endhighlight %}
+  </div>
+
+
+  <div>
+    <div id="main">No big differences for inserts and updates</div>
+{% highlight javascript %}
+// separate collection insert and update
+db.comments.insert({post_id: 43, title: 'i hate unicrons', user: 'dracula'});
+db.comments.update({_id: 4949}, {$set : {title: 'i hate unicorns'}});
+
+// embedded document insert and update
+db.posts.update({_id: 43}, {$push: {title: 'lol @ emo vampire', user: 'paul'}})
+// this specific update requires that we store an _id with each comment
+db.posts.update( {'comments._id': 4949}, {$inc:{'comments.$.votes':1}})
+{% endhighlight %}
+
+    <div class="note">documents that grow, like inserting new comments, will have a <a href="/Whats-A-Padding-Factor/">padding factor</a></div>
+  </div>
+
+
+  <div>
+    <div id="main">
+      <p>So, separate collections are good if you need to select individual documents, need more control over querying, or have huge documents.</p>
+      <p>Embedded documents are good when you want the entire document, the document with a $slice of comments, or with no comments at all.</p>
+    </div>
+  </div>
+
+
+  <div>
+    <div id="main">
+      <p>As a general rule, if you have a lot of "comments" or if they are large, a separate collection might be best.</p>
+      <p>Smaller and/or fewer documents tend to be a natural fit for embedding.</p>
+    </div>
+    <div class="note">Virtual collection + positional field selection are relevant upcoming[ish] features</div>
+  </div>
+
+
+  <div><div id="main">Remember, you can always change your mind. Trying both is the best way to learn.</div></div>
+</div>

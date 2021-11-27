@@ -1,0 +1,68 @@
+---
+layout: post
+date: 2013-05-10
+title: "Redis' slowlog and DEL's surprisingly bad performance"
+description: "Using redis' slowlog to find slow queries and DEL's surprisingly poor performance"
+tags: [devops, performance, redis]
+---
+
+<p>Redis has a useful slowlog facility which, as you can probably guess, lets you inspect slow running queries. Slowlog will log the last X queries that took more than Y microseconds to run. X and Y can be specified in either <code>redis.conf</code> or, at runtime, via the <code>CONFIG</code> command:</p>
+
+{% highlight text %}
+CONFIG SET slowlog-log-slower-than 5000
+CONFIG SET slowlog-max-len 25
+{% endhighlight %}
+
+<p>The <code>slowlog-log-slower-than</code> is specified in microseconds, so the above will log queries that take over 5 milliseconds to execute. To get the log entries, you use the <code>SLOWLOG GET X</code> command, where X is the number of items you want to retrieve:</p>
+
+{% highlight text %}
+SLOWLOG GET 10
+{% endhighlight %}
+
+<p>This'll display a unique id, the timestamp the query took place, the amount of time the query took to execute and the actual command + parameters that were executed. You can erase the log via <code>SLOWLOG RESET</code>.
+
+<p>The last time that I looked at our slowlog, I was shocked to see that we had <code>DEL</code> commands taking over 20 milliseconds to execute. Remember, Redis is single-threaded, so this blocks (and consequently seriously harms) our system's concurrency. Also, since this is a write operation, it'll block all slaves while it replicates to them. Ugh. What could be going on?</p>
+
+<p>Maybe everyone already knows this but me, but it turns out Redis' <code>DEL</code> command is O(1) for strings and hashes, but O(N) for lists, sets and sorted sets (where N is the number of items in the collection). Deleting a set containing millions of items? Prepare to block.</p>
+
+<p>Our solution was simple: rather than deleting these items, we'd rename them and delete them in a background job in small and interruptible chunks. First, our <code>delayed_delete</code> function:</p>
+
+{% highlight lua %}
+local key = KEYS[1]
+local data_type = redis.call('type', key).ok
+
+if data_type == 'set' or data_type == 'zset' then
+  local temp = 'gc:tmp:' .. redis.call('incr', 'gc:ids') .. ':' .. key
+  redis.call('rename', key,  temp)
+  return redis.call('sadd', 'gc:' .. data_type, temp)
+end
+
+return redis.call('del', key)
+{% endhighlight %}
+
+<p>This'll rename the collection and add that new name to the <code>gc:set</code> or <code>gc:zset</code> sets (we don't use lists, but if you do, you should add support for them as well).</p>
+
+<p>Next we scheduled a Ruby script to run every minute:</p>
+
+{% highlight ruby %}
+require 'redis'
+r = Redis.new(driver: :hiredis)
+r.srandmember('gc:set', 10000).each do |set|
+  items = r.srandmember(set, 5000)
+  if items.nil? || items.length == 0
+    r.srem('gc:set', set)
+    next
+  end
+  r.srem(set, items)
+end
+
+r.srandmember('gc:zset', 10000).each do |zset|
+  if r.zremrangebyrank(zset, 0, 5000) < 5000
+    r.srem('gc:zset', zset)
+  end
+end
+{% endhighlight %}
+
+<p>You'll want to play with the numbers based on your own needs. How big are your collections and how often do they get deleted? Since we don't do these types of deletes too frequently, we can go about deleting small chunks at a time.</p>
+
+While this approach is much slower than a straight delete, it plays much nicer in a concurrent world.</p>

@@ -1,0 +1,122 @@
+---
+permalink: "/2010/10/26/An-Introduction-To-Hosting/"
+layout: post
+date: 2010-10-26
+title: "An Introduction To Hosting"
+tags: [devops]
+---
+<h3>VPS, Cloud, Dedicated or Colocated</h3>
+<p>The first thing you likely need to figure out is what type of hosting is best suited for your needs. The available options often overlap in purpose, so its important to understand what's available. Thankfully, most of the general information on hosting really applies to all types of hosting environments.
+
+<h3>VPS</h3>
+<p>VPS hosting is typically the cheapest of the available choices, ranging from a few dollars a month to as much as $200 (or more). With VPS hosting, multiple users share the same hardware. However, unlike traditional shared hosting, VPS' use some type of virtualization to guarantee a minimum and burst level of resources (cpu, ram and hard drive) . Therefore, unlike shared hosting where another user can severely degrade the performance of your site, VPS hosting is far more isolated. Also, VPS accounts typically provide root/administrative access to the virtualized OS for a great level of flexibility.</p>
+
+<p>VPS hosting is well suited for sites that have outgrown a shared account, but which don't require a full dedicated server. They can be useful for learning or development purposes or as a cost effective stepping stone to more expensive, and more powerful, solutions. Higher-end VPS solutions tend to be cost ineffective as they cross over into the dedicated space.</p>
+
+<p>Of course, as the VPS market continues to mature, its more and more common to see even complex sites fully hosted across multiple VPS servers. Compared to cloud solutions, quality VPS providers typically provide better cost-to-performance, while offering less cloud-like capabilities (more on this soon).</p>
+
+<p>If you do pick the VPS approach, it's important to familiarize yourself with virtualization - in particular the difference between Hardware-assisted and Operating system-level which are the two choices you'll likely be presented with.</p>
+
+
+<h3>Cloud</h3>
+<p>Unlike traditional hosting which tends to be tied to a specific server (or part of it), cloud hosting spans multiple computers. So while it might appear that you have a single server, in truth any number of servers may be handling your load. The two immediate benefits is that you can often scale with just the click of a button (by adding more sources to your account), and you only pay for exactly the amount of processing/memory you need. Cloud solutions are also able to provide a greater level of reliability, because individual faulty servers don't bring down the cloud. However, at this time cloud reliability remains more marketing than fact (I wouldn't call it less reliable either though). The downside of cloud computing is cost - significantly more powerful dedicated servers, and slightly more powerful VPS', can easily be had for considerably less.</p>
+
+<p>Most popular cloud providers will offer a great amount of addon services: CDN hosting, storage, load balancing, high availability setups and so on. This can make it convenient for people looking to outsource some of the hosting responsibilities <em>to the cloud</em>.
+
+<p>Generally, cloud hosting should only be used by people who know they need it, or those who want to experiment. It is extremely well suited for workloads that can be distributed - think academia or scientific research. If you aren't sure, a VPS or a dedicated server will almost always make more sense.</p>
+
+<h3>Colocation</h3>
+<p>In the colocation model, you buy your server and rent the utilities required to have it up and running - namely electricity, bandwidth, cooling and space. Typically, you'll buy a certain amount of space (measured in rack units (1U, 2U, 4U...) or cabinet space (typically 40U, so 1/4 cabinet is the same as 10U)). Your purchase will include a certain amount of current (like 20Amps) and bandwidth (like 100mbps unmetered) - which can be upgraded. Colocation tends to be the least expensive option in the long run, but has the highest upfront and management cost. If something goes wrong with your server, like a failed hard drive, it is your responsibility to provide a replacement part. Colocation also tends to be the most flexible solution.</p>
+
+<p>Colocation should probably be considered a final destination only once the upfront costs aren't prohibitive. You should also only consider it if you are able to manage the hardware. Living nearby the datacenter (for physical access) is something many people consider essential.</p>
+
+<h3>Dedication</h3>
+<p>A dedicated server is one that you have full and exclusive control over, but which your hosting provider owns. If colocation is like buying a house, dedicated server are a lot like renting. There are either no, or minimal, upfront costs and the hosting provider manages and is responsible for the hardware and network. Monthly costs are higher than colocating, since you are paying for all of the colocating utilities, in addition to renting the hardware.</p>
+
+<p>Dedicated servers vary widely in price - moreso than any other option. A $125/m server (relatively cheap) at one facility might cost $500 at another. Its safe to bet that the $500 service will be better, but in my experience (and greatly depending on your need), if you do your research, you can typically pay closer to the low-end and still end up with a great company.</p>
+
+<p>If you aren't sure what you need, but know that you need more power than a VPS (or scaled-out VPS'), dedicated hosting is probably the right choice.</p>
+
+<h3>At Home Hosting</h3>
+<p>Hosting from home is only reasonable for personal/fun projects. At home hosting will always suffer from greater downtime and slower speeds. Your typical home UPS will provide you with 30 minutes of power during an outage. You'll have multiple single points of failure, and your internet connection upload speed (which is what matters when others are downloading from you) is likely a fraction of your [advertised] download speed. It might also violate your ISP's TOS. A better alternative for would-be at home hosters would be a VPS.</p>
+
+<h3>Server Management</h3>
+<p>Think you know which options you're going to pick? Good, now you need to manage your server(s). As with everything else, your needs will depend on your exact situation, in particular, your exact skills/knowledge. If you aren't a server guru, you'll be glad to know you have a few options available.</p>
+
+<h3>To Manage or Not to Manage</h3>
+<p>First, you need to pick between managed and unmanaged hosting. This will have an impact on the price you pay, as well as the companies you'll be able to consider. Many providers only offer one or the other, while others provide optional upgrades. Whichever you pick, remember that the company will be responsible for any hardware failures/issues, networking issues (from your Ethernet port out) and power issues. In addition to this base level of service, managed hosting will typically provide with initial configuration of common software, security and software updates, monitoring, load balancing/firewall configuration (when purchased), backup configuration and so on.</p>
+
+<p>There isn't a clear definition of what you get when buying a managed provider, so you'll want to inquire about exactly what's including in the price. The bottom line though is that unmanaged providers cost less and, as a consequence, provide less support. Which you pick comes down to our own expertise and your budget.</p>
+
+<h3>3rd Party Management Companies</h3>
+<p>Another option is to purchase an unmanaged service and retain the expertise of a 3rd party management company. This approach may be cost effective compared to a fully managed service. However, in order to be effective, the 3rd party company will require administrative access to your box - this isn't a problem, as long as you pick from a reputable company (regardless of who is managing your server, they'll need administrative access). A lot of companies are small shops which rely on word of mouth and satisfied costumers for survival - so don't completely rule it out if self-managing isn't an option.</p>
+
+<h3>Control Panels</h3>
+<p>Finally, when it comes to server management, you can install a control panel to help make some of the administrative tasks easier. The most popular packages cost around $30/month. The packages tend to be quite flexible, and can be used for tasks ranging from typical management to reselling, billing, and virtualization management.</p>
+
+<h3>Geographic Location</h3>
+<p>Unless you are targeting a specific location, the geographic location of your server tends to be far less important than the quality of the hosting provider. However, some general rules do apply. </p>
+
+<p>If your primary audience is in the US, any US location should be effective. If you have interest in the pacific area the west coast in general (and California specifically) tends to be the best. If you have interest in Europe, the east coast is best (with common locations including Atlanta, New York and Chicago). If you are primarily interested in a European audience, the UK or the Netherlands tend to be preferred. Dallas is also worth mentioning as a good all-around solution - with lots of high quality companies, and extremely good connectivity to both NA coasts.</p>
+
+<p>Its worth repeating that, unless you are targeting a narrow audience, or you have specific low-latency requirement (like a game server or streaming server), you shouldn't over concern yourself with geographic location. If you are hosting a web application, there are far better ways to improve user experience (such as using proper caching and leveraging a CDN).</p>
+
+<h3>Server Specs</h3>
+<p>So, what exact hardware should you get? Obviously, it depends on exactly what it is you need to accomplish. Different types of workload will benefit from different hardware configurations. Generally, VPS and databases are IO bound and can benefit most from extra RAM, faster hard drives, or large (in terms of # of disk) arrays. Web and application servers tend to be more CPU dependent, while streaming, game, or file servers are often more sensitive to networking limitations.</p>
+
+<p>As very broad rule, a low end quad core (q6600, 8300, ....), with 4gb of ram and a 500gb SATA drive tends to be a powerful entry level system dedicated / collocated server. If you are interested in comparing CPU performance, the best place to start for a general overview is at: <a href="http://www.cpubenchmark.net/cpu_list.php">http://www.cpubenchmark.net/cpu_list.php</a>. Note that to take advantage of 4gigs (or more of ram), you'll want to install a 64bit operating system. The equivalent to such a machine for VPS or Cloud users will typically be 2-3 or so instances of some average config.</p>
+
+<p>You may want to consider adding some level of redundancy with a RAID 1 - which will take a 2nd 500gb SATA drive. Both Windows and Linux have good support for software-level RAID1 (which, again, is a good place to start). If you are more concerned with IO, the next step would be a 4 disk RAID 10 array (arrays of more than 4 disks are completely possible, but tend to jump in price due to requiring different chassi) with a hardware raid controller. You can also opt for Serial Attached SCSI (SAS) drives which tend to operator at 10K or 15K RPM (vs. 72000RPM for SATA drives), or even SSD drives. However, chances are that you'll already know if you need something more than 2-SATA disks using software RAID 1. Due note that VPS and Cloud solutions typically leverage a redundant storage solution - good for your data, but typically not so good for performance since its shared and IO can become an issue.</p>
+
+<p>My suggestion is simple: if you aren't sure what you need, start modestly. You'll be amazed at what a $50/month vps/cloud solution is able to do. Additionally, if you build your site/system/application so that you can scale out horizontally, you'll always be able to leverage your old/weak/original servers even as you scale with new and more powerful ones.</p>
+
+<h3>Consumer vs. Enterprise Hardware</h3>
+<p>You may be wondering if you should be worried about the quality difference between consumer-grade equipment and enterprise-grade equipment. You'll get different answers from different people, but in general a reliable hosting company will use reliable parts, and enterprise-grade components aren't any more reliable than consumer grade equipment. This is particularly true for CPUs - where the main difference between the two tends to be the ability to use dual-socket motherboards with enterprise chips - a feature you aren't likely to use, so don't waste your money.</p>
+
+<p>One special note for SSDs though. Consumer SSDs use a technology known as multi-level cell (MLC) which is less reliable than what you'd find in an enterprise SSD - which is single-level cell (SLC). Now, if you are considering using SSDs, you probably already know all of this, but, just incase, I'd recommend the use of SLCs in a server environment given how young the technology is.</p>
+
+<p>For cloud/vps users, the choice of hardware is normally done for you, so this is a non-issue</p>
+
+<h3>Backups</h3>
+<p>Above, we briefly talked about RAID 1 and RAID 10 as a form of redundancy. It is important that you understand that <strong>RAID is not a replacement for backups</strong>. If you are serious about your data, which you should be, you must consider a more thought-out backup architecture. Many hosting companies provide backup plans, if they don't, or if you rather have backups stored remotely, there are a number of backup solutions - starting at roughly $5/10gb/month. This is something a management service should be able to help you get running. Additionally, it is important that you <strong>periodically check the consistency of your backups</strong> to make sure that, should something go horribly wrong, they can, in fact, be used to recover your lost data.</p>
+
+<h3>Unmetered vs. Metered</h3>
+<p>When you buy a server you'll have a number of bandwidth options. Some providers may list the bandwidth that comes with a server as an absolute value, such as 3TB. Others list the port speed, such as 100Mpbs. These are really two different settings, and its important to know and understand both. The absolute value is the amount of data you can transfer per month. The port speed is how fast you can send data. For example, its possible (and even common) to be on a 100mbps port and be metered to 5TB of bandwidth. This means that at any given point you can transfer at 100mbps, but over the course of the month you can't exceed 5TB. If your connection is unmetered, it means that you can spend every second of the month transferring at 100mbps (which is equivalent to roughly 33TB of bandwidth). If you think about it, being on a 10mbps port and having 10TB of bandwidth doesn't make any sense - since the most you'll ever be able to transfer is around 3.3TB.</p>
+
+<p>Unless you have specific requirements, the defaults that most servers come with are typically ok. However, if you know that you'll need more bandwidth, or that you'll need to support high burst speeds, you will want to upgrade your port and/or bandwidth package.</p>
+
+<p>I do want to point out that I hate companies that overcharge on bandwidth usage. You shouldn't be paying more than $0.50/gb over your allocated bandwidth - and even this is quite high. Most quality places are charging in the $0.10/gb - $0.15/gb range. When you see a company charging $1gb, or even $4/gb, RUN!</p>
+
+<p>Cloud solutions tend to approach bandwidth differently. In keeping with their only pay for what you need approach, they typically don't include any bandwidth. This generally means that cloud solutions will cost slightly more than their advertised price.</p>
+
+<h3>IP Addresses</h3>
+<p>Most servers come with a defined number of IP addresses (5 is common for dedicated servers, 1 for VPS). Since IPv4 addresses are in limited supply, hosting providers need to provide justification for assigning more IP addresses to a particular server. There are two common reasons to need/want more IP address - large scale SEO (search engine optimization) and SSL. If you are doing large scale SEO, you probably already know all about this. However, you may not know that you typically need 1 IP address per SSL certificate. This could be an important consideration if you'll need many SSL certificates.</p>
+
+<p>IP addresses are one of the things cloud services can really leverage, by abstracting and virtualizing them away, they can act quite differently.</p>
+
+<h3>OS</h3>
+<p>Hopefully you already know if you need a Windows or Linux OS. For windows with a dedicated server, you won't be able to provide your own key and will need to pay a monthly fee. The price for Windows Server 2008 R2 Web edition is around $10-$15/month. Other editions cost much more.</p>
+
+<p>Also for Windows users, note that your choice for VPS and Cloud hosting will be limited and that you will pay more. While I've avoided naming particularly companies, Amazon's EC2 clearly stands out as a top-quality windows cloud provider.</p>
+
+<p>For Linux, any distribution will work, however CentOS and Ubuntu tend to be preferred. CentOS is a free distribution of Red Hat Enterprise Linux and as such, is the gold standard. Ubuntu Server is also popular, in large part due to the strong community and helpful documentation.</p>
+
+<h3>Resellers</h3>
+<p>Many hosting providers have a reseller program. Resellers act as a middle man between the hosting company and you, the client. There are pros and cons of dealing with resellers. On the positive, resellers can often provide servers at a discount (since they themselves get them discounted) and can add their own services on top of what the hosting company provides (a reseller could resell from an unmanaged provider and offer management services themselves). On the downside, you are now dealing with an extra layer which can increase the time it takes for issues to get resolved. </p>
+
+<p>As a general rule, the quality and professionalism of a company is far more important than whether they are resellers or not.</p>
+
+<h3>Overselling</h3>
+<p>Overselling is a common practice which relies on the fact that not everyone is going to use the maximum possible capabilities of their system. Gmail is a potentially good example: they don't really need to capability to store 1GB of data for every user, because most users likely only use a fraction (although, for all I know they actually DO have the capacity, which would be pretty awesome).</p>
+
+<p>This can happen with any type of hosting, but VPS' are the most likely targets. Even dedicated and collocated servers, which only you run on, can oversell their other shared resources (bandwidth). The best way to avoid overselling is to pick a reliable company.</p>
+
+<h3>Cost</h3>
+<p>We've already talked briefly about costs, they not only vary a lot between hosting type, but also a lot between companies. Again, from my own experience, the benefits of high-end dedicated providers doesn't come close to justifying their extreme price (as much as 5x more). A starter dedicated server (quad-core, 4gb, 500gb) should cost around $130-$180/m for an unmanaged provider, and around $300/m for a managed provider. Avoid anything less or much more.</p>
+
+<p>Both VPS and Cloud solutions tend to vary much less in price. If we split it between low/mid/high range instances, you might pay $20/$60/$120 per month. The only thing more to say is that a lot of VPS solutions start much lower, and can be perfectly suitable for a number of tasks - like learning, a personal blog, and so on.</p>
+
+<h3>Conclusion</h3>
+<p>Ultimately, there are two important rules. First, have fun. Second, do your research. There are a number of great hosting providers, sadly, there are a number of questionable ones as well. The most important thing to do is to search for reviews - but don't just judge a company based on a couple bad or a couple good reviews. If an offer sounds too good, it probably is. </p>
+
+<p>Probably the best place to get more information is <a href="http://www.webhostingtalk.com/">http://www.webhostingtalk.com/</a> which is a thriving and friendly community.</p>

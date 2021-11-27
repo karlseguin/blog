@@ -1,0 +1,9 @@
+div.calendarWrap{position:relative;}
+div.calendar{border:1px solid #e6e6e6;overflow:auto;background:#f0f0f0;position:absolute;line-height:1em;-moz-border-radius:5px;-webkit-border-radius:5px;border-radius:5px-moz-user-select:none;-webkit-user-select: none;-khtml-user-select: none;user-select: none;}
+div.calendar td.nav{cursor:pointer;background:#e6e6e6;width:25px;height:25px;text-align:center;-moz-border-radius:5px;-webkit-border-radius:5px;border-radius:5px;font-weight:bold;}
+div.calendar td.nav:hover{background:#d6d6d6;}
+div.calendar table{float:left;margin:0;font-family:verdana;font-size:80%;}
+div.calendar table:first-child{border-right:1px solid #e6e6e6;margin-right:10px;padding-right:10px;}
+div.calendar table td{padding:3px;text-align:center;cursor:pointer;border:1px solid transparent;}
+div.calendar td.selected{border:1px dotted #222;}
+div.calendar td.highlight{background:#ccc;}

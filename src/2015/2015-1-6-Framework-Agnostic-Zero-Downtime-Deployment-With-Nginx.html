@@ -1,0 +1,139 @@
+---
+layout: post
+date: 2015-01-06
+title: "Framework Agnostic Zero Downtime Deployment with NGINX"
+description: "Using nginx to achieve zero downtime hot deployment of code"
+tags: [devops]
+---
+
+<p>Unless you're dealing with a low traffic or internal-facing site, zero downtime deployments are pretty important. Some frameworks have zero-downtime capacity built-in. Furthermore, at a larger scale, you'll want to roll out changes using more advanced routing and control mechanism. Still, for years, I've been using a simple nginx configuration trick when deploying web apps which I think is pretty useful.</p>
+
+<p>The solution I use relies on alternating between two ports when deploying new code and having a short overlap between starting the new app and shutting down the existing one. The major downside is the doubling of resources for a brief period of time. At worse, you'll temporarily have twice the number of open connection to your DB, memory usage and so on.</p>
+
+<p>First let's look at a basic configuration:</p>
+
+{% highlight text %}
+upstream webapp {
+  server 127.0.0.1:9923;
+  keepalive 32;
+}
+
+server {
+  listen 80;
+
+  proxy_http_version 1.1;
+  proxy_set_header Connection "";
+
+  location / {
+    proxy_pass http://webapp;
+  }
+}
+{% endhighlight %}
+
+<p>The simplest, and not very good solution, is to use the <code>proxy_next_upstream</code> directive and let nginx figure out which port our "webapp" is actually listening to:</p>
+
+{% highlight text %}
+upstream webapp {
+  server 127.0.0.1:9923;
+  server 127.0.0.1:9924; #ADDEDD
+  keepalive 32;
+}
+
+server {
+  listen 80;
+
+  proxy_http_version 1.1;
+  proxy_set_header Connection "";
+  proxy_next_upstream error timeout; #ADDED
+  location / {
+    proxy_pass http://webapp;
+  }
+}
+{% endhighlight %}
+
+<p>The problem with this approach is the performance hit we get whenever the unavailable upstream is picked. We can tweak the frequency of that via the server's <code>fail_timeout</code> property, but ultimately this solution feels half-assed.</p>
+
+<p>The solution that I'm currently using is to define to <code>upstream</code> groups an rely on the <code>backup</code> attribute. First, the upstream definitions:</p>
+
+{% highlight text %}
+upstream webapp_9923 {
+  server 127.0.0.1:9923;
+  server 127.0.0.1:9924 backup;
+  keepalive 32;
+}
+upstream webapp_9924 {
+  server 127.0.0.1:9923 backup;
+  server 127.0.0.1:9924
+  keepalive 32;
+}
+{% endhighlight %}
+
+<p>We then setup our proxy pass to use whatever our app is currently configured to use:</p>
+
+{% highlight text %}
+{
+  ...
+  location / {
+    proxy_pass http://webapp_9923;
+  }
+}
+{% endhighlight %}
+
+<p>And, on deploy, we we switch from webapp_9923 to webapp_9924. This switching can happen in whatever tool you use to deploy, capistrano, fabric, whatever.</p>
+
+<p>As a more concrete example, let's say we have a web app that has a configuration file at <code>/opt/webapp/config.json</code>  which looks like:</p>
+
+{% highlight text %}
+{
+  "listen": "127.0.0.1:9923",
+  ....
+}
+{% endhighlight %}
+
+<p>You could use a bash script and sed to do the necessary configuration changes:</p>
+
+{% highlight text %}
+#!/bin/bash
+CONFIG_FROM=127.0.0.1:9923
+CONFOG_TO=127.0.0.1:9924
+NGINX_FROM=http://webapp_9923
+NGINX_TO=http://webapp_9924
+
+# read our existing configuration file
+# and see if we should swap our to <-> from
+if grep --quiet 127.0.0.1:9924 /opt/webapp/config.json; then
+  CONFIG_FROM=127.0.0.1:9924
+  CONFIG_TO=127.0.0.1:9923
+  NGINX_FROM=http://webapp_9924
+  NGINX_TO=http://webapp_9923
+fi
+
+function rollback {
+  sed -i "s#$CONFIG_TO#$CONFIG_FROM#g" /opt/webapp/config.json
+}
+
+sed -i "s#$CONFIG_FROM#$CONFIG_TO#g" /opt/webapp/config.json
+if [ $? -ne 0 ]; then
+  exit 1
+fi
+
+sed -i "s#$NGINX_FROM#$NGINX_TO#g" /opt/nginx/sites-available/webapp
+if [ $? -ne 0 ]; then
+  rollback
+  exit 2
+fi
+
+## TODO: start a new web app
+
+# wait for it to start
+sleep 5
+
+# reload nginx to use the now running & listening app
+/etc/init.d/nginx reload
+
+## TODO: stop the existing web app
+{% endhighlight %}
+
+<p>For bonus points, since <code>sed -i</code> isn't portable, you could use <code>perl -pi -e "s#$FROM#$TO#g"</code> instead. Also, while NGINX should handle this well as-is, I normally shut down the currently running app by sending it a signal (<code>SIGINT</code>) which the app code catches and slowly shuts down. By <em>slowy shutting down</em>, I mean that, for a few seconds after receiving the signal, it'll keep answering requests but include a <code>Connection: Close</code> header in responses which should help clean up NGINX's keepalive connections.</p>
+
+

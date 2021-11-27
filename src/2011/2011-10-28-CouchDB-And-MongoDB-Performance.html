@@ -1,0 +1,74 @@
+---
+permalink: "/2011/10/28/CouchDB-And-MongoDB-Performance/"
+layout: post
+date: 2011-10-28
+title: "CouchDB And MongoDB Performance"
+tags: [mongodb, performance]
+---
+<p>I wanted to follow up <a href="http://openmymind.net/2011/10/27/A-MongoDB-Guy-Learns-CouchDB/">yesterday's detailed (and objective?) post</a> on CouchDB with some basic benchmarks. I know people hate these types of benchmarks. But I do think it's good to have some very high level idea about these things. Also, both CouchDB and MongoDB have a bulk-api, which is useful for some tasks, but I think most web apps are dealing with fairly small and independent pieces of information. The code is a very poor simulation of the two main queries <a href="http://mogade.com/">mogade.com</a> gets.</p>
+
+<p>For the record, journaling is enabled in MongoDB <strong>and</strong> I'm doing a full fscync on each insert (the ruby driver doesn't support journal commit yet (which would be faster than a full data file fsync)?! guess what I'm doing next...)</p>
+
+<p>The MongoDB code:</p>
+{% highlight ruby %}require 'mongo'
+require 'benchmark'
+
+db = Mongo::Connection.new.db("test")
+
+app_ids = Array.new(10){|i| BSON::ObjectId.new}
+scores = db.collection("scores")
+scores.ensure_index([['appid', Mongo::ASCENDING], ['points', Mongo::DESCENDING]])
+
+Benchmark.bm do |x|
+  x.report do
+    10000.times do |i|
+      if i % 2 == 0
+        scores.insert({:appid => app_ids.sample, :points => rand(100000), :dated => Time.now - rand(100000), :user => i.to_s}, {:safe => true, :fsync => true})
+      else
+        scores.find({:appid => app_ids.sample}).sort([:points, :descending]).limit(20).skip(rand(20)).to_a
+      end
+    end
+  end
+end
+
+    user     system      total        real
+6.600000   1.040000   7.640000 ( 12.290563){% endhighlight %}
+
+
+<p>The CouchDB code:</p>
+{% highlight ruby %}require 'couchdb'
+require 'uuid'
+require 'benchmark'
+
+server = CouchDB::Server.new 'localhost', 5984
+database = CouchDB::Database.new server, 'test'
+
+database.delete_if_exists!
+database.create_if_missing!
+app_ids = Array.new(10){|i| UUID.new.generate}
+
+design = CouchDB::Design.new database, 'application'
+view = CouchDB::Design::View.new design, 'scores_by_points', 'function(doc) { emit([doc.appid, doc.points], null); }'
+design.save
+
+Benchmark.bm do |x|
+  x.report do
+    10000.times do |i|
+      if i % 2 == 0
+        doc = CouchDB::Document.new database, :appid => app_ids.sample, :points => rand(100000), :dated => Time.now - rand(100000), :user => i.to_s
+        doc.save
+      else
+        app_id = app_ids.sample
+        scores = view.collection(:startkey => [app_id], :endkey => [app_id,{}], :descending => false, :limit => 10, :include_docs => true)
+        scores[0] # i believe the data isn't loaded until you actually request the 1st item
+      end
+    end
+  end
+end
+
+     user     system      total        real
+22.800000   6.040000  28.840000 (177.352028){% endhighlight %}
+
+<p>Again, being a CouchDB nub, I possibly did something very stupid (beyond running and posting yet another stupid benchmark), so I welcome any corrections to the code</p>
+
+<p>Oh, and I know my blog dates are wrong...it's a mistake which has proven a slippery slope</p>

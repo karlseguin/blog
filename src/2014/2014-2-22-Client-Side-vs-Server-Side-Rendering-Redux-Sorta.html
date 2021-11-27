@@ -1,0 +1,31 @@
+---
+layout: post
+date: 2014-02-22
+title: "Client-Side vs. Server-Side Rendering Redux (Sorta)"
+tags: [design, ui]
+---
+<p>Once upon a time <a href=/2012/5/30/Client-Side-vs-Server-Side-Rendering>I wrote a post espousing the benefits of server-side rendering over client-side rendering</a>. I've long meant to revisit the topic. However, my goal with this redux isn't to readdress the original, but rather talk more broadly about the balance with respect to client and server side code; specifically with respect to client-side MVC frameworks (angular, ember, ...)</p>
+
+<p>Since writing the original, my opinion hasn't swayed by any appreciable amount. But I have observed the building of three significant systems, each containing a significant front-end component. One of these systems was traditional RoR website, while two used client-side MVC frameworks ("MVC" from hereon in, since I won't be talking about server-side). In each case, the wrong technology choice was made and the consequences were as gruesome as they were obvious and as obvious as they were predictable.</p>
+
+<p>Before getting into details, I might be able to save you the hassle of reading this by pointing out that my opinion mimics Basecamp's, as seen in their excellent <a href="http://signalvnoise.com/posts/3112-how-basecamp-next-got-to-be-so-damn-fast-without-using-much-client-side-u">How Basecamp Next got to be so damn fast without using much client-side UI</a> and <a href="http://signalvnoise.com/posts/3697-server-generated-javascript-responses">Server-generated JavaScript Responses</a>.</p>
+
+<p>MVC techniques have enabled developers to build complex and responsive components while improving organization, testability and various important programming principles which were, more often than not, absent from the previous generation of javascript-heavy codebases. If you re-read that, please note the word <strong>components</strong>. Within the context of a website, a component is a particular feature which, from the MVC perspective, has extraordinary user experience requirements. As pointed out by Basecamp, a good example might be a calendar.</p>
+
+<p>The problem with MVC isn't a problem with MVC, but rather how developers are using it. They aren't using it with laser-like precision to enhance specific interactions and flows, but are carpet bombing their own systems. Which isn't to say there aren't valid cases for a comprehensive MVC powered sites, but those are the exception (maybe something like Asana or Gmail?)</p>
+
+<p>The two systems which I've seen rely on MVC (remember, I'm using MVC to mean client-side MVC) were both internal-facing CMS'. The problem here is that most CMS' are meant to focus on data integrity and correctness. State changes need to propagate, workflows need to guide and business logic must be enforced. This can be pretty complex stuff and it tends to require a intimate knowledge of the business and how it links to the data. The idea of putting anything but the most trivial validation on the client should set off alarms in your head and in your organization. There's a clear security concern, there's a performance concern (CMS' tend to interact with the DB and other internal tools which is much better to do in a single request), but worse is the duplication and poor cohesiveness. Given that we need to duplicate simple validation rules, it should be obvious that much of the more complex logic must also be duplicated. Also, as much as MVC is built around the separation of model and views, the cleanliness of that separation is nothing compared to the barrier between client and server running code.
+
+<p>In both cases, the result was data incorrectness, superficial business logic, unhelpful workflows, poor maintainability, lack of testing, and complicated user interfaces. Undoubtedly, some of the problems were implementation specific. All of those issues could surface within a more traditionally-built site. But I insist that it would require significantly worse programmers to mess it up at the same scale.</p>
+
+<p>Furthermore, this isn't to say that MVC can't be leveraged within a CMS, but only where it makes sense. And it doesn't make sense when it comes to providing a paged and filterable list of users which can be edited. That should be obvious.</p>
+
+<p>The other project was user-facing and didn't use MVC. It wasn't just user-facing, but it had a global audience where internet speed and connectivity were major issues. This system was built using a traditional server-side MVC approach, with full HTML views rendered on the server and a lot of reloads (involving large CSS and JavaScript files, lots of embedded third party scripts and a hellish amount of images). Since we aren't talking about a component, client-side MVC clearly wasn't the correct solution. The right solution was what we were doing in the mid 2000s:
+
+{% highlight javascript %}
+$('#list').get('http://server.com/users?page=2');
+{% endhighlight %}
+
+<p>A simplification, no doubt, but swapping out a container's innerHTML through AJAX is powerful and simple. Use it. (there are modern client and server-side tools and frameworks that can help).</p>
+
+<p>When I started a new job in 2006, I was made responsible for the backend of two separate internal dashboards. Their frontends were built in Flash. They were failures. Eight years from now, I'll be able to say the identical things about 2 systems that I saw in 2013.</p>

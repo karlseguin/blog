@@ -1,0 +1,27 @@
+---
+layout: post
+date: 2014-02-10
+title: "The Deceptive Nature Of Averages"
+description: "Unless you're dealing with a narrow scope, only knowing somethings average is worse than knowing nothing at all."
+tags: [learning]
+---
+
+<p>In general, I'm not a fan of averages. All too often they present fiction as fact. More generously, they often reveal something interesting, but it isn't clear what. Simply, they deceive. Consider life expectancy, which is the average years something is expected to live. The increase of human life expectancy over the centuries is an oft-used figure when praising scientific advances in general, and geriatrics advances in particular.</p>
+
+<p>In medieval Britain, life expectancy was 30. Today, in the UK, it's 81. Without a doubt, on average, people are living longer (that's exactly what this statistic is telling us). On its own though, that doesn't tell us much. We could jump to the conclusion that medical science is responsible for this massive leap, but this average alone can neither confirm nor deny this. Maybe people died prematurely due to social or political factors (war, education, food security and so on). Furthermore, maybe as individuals we don't actually live longer, maybe there are just fewer of us dying younger.</p>
+
+<p>None of the reasons people live longer today are obvious when only looking at life expectancy. One way to get more value from an average is to narrow the scope. Looking at medieval Britain's life expectancy for people who reach the age of 21, we'll find that it jumps to 64. From this we can speculate that infant mortality (which itself isn't only a medical science issue) might play a more significant role in life expectancy than geriatrics. Also, 64 itself is an average, if we move up to the 18th century we start to get to the point where records exist of people living into their 100s.</p>
+
+<p>In terms of programming, processing times, such as a page response time, is a good example to consider. Much like people interpret life expectancy as an absolute measure of how long they'll live (instead of the average), many developers interpret average response time as the actual time it takes to respond.</p>
+
+<p>Narrowing processing time can help focus the statistic. Response times should be grouped by endpoints, method or query. Timing statistics involving cache hits should not be allowed to pollute those involving cache misses. Despite narrowing the scope, averages are still deceptive. Imagine that we're logging the average response time of a specific endpoint in 1 second intervals. We might end up with the following 10 data points:</p>
+
+{% highlight text %}
+  2, 52, 2, 1, 2, 2, 3, 2, 2, 50
+{% endhighlight %}
+
+<p>As an average, this represents an acceptable 11 millisecond response time. The average fails to capture the reality that 20% of the responses were just a little less than 5x slower than the average (and 25x slower than the majority). At scale, I've seen this be a significant problem: 2-3% worrisome data points are lost (yet they represent the most important data points with respect to improving the system and guaranteeing a good user experience).</p>
+
+<p>Instead of averages, consider capturing percentiles. Additionally, look at tracking frequency of ranges. 0-5ms, 5-10ms, 10-25ms. To keep things simple, a counter of values which are outside your expected/target range can be meaningful. For the above data, we could define 25ms as our threshold, then we'd know that 2 out of 10 requests didn't meet our expectations. (this is similar to the slow query log available in MySQL and Postgres).</p>
+
+<p>We live much longer than we used to, <strong>on average</strong>. If you were born in the middle ages, you probably wouldn't die when you hit 30. You might not make it into your childhood, but if you make it past your teenage years, you'll end up living a decent length of time. If you want to improve the quality of a System look at outliers. That's "System" with a capital S, because I think <a href="http://www.ted.com/talks/shawn_achor_the_happy_secret_to_better_work.html">it applies to everything</a>.

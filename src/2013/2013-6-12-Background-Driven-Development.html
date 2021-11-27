@@ -1,0 +1,21 @@
+---
+layout: post
+date: 2013-06-12
+title: "Background Driven Development"
+description: "Moving work to background processes, possibly using queues, is a great way to make things fast and stable."
+tags: [design]
+---
+
+<p>Earlier this week 5 of nic.io's 7 name servers broke, resulting in a lot of failed dns lookups.This more or less brought down viki.com as well as our mobile apps since the platform team uses viki.io for all of its services. As luck would have it, a change made the day before to our own internal api router, kept us available if clients succeeded in doing the initial lookup (which wasn't many of them).</p>
+
+<p>The change was made for different reasons. Whenever Go has to lookup an address, it spins up a thread (note, not a goroutine) and calls <code>getaddrinfo</code>. Given a sufficient spike in request plus the slightest delay in resolving the name, bad things can happen. The Go team has <a href=https://codereview.appspot.com/10079043/>a solution in the works</a>, called Singleflight, which is really neat. Anyone new to Go or concurrency should take a look at it, it won't take more than 5 minutes of your time and it's worth understanding.</p>
+
+<p>Our solution <a href=https://gist.github.com/karlseguin/5763499>wasn't nearly as elegant</a>. What I do like about it though is that no matter how many requests you're dealing with, you'll get no more than 1 DNS lookup per minute per domain and 1 goroutine in total.</p>
+
+<p>Not only did our DNS cache solve our actual problem, it also made the system keep working throughout the .io outage. This pattern of doing work in the background and only updating your working data set with successful results, is actually something we use quite a bit. We do the same thing for application lookups, image transformations and each API cluster is updated asynchronously from our central database.</p>
+
+<p>Still, I find it very hard to see how to disconnect systems beyond small modules. There's a strong pull towards relying on hot data and simple, and often short-lived, caches. We want to read data the same way that we write it. Makes sense, until you hit a certain scale or have specific availability requirements.</p>
+
+<p>Jekyll's a good example of what I'm talking about. I often wonder how many sites could learn from Jekyll. Rails' Russian Doll Caching is another good example of thoughtfully designed caching. Varnish's grace mode is probably the best out-of-the-box solution for cache-as-a-backup; especially when combined with proactively purging data via the hash_always_miss flag.</p>
+
+<p>Next time you're writing code that'll get information to a user, consider how to make it work even if your database or private network fails. Maybe the complexity won't be worth it. Maybe it will.</p>

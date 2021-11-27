@@ -1,0 +1,195 @@
+---
+layout: post
+date: 2021-10-04
+title: "Elixir, A Little Beyond The Basics - Part 2: iolist"
+description: "iolist allows you to build strings dynamically, much like an string/bytes buffer."
+tags: [elixir]
+---
+<style>
+.spoiler{display: none}
+.spoiler:target {display: block}
+</style>
+
+<p>Now and again you'll find yourself wanting to dynamically build a string. For simple cases, string concatenation will do. But this quickly becomes inefficient as you end up repeatedly copying an ever-growing value (we previously spoke briefly about the performance of the <code>++</code> operator). In Go, you'd likely reach for <code>strings.Builder</code> (or a <code>bytes.Buffer</code> in older versions). In Java and .NET, a <code>StringBuffer</code> and <code>StringBuilder</code>. In Rust, a <code>String</code>. These all follow the same pattern: they try to reduce the number of allocations and frequency of data copying by over-allocating (e.g. having spare capacity for future operations), which amortizes the cost of concatenation.</p>
+
+<p>In Elixir, this isn't an option. We don't have control over memory allocation, and if we did, we wouldn't be able to mutate it anyways. To deal with this, Elixir and Erlang have a type called an iolist. An iolist is a list that can only contain other iolists, strings or a byte. Here are some examples:</p>
+
+{% highlight elixir %}
+["it's over 9000!"]
+["it's ", "over", " 9000!"]
+["it's ", ["over ", "9000!"]]
+[[], ["it's"]," ", ["over ", "9000!"]]
+[[["it", "'s", [[[]]], " o", ["v", ["e", "r"]]], " 9000!"]]
+{% endhighlight %}
+
+<p>Note that it doesn't matter how deeply nested it is or the number of strings or iolists in the parent or any of the child lists.</p>
+
+<p>We can convert these iolists into strings using <code>:erlang.iolist_to_binary</code> or Elixir's wrapper <code>IO.iodata_to_binary</code>. They all result in the same string being created:</p>
+
+
+{% highlight elixir %}
+> :erlang.iolist_to_binary(["it's over 9000!"])
+"it's over 9000!"
+
+> :erlang.iolist_to_binary(["it's ", "over", " 9000!"])
+"it's over 9000!"
+
+> :erlang.iolist_to_binary(["it's ", ["over ", "9000!"]])
+"it's over 9000!"
+
+> :erlang.iolist_to_binary([[], ["it's"]," ", ["over ", "9000!"]])
+"it's over 9000!"
+
+> :erlang.iolist_to_binary([[["it", "'s", [[[]]], " o", ["v", ["e", "r"]]], " 9000!"]])
+"it's over 9000!"
+{% endhighlight %}
+
+<p>Compared to concatenation, iolists are more efficient to create. Concatenation requires copying the values into an ever-growing memory. Every concatenation is a new allocation and copy. With iolists, you're creating a list that points to existing values:</p>
+
+{% highlight elixir %}
+def say(tense, power) do
+  text = "it"
+  text = text <>
+    case tense do
+      :past -> " was"
+      :present -> " is"
+      :future -> " will be"
+    end
+
+  text = text <>
+    case power > 9000 do
+      true -> " over"
+      false -> " under (or equal!)"
+    end
+
+  IO.puts(text <> " 9000!")
+end
+
+# vs
+
+def say(tense, power) do
+  text = ["it"]
+  text =
+    case tense do
+      :past -> [text, " was"]
+      :present -> [text, " is"]
+      :future -> [text, " will be"]
+    end
+
+  text =
+    case power > 9000 do
+      true -> [text, " over"]
+      false -> [text, " under (or equal!)"]
+    end
+
+  IO.puts([text, " 9000!"])
+end
+{% endhighlight %}
+
+<p>In our iolist version, there's only a single "it". Yes, you are allocating new lists, but this is relatively cheap. In the first version "it" is copied three times (i.e. "it is", "it is over" and "it is over 9000!"): a quadratic algorithm.</p>
+
+<p>Iolists become particularly efficient when used with a modules/functions that "understands" them. We saw how <code>:erlang.iolist_to_binary/1</code> can be used to turn an iolist into a binary. But some functions can operate on the iolist directly. For example, <code>File.write!/2</code> accepts and works with iolists just fine:</p>
+
+{% highlight elixir %}File.write!("test", [["it's"], " ", "over", [[[], " 9", ["000"]], "!"]]){% endhighlight %}
+
+<p>This is efficient because of the <a href="https://linux.die.net/man/2/writev">writev</a> system call which itself operates directly on a list of values. Significant allocations and copying can be avoided: at no point is the final string ever assembled in your program.</p>
+
+<p>Many libraries expose a <code>_to_iodata</code> variant which will return an iolist that you can then pass on to other iolist-aware libraries. For example <a href="https://github.com/michalmuskala/jason">Jason</a> expose an <code>encode_to_iodata</code> function. In fact, the <code>encode/1</code> function that you're probably using is basically using <code>encode_to_iodate/1</code> and then <code>:erlang.iolist_to_binary/1</code>. It's quite common to be able to get an iolist as a return value from one function and pass it into another. For example, we can take the iodata returned from <code>Jason.encode_to_iodata!/1</code> and pass is to <code>Plug.Conn.send_resp/3</code>.</p>
+
+<p>One thing to be aware of is that it isn't obvious if a function uses an iolists directly or simply converts it to a string. For example, <code>Jason.decode</code> accepts an iolist, but immediately converts it to a string.</p>
+
+<p>Iolists are deceptively easy, yet in my experience, that simplicity doesn't sink-in until you use them to solve a problem. To that end, let's try an exercise. You're given some input where each line is a valid json object. This is commonly known as JSON Lines, and it's quite common in logging systems:</p>
+
+{% highlight json %}
+{"id": 1, "message": "it's"}
+{"id": 2, "message": "over"}
+{"id": 3, "message": "9000"}
+{"id": 4, "message": "!!!!"}
+{% endhighlight %}
+
+<p>We want to take the above 4 valid JSON lines and turn it into 1 valid JSON object:</p>
+
+{% highlight elixir %}
+{
+  "total": 4,
+  "data": [
+    {"id": 1, "message": "it's"},
+    {"id": 2, "message": "over"},
+    {"id": 3, "message": "9000"},
+    {"id": 4, "message": "!!!!"}
+  ]
+}
+{% endhighlight %}
+
+<p>Here's the simple solution, which does not involve using iolists:</p>
+
+{% highlight elixir %}
+# normally this would come from a file
+# but let's use a string and keep our focus on the data manipulation
+input = ~s({"id": 1, "message": "it's"}
+{"id": 2, "message": "over"}
+{"id": 3, "message": "9000"}
+{"id": 4, "message": "!!!!"})
+
+entries = input
+|> String.split("\n", trim: true)
+|> Enum.map(fn line -> Jason.decode!(line) end)
+
+%{total: Enum.count(entries), data: entries}
+|> Jason.encode!()
+|> IO.puts()
+{% endhighlight %}
+
+<p>This code decodes the JSON only to re-encode it. It's quite wasteful; we already have perfectly valid serialized json, we just kind of want to glue it together. Can you figure out a solution that doesn't involve decoding and re-encoding?</p>
+
+<a href="#spoiler1" onclick="show('spoiler1')">show</a>
+<div class=spoiler id=spoiler1>
+{% highlight elixir %}
+input = ~s({"id": 1, "message": "it's"}
+{"id": 2, "message": "over"}
+{"id": 3, "message": "9000"}
+{"id": 4, "message": "!!!!"})
+
+[first | lines] = String.split(input, "\n", trim: true)
+
+{count, entries} =
+  Enum.reduce(lines, {0, [first]}, fn line, {count, acc} ->
+    {count + 1, [acc, ",", line]}
+  end)
+
+IO.puts(["{\"count\":", to_string(count), ",\"data\":[", entries, "]}"])
+{% endhighlight %}
+</div>
+
+<p>Remember that an iolist is defined as a list which contains a string, a byte or another iolist. This is why our count must be converted to a string via <code>to_string(count)</code>. Without this, 4 would be treated as ascii character EOT, which is not what we want. If our integer was negative or greater than 255, we'd get an error:</p>
+
+{% highlight text %}
+:erlang.iolist_to_binary(["a", 256])
+** (ArgumentError) errors were found at the given arguments:
+
+  * 1st argument: not an iodata term
+
+    :erlang.iolist_to_binary(["a", 256])
+{% endhighlight %}
+
+<p>Also note that we start our list with the first entry. This is a trick that works in other languages too. It allows us to prepend our separator (a comma in this case) in each iteration. Commonly, this is implementing by conditionally appending the comma for all but the last element (requiring a <code>if</code> inside the loop). To be completely safe, we should probably guard against an empty input though.</p>
+
+<p>Finally, you'll often see the word <code>iodata</code> instead of or in addition to iolist. In fact, we already saw Jason's <code>encode_to_iodata/1</code> function. The two are often used interchangeably, but they are different. Iodata is either an iolist or a string. <code>[]</code> and <code>["it", " ", ["o",["v", "e", "r"]]]</code> are both an iolist and iodata, <code>"it's over 9000"</code> is only an iodata. But, like I said, they're used quite interchangeable. Even Erlang's <code>:iolist_to_binary/1</code> accepts both.</p>
+
+<script>
+(function() {
+  const spoilers = document.getElementsByClassName('spoiler');
+  Array.prototype.forEach.call(spoilers, function(s){
+    s.style.display = 'none';
+  });
+})();
+
+function show(id) {
+  document.getElementById(id).style.display = 'block';
+}
+</script>
+
+<div id=pager>
+  <a class=prev href=/Elixir-A-Little-Beyond-The-Basics-Part-1-lists/>lists</a>
+  <a class=next href=/Elixir-A-Little-Beyond-The-Basics-Part-3-maps/>maps</a>
+</div>

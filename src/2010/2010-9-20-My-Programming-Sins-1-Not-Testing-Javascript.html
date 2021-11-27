@@ -1,0 +1,205 @@
+---
+permalink: "/2010/9/20/My-Programming-Sins-1-Not-Testing-Javascript/"
+layout: post
+date: 2010-09-20
+title: "My Programming Sins - 1. [Not] Testing Javascript"
+---
+<p>I write a lot of javascript, mostly in the form of jQuery plugins. The more I write, the more proportionally important my javascript becomes to the overall system, the worse I feel about not testing it. Its silliness to think that javascript shouldn't be tested...a purely arbitrary and made up line.</p>
+
+<p>This weekend I decided to rectify the problem. And I realized something I should have known before hand: <strong>the <a href="http://openmymind.net/2010/8/17/Write-testable-code-even-if-you-dont-write-tests">benefits of testing</a> my javascript are the same as those of testing any other code. After only a couple of tests, I'm a <em>much</em> better javascript coder</strong>. How can I be so adamant that testing your code is the most significant thing you can do to elevate your game, yet not test my javascript?! I'd probably be sick if I didn't know I'm hardly the most hypocritical programmer out there.</p>
+
+<p>So, say I have a plugin that turns a list of old checkboxes into something fancier. We'll call this plugin niceChoice and code it up something like: </p>
+
+{% highlight javascript %}
+(function($)
+{
+  $.fn.niceChoice = function(options)
+  {
+    var opts = $.extend({}, $.fn.niceChoice.defaults, options);
+    return this.each(function()
+    {
+      if (this.niceChoice) { return false; }
+      var $container = $(this);
+      var self =
+      {
+        initialize: function()
+        {
+          $container.find(':checkbox').hide();
+          $container.find('label')
+            .css('cursor', 'pointer')
+            .click(self.toggle)
+            .each(self.initializeLabel)
+            .addClass('round');
+        },
+        initializeLabel: function()
+        {
+          var $label = $(this);
+          $label.prepend($('<div>'));
+          self.setState($label, self.getCheckbox($label));
+        },
+        toggle: function()
+        {
+          var $label = $(this);
+          var $checkbox = self.getCheckbox($label);
+          self.toggleCheckbox($checkbox);
+          self.setState($label, $checkbox);
+          return false;
+        },
+        toggleCheckbox: function($checkbox)
+        {
+          if ($checkbox.is(':checked')) { $checkbox.removeAttr('checked'); }
+          else { $checkbox.attr('checked', 'checked'); }
+        },
+        setState: function($label, $checkbox)
+        {
+          if ($checkbox.is(':checked')) { $label.addClass('selected'); }
+          else { $label.removeClass('selected'); }
+        },
+        getCheckbox: function($label)
+        {
+          return $label.find(':checkbox');
+        }
+      }
+      this.niceChoice = self;
+      self.initialize();
+    });
+  }
+})(jQuery);
+
+$.fn.niceChoice.defaults =
+{
+
+};
+{% endhighlight %}
+
+<p>Given an HTML fragment that looks like:</p>
+
+{% highlight html %}
+<div id="template">
+  <label><input type="checkbox" name="check1" /> Label1</label>
+  <label><input type="checkbox" name="check2" checked="checked" /> Label2</label>
+  <label><input type="checkbox" name="check3" checked="checked" /> Label3</label>
+  <label><input type="checkbox" name="check4" /> Label4</label>
+  <label><input type="checkbox" name="check5" /> Label5</label>
+</div>
+{% endhighlight %}
+
+<p>And by calling <code>$('#template').niceChoice();</code> the template will hide the checkbox, pre-append a div to the label, and toggle the checked state of the checkbox and a class called <code>selected</code> on the label. Then, with a bit of css, you can build a pretty checkbox UI:</p>
+
+{% highlight css %}
+label{display:block;padding:10px 0;border:1px solid #eee;margin:0 1px 1px 0;width:300px;}
+label.selected{background:#f6f6f6;}
+label div{height:16px;width:16px;background:url('off.png');float:left;margin:0 10px}
+label.selected div{background:url('on.png');}
+{% endhighlight %}
+
+<p>But enough about the plugin, the point of this post is to show some testing. So the first thing we'll do is download <a href="http://github.com/jquery/qunit">qunit</a> and set up a page template:</p>
+
+{% highlight html %}
+<html>
+  <head>
+    <script type="text/javascript" src="http://ajax.googleapis.com/ajax/libs/jquery/1.4.2/jquery.min.js"></script>
+    <script type="text/javascript" src="PATH_TO_OUR_NICECHOICE_PLUGIN.js"></script>
+    <script type="text/javascript" src="../support/qunit.js"></script>
+    <link href="../support/qunit.css" media="screen" rel="stylesheet" type="text/css" />
+  </head>
+  <body>
+
+<h1 id="qunit-header">Nice Choice Tests</h1>
+<h2 id="qunit-banner"></h2>
+<h2 id="qunit-userAgent"></h2>
+<ol id="qunit-tests"></ol>
+<div id="qunit-fixture">
+
+</div>
+
+<script type="text/javascript">
+$(document).ready(function()
+{
+
+
+});
+</script>
+  </body>
+</html>
+{% endhighlight %}
+
+<p>Within the <code>#qunit-fixture</code> element, we can put the html fragement(s) that our test will use. Very interestingly, qunit internally clones the objects and re-initializes them between each test (so fight off your first reaction that having a test change your fixture will muck up other tests):</p>
+
+{% highlight html %}
+<div id="qunit-fixture">
+  <div id="template">
+    <label><input type="checkbox" name="check1" /> Label1</label>
+    <label><input type="checkbox" name="check2" checked="checked" /> Label2</label>
+    <label><input type="checkbox" name="check3" checked="checked" /> Label3</label>
+    <label><input type="checkbox" name="check4" /> Label4</label>
+    <label><input type="checkbox" name="check5" /> Label5</label>
+  </div>
+</div>
+{% endhighlight %}
+
+
+<p>Now we can start to write some tests. Writing a test with qunit is mostly like writing tests in any other language. The first thing that we want to do is ensure that our plugin properly initializes everything:
+
+{% highlight javascript %}
+<script type="text/javascript">
+$(document).ready(function()
+{
+  test("initializes the labels and checkboxes", function()
+  {
+    var $container = create();
+
+    ok($container.find(':checkbox:visible').length == 0, "checkboxes are invisible");
+    $container.find('label').each(function()
+    {
+      var $label = $(this);
+      ok($label.children(':eq(0)').is('div'), 'first child of every label is a div');
+      ok($label.css('cursor') == 'pointer', 'label has a pointer cursor style');
+    })
+  });
+
+  var defaults = {}; //default settings for us plugin (which we don't have any of... (bad example!))
+  function create(options)
+  {
+    //merge the default options with any specific overwriting ones
+    return $('#template').niceChoice($.extend({}, defaults, options));
+  }
+});
+</script>
+{% endhighlight %}
+
+<p>Now, there's are 3 things you need to know about qunit if you are coming from most other testing frameworks. First of all, <code>ok</code> is like an <code>Assert.True</code> except it ties in really well with their CSS/UI. While an <code>equals</code> and <code>same</code> method exist, I generally find that if you can express your assertion with an <code>ok</code> the output will be more readable. Secondly, and speaking of <code>equals</code>, the expected and actual values are in the reverse order of what you are probably used to (actual comes first). Finally, in qunit, an assertion is generally more meaningful than in other languages - it sorta sits between a test and an assertion. That's my feel for it anyways (you'll [hopefully] see what I mean when you open up the file in a browser and read the output). So generally you'll have fewer tests and more assertions.</p>
+
+<p>Let's add a couple more tests into the mix for the sake of completeness:</p>
+
+{% highlight javascript %}
+test("initializes the state based on checkbox values", function()
+{
+  var $container = create();
+  assertState($container.children('label'), new Array(false, true, true, false, false, false));
+});
+
+test("clicking a label toggle's the state", function()
+{
+  var $container = create();
+  var $label = $container.children(':eq(1)');
+  $label.click();
+  assertState($label, new Array(false));
+  $label.click();
+  assertState($label, new Array(true));
+});
+
+function assertState($labels, checked)
+{
+  for(var i = 0; i < $labels.length; ++i)
+  {
+    var $label = $labels.filter(':eq(' + i + ')');
+    equals(checked[i], $label.is('.selected'), "label selection class");
+    equals(checked[i], $label.children('input').is(':checked'), "checkbox checked");
+  }
+}
+{% endhighlight %}
+
+<p>Now you take your complete html file and simply open it in a browser to get a nice pass-green/fail-red output. Literally couldn't be easier or more useful.</p>
+
+<p>Of course, the plugin that we looked at was pretty simple...but don't think that means that testing more complicated stuff is hard. In a [near] future post, I'll take it a bit further and look at dealing with dependencies and asynchronous behavior.</p>

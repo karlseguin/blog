@@ -1,0 +1,115 @@
+---
+layout: post
+date: 2013-01-17
+title: "Introduction To Golang: Channels"
+tags: [concurrency, golang]
+---
+
+<p>So far we've focused on learning the basics of Go. It's now time to move on to slightly more advanced topics. Specifically, there are two core Go features that make Go stand out: goroutines and channels. Combined, goroutines and channels are Go's take on concurrency. In the next post we'll talk about Goroutines. For now, simply think of them as threads so that we can focus on channels.</p>
+
+<p>A channel is used to communicate between goroutines. They can be used to signal or pass data around. Anyone familiar with traditional thread-based programming knows the pain associated with sharing data. You have to carefully manage locks around data, avoiding deadlocks and avoiding serializing your threads. With channels, only one goroutine ever has access to a piece of data at a given time. There's no locking, only communication.</p>
+
+<p>Consider a phone conversation. It can be difficult to coordinate who should talk, especially as more people get added to the conversation. It isn't uncommon for two people to speak at once. Conversly, it also isn't uncommon for one person to do all the talking and not let the others participate. This, to me, is what thread-based programming is like. Channels on the other hand, are more like passing notes in class. Coordination is strictly controlled by the act of passing the note to someone. There's simply no way for you and your friend to write on the same note at the same time.</p>
+
+<p>Like arrays and maps, channels are created with <code>make</code>. A channel is created to pass a specific type. For example, we can create a channel of integers like so:</p>
+
+{% highlight go %}
+  c := make(chan int, 1)
+{% endhighlight %}
+
+<p>This is creating a channel that can be used to pass integers between goroutines. The <code>1</code> tells us that our channel has 1 value to pass around. This is known as a buffered channel. Here's a simple channel example I used earlier today:</p>
+
+{% highlight go %}
+func Run() {
+  s := &http.Server()
+  sig := make(chan os.Signal, 1)
+  signal.Notify(sig, os.Interrupt)
+  go func() {
+    <-sig
+    time.Sleep(30 * time.Second)
+    os.Exit(0)
+  }()
+  s.ListenAndServe()
+}
+{% endhighlight %}
+
+<p>Lot's of new stuff here. The idea behind the code is to intercept the interupt signal (ctrl-c) and delay termination by 30 seconds. The first thing to understand is that <code>ListenAndServe</code> is blocking: it starts the HTTP server and listens for incoming connections in an endless loop.</p>
+
+<p>Before we block, we do three things. First, we define a channel which can pass an <code>os.Signal</code> around. Next we use the signal's <code>Notify</code> method to intecept a singal. When SIGINT is received, our channel will be activated. Finally, we run a goroutine (notice the <code>()</code> at the end of our <code>func</code>, which is actually executing the code - familiar to any javascript coder). Within our function, we block waiting for message to be received. When it is, our goroutine continues to execute (going to sleep before exiting).</p>
+
+<p>With channels, the &lt;- operator is used to send and receive messages respectively. In the above code, <code>signal.Notify</code> is taking care of sending the message. Also, our goroutine is blocking and simply discarding the received messaged. A more illustrative and useless version would be:</p>
+
+{% highlight go %}
+func main() {
+  sig := make(chan int, 1)
+  go func() {
+    value := <-sig
+    if value > 9000 {
+      log.Print("It's over 9000")
+    }
+  }()
+  sig <- 9002
+  time.Sleep(50 * time.Millisecond) //prevent us from immediately exiting
+}
+{% endhighlight %}
+
+<p>As a final example, let's build a buffer pool. When you are doing high throughput communication, it isn't uncommon for the constant allocation and deallocation of byte arrays to be a major performance bottleneck. It can cause bad memory fragmentation and result in aggressive garbage collection. An alternative is to pre-allocate buffers and have them checked in and out from various threads.</p>
+
+<p>First, our structure:</p>
+
+{% highlight go %}
+type BufferPool struct {
+  list chan []byte
+}
+{% endhighlight %}
+
+<p>Our pool is nothing more than a channel capable of passing byte arrays around. Now we'll create our pool:</p>
+
+{% highlight go %}
+
+func NewBufferPool(bufferSize int, poolSize int) (pool *BufferPool) {
+  pool = &BufferPool{
+    list: make(chan []byte, poolSize),
+  }
+  for i := 0; i < poolSize; i++ {
+    pool.list <-  make([]byte, bufferSize)
+  }
+  return
+}
+{% endhighlight %}
+
+<p>Our function is creating a new pool that'll hold <code>poolSize</code> buffers and then actually loading those buffers (each of <code>bufferSize</code>).</p>
+
+<p>Now we can add a <code>CheckOut</code> function:</p>
+
+{% highlight go %}
+func (pool *BufferPool) CheckOut() ([]byte) {
+  return <-pool.list
+}
+{% endhighlight %}
+
+<p>And our <code>Release</code> function:</p>
+
+{% highlight go %}
+func (pool *BufferPool) Release(b []byte) {
+  pool.list <- b
+}
+{% endhighlight %}
+
+<p>Which is all we need:</p>
+
+{% highlight go %}
+var (
+  pool := NewBufferPool(4096, 1000)
+)
+
+func SomeFunc() {
+  buffer := pool.CheckOut()
+  defer pool.Release(buffer)
+  //do something
+}
+{% endhighlight %}
+
+<p>Our implementation is rather simple, but hopefully it shows how channels work, their syntax, and how the channel size can impact how the channel (and relevant code) behaves. Go has a number of other language features built around channel, like <code>select</code> and <code>range</code> but the important thing for now is to get a feel around this type of communication and what it implies with respect to multi-threaded programming.</p>
+
+<p>As an aside, the last code snippet introduced two new features.  First, <code>var (...)</code> is how we define variables outside of a function. If they start with an uppercase letter, they'll be globally visible, otherwise they are visible inside the function. Also, we used <code>defer</code>. The code that we defer will be executed before leaving the function. This lets us neatly group code that acquires a resource with the code responsible for freeing it. It serves the same function as Java's try-with-resource or C#'s using, but is cleaner and simpler than both.</p>

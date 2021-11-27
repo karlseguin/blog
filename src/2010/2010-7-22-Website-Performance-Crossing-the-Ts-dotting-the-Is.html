@@ -1,0 +1,47 @@
+---
+permalink: "/2010/7/22/Website-Performance-Crossing-the-Ts-dotting-the-Is/"
+layout: post
+date: 2010-07-22
+title: "Website Performance : Crossing the T's and dotting the I's"
+tags: [devops, performance]
+---
+Website Performance : Crossing the T's and dotting the I's
+
+<p>I've long maintained that premature and micro optimizations are healthy things developers should be doing to get better at their craft. Premature optimization is a sign of passion for quality and technology. Micro optimization is one of the best ways a developer can get familiar with fundamental aspects of the tools he or she is using.</p>
+
+<p>That tangent aside (starting with a tangent doesn't seems right), there are things you can and should do as a web developer to speed up the experience users have on your site. Thats because the few milliseconds your server takes to process a request is dwarfed by the networking and rendering overhead it takes to actually display a page. Companies like Google and Amazon have researched the impact of page load speed and suffice it to say that, for them at least, its a very significant concern. While you (or I) might not be running google.com or amazon.com,  we all know that a slow loading site is frustrating.</p>
+
+<p>The first, and most significant thing you can do is merge your css and javascript files - which can greatly reduce load times. For example, the awful msdn.microsoft.com could reduce the number of requests needed to load its homepage by 25% (from 49 to 37).</p>
+
+<p>Next, you should make sure to shrink those resources and enable gzip compression. You can even take it a step further and pre-zip your content - this enables you to use the highest compression setting without fear of burdening your processor.</p>
+
+<p>Finally, you'll definitely want to make sure your static content (images, js, css) specify a far-reaching expiration and encourage caching. Busier sites will even want to reduce the pipeline between request and servicing a static file (there's no need to middleware (authentication, session, frameworks)) just to serve a text file from disk.</p>
+
+<p>Rails has a lot of this capability built-in. The <code>javascript_include_tag</code> and <code>stylesheet_link_tag</code> can take an array of files and can cache the merged output, like so: <code>javascript_include_tag 'jquery', 'site', 'jquery.popup', :cache => true</code>. Rails will even generate a cache-busting querystring which allows you to safely set a future expiration date. Rails also lets you disable static file serving - which is actually the recommended setting in production.</p>
+
+<p>Eventually though, you might want to do more than what Rails does out of the box - such as compressing or pre-zipping files. This is where 3rd party plugins come in, such as <a href="http://synthesis.sbecker.net/pages/asset_packager">AssetPackager</a>.</p>
+
+<p>Of course, you'll want to make sure your web server is setup to handle all this goodness. Here is the relevant configuration from our recently setup <a href="http://noobgaming.com/">game tips</a> site, which uses nginx:</p>
+{% highlight clike %}
+
+location ~*all\.(js|css) {
+   root /www/noobgaming/current/public;
+   expires max;
+   add_header Cache-Control public;
+   gzip_static on;
+}
+
+location ~*\.(css|js|png|jpg|gif|txt|ico)$ {
+   root /www/noobgaming/current/public;
+   expires max;
+   add_header Cache-Control public;
+}
+{% endhighlight %}
+
+<p>The difference between the two is that we are telling nginx to use its static gzip module (which was <a href="http://www.openmymind.net/2010/7/1/Installing-Nginx-with-Passenger-on-Linux">compiled</a> with the <code>--with-http_gzip_static_module</code> flag) to serve up all.js and all.css. In other words, if the browser supports gzip, whenever all.js is requested, nginx will actually server all.js.gz - which is created as part of our deployment process. Also notice that nginx is serving up these files directly without any framework or middleware getting in the way.</p>
+
+<p>ASP.NET (WebForms, MVC or WebMatrix) doesn't have any built-in capabilities, but two good open source solutions exist: <a href="http://github.com/jetheredge/SquishIt/">squishit</a> and <a href="http://github.com/karlseguin/Metsys.WebOp">metsys.webop</a>. SquishIt is well suited for most projects and is straightforward to use. WebOp is more extreme and does most of its work at compile-time - making it more suitable for power users (fair notice, I wrote webop).</p>
+
+<p>Ultimately, what you are going to want to do is install the <a href="https://addons.mozilla.org/en-US/firefox/addon/5369/">yslow firefox addon</a> which you can use against your sites to get a useful report and implementation tips.</p>
+
+<p>There's no reason why your site doesn't score 90 or more. There's also no reason why the ASP.NET MVC team hasn't baked these features into the framework. And, while we are at it, there's no reason why Microsoft developer properties (msdn.microsoft.com, weblogs.asp.net and even the newly re-built www.asp.net) are beyond poorly optimized.</p>

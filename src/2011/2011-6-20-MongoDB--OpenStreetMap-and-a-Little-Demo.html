@@ -1,0 +1,29 @@
+---
+permalink: "/2011/6/20/MongoDB--OpenStreetMap-and-a-Little-Demo/"
+layout: post
+date: 2011-06-20
+title: "MongoDB, OpenStreetMap and a Little Demo"
+tags: [mongodb]
+---
+<p>I was curious in finding worldwide points of interest, and I quickly found the <a href="http://wiki.openstreetmap.org/">OpenStreetMap</a> database. The complete database is available as a 16GB compressed XML file (which comes in at around 250gb uncompressed), which is updated daily by generous contributors. Thankfully, you can find mirrors that have partitioned the data in some meaningful way (like by major cities).</p>
+
+<p>For our needs, the data is made up of few important elements. The first is a <code>node</code>, which has a longitude, latitude and an id. A node has zero or more <code>tag</code> child-elements, which are key-value pairs of meta data. There's also a <code>way</code> element which references multiple <code>node</code> elements. You see, in my naive mind a point of interest like a building would be represented by a single <code>node</code>. However, from a mapping point of view, it's really a polygon made up of multiple <code>nodes</code>. A <code>way</code> can also have zero or more tags.</p>
+
+<p>Now ever since I wrote the MongoDB <a href="http://mongly.com/geo">Geospatial tutorial</a>, I've had an itch to try more real-world stuff with MongoDB's geo capabilities. This database seemed like an ideal candidate. The first thing I did was download a bunch of city-dumps from a mirror and started writing a <a href="https://github.com/karlseguin/pots-importer">C# importer (github)</a>. I wasn't actually interested in polygons, so I calculated the centroid of any <code>way</code> and converted it into a <code>node</code>. Most of the time the result was quite good. The importer's readme has more information.</p>
+
+<p>Next, I wrote a little Sinatra app and did the obvious thing using the Google Maps API. You can also find the source for this <a href="https://github.com/karlseguin/pots-web">on github</a>.</p>
+
+<p>I've put up a demo at <a href="http://pots.mongly.com/">pots.mongly.com</a></p>
+
+<p>I also extracted the data for each city and made it available, so that you can play with it yourself. It's available at <a href="http://data.mongly.com/">data.mongly.com</a> (you can read about OpenStreetMap's licensing <a href="http://wiki.openstreetmap.org/wiki/Legal_FAQ">here</a>). The data is meant to be easily imported into mongodb using its mongoimport command. Download a city, extract it, and do the following:</p>
+
+{% highlight clike %}
+mongoimport -d pots -c tags PATH_TO_TAGS.json
+mongoimport -d pots -c nodes PATH_TO_COUNTRY.json
+{% endhighlight %}
+
+<p>If mongoimport isn't in your PATH, you'll need to use the full path. Also, the <code>tags.json</code> file is the same for all cities - so you only need to import it once. Finally, connect to mongodb, type <code>use pots</code> and then create a 2D index on the loc field: <code>db.nodes.ensureIndex({loc: '2d'})</code></p>
+
+<p>Different cities have different amounts of data. I left everything in and you can see there's quite a bit of information. Given that MongoDB supports composite indexes, it'd be trivial to provide additional node filtering.</p>
+
+<p>And that's why, when people ask me <em>What did you do this weekend?</em>, I can say <em>I parsed a 250gb XML file</em> (because, yes, I did download it and I did *try* to import it)</p>.

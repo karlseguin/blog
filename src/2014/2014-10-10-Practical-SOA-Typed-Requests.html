@@ -1,0 +1,163 @@
+---
+layout: post
+date: 2014-10-10
+title: "Practical SOA / microservices - Typed Requests"
+tags: [design, performance, soa]
+description: "What gains can we get by switching to a lightweight TCP message between a reverse proxy and the application server?"
+---
+<p>It's common these days to front web applications with a reverse proxy, gluing the two with HTTP. Nginx's <code>proxy_pass</code> directive is an example of such a setup. This approach results in having to parse two HTTP messages and relying on HTTP headers or querystrings to add any additional information. Furthermore, HTTP isn't particularly efficient. What would happen if we replaced the glue with a custom serialized message over TCP?</p>
+
+<p>It was pointed out to me that this isn't a new idea. To some extent, the above describes FastCGI. Just like we have <code>proxy_pass</code>, so too do we have <code>fastcgi_pass</code>. Still, I couldn't find any performance comparison between http vs FastCGI. And, FastCGI is fairly old and generic. I was wondering what something modern and specialized might look like.</p>
+
+<p>What I did was convert incoming requests to the reverse proxy into length-prefixed messages serialized via protocol buffers and sent via TCP. Similarly, on the way out, the upstream sends a length-prefixed serialized message back, which the reserve proxy transforms into the final HTTP response. Keeping things simple for the purpose of this post, the definitions look like:</p>
+
+{% highlight c %}
+message Request {
+  required int32 version = 1;
+  required string url = 2;
+}
+
+message Response {
+  required int32 status = 1;
+  required bytes body = 2;
+}
+{% endhighlight %}
+
+<p>When you have a top-level layer to handle things like caching, routing, logging as well as some authentication and authorization, you often end up with information that would be useful for your services. Here, I've added a <code>version</code>, which might come from the URL.</p>
+
+<p>In reality, the code follows a standard request-response TCP flow <a href="/2012/1/12/Reading-From-TCP-Streams/">where payloads are length-prefixed:</a>.
+
+{% highlight go %}
+var bytePool = &sync.Pool{
+  New: func() interface{} { return make([]byte, 8192) },
+}
+
+func main() {
+  http.HandleFunc("/tcp", tcp)
+  s := &http.Server{
+    Addr: ":4000",
+  }
+  log.Fatal(s.ListenAndServe())
+}
+
+func tcp(writer http.ResponseWriter, req *http.Request) {
+  path := req.URL.Path
+  request := &messages.Request{
+    Url:     proto.String(path),
+    Version: proto.Int32(getVersion(path)),
+  }
+
+  data, err := proto.Marshal(request)
+  if err != nil {
+    //todo handle
+  }
+
+  conn, err := write(data)
+  if err != nil {
+    //todo handle
+    conn.Close()
+    return
+  }
+
+  response, err := read(conn)
+  if err != nil {
+    //todo handle
+    conn.Close()
+    return
+  }
+  writer.WriteHeader(int(response.GetStatus()))
+  writer.Write(response.GetBody())
+  connPool.Put(conn)
+}
+
+func write(data []byte) (conn net.Conn, err error) {
+  length := bytePool.Get().([]byte)
+  defer bytePool.Put(length)
+  slice := length[:4]
+
+  //get the length of our payload, which we'll use to prefix our message with
+  //(so the other end knows how many bytes to read)
+  binary.LittleEndian.PutUint32(slice, uint32(len(data)))
+
+  conn = connPool.Get().(net.Conn)
+  if _, err = conn.Write(slice); err != nil {
+    return
+  }
+  _, err = conn.Write(data)
+  return
+}
+
+func read(conn net.Conn) ([]byte, error) {
+  length, read := uint32(0), uint32(0)
+  bytes := bytePool.Get().([]byte)
+  defer bytePool.Put(bytes)
+  conn.SetReadDeadline(time.Now().Add(time.Second * 10))
+  for {
+    n, err := conn.Read(bytes[read:])
+    if err != nil {
+      return nil, err
+    }
+    read += uint32(n)
+    if length == 0 && read > 3 {
+      length = binary.LittleEndian.Uint32(bytes[:4]) + 4
+    }
+    if read == length {
+      response := &messages.Response{}
+      err := proto.Unmarshal(bytes[4:length], response)
+      return response, err
+    }
+  }
+}
+{% endhighlight %}
+
+<p>The response object that our upstream returns is bareboned - a status and the body. Maybe you'll want to add more data, but in my world, this routing layer knows a lot about the requests and it'll know if and how long the response can be cached, as well as it's content type. But, you could make it more complex.</p>
+
+<p>What's the performance implication? The load was achieved via <code>ab -n 40000 -c 20 http://127.0.0.1:4000/(tcp|http)</code>. The HTTP proxy used Go's builtin <code>httputil.NewSingleHostReverseProxy</code>, which <strong>does</strong> do keepalive. The upstream was a simple node.js server (I wanted to isolate the test to the protocol, not burden it with other stuff). This is the HTTP handler:</p>
+
+{% highlight coffeescript %}
+httpResponse = new Buffer("hello http")
+handleHttp = (req, res) -> res.end(httpResponse)
+http.createServer(handleHttp).listen(4005)
+{% endhighlight %}
+
+<p>and the TCP handler:</p>
+{% highlight coffeescript %}
+tcpBody = Messages.serialize({status: 200, body: 'hello tcp '}, 'messages.Response')
+tcpResponse = new Buffer(tcpBody.length + 4)
+tcpResponse.writeUInt32LE(tcpBody.length, 0)
+tcpBody.copy(tcpResponse, 4)
+tcpBody = null
+
+handleTcp = (socket) ->
+  buffer = new Buffer(4100)
+  read = length = 0
+  socket.on 'error', (err) -> console.log err
+  socket.on 'data', (data) ->
+    data.copy(buffer, read)
+    read += data.length
+    if length == 0 && read > 3
+      length = buffer.readUInt32LE(0) + 4
+
+    if length != 0 && read == length
+      Request.parseAsync(buffer.slice(4, length), 'messages.Request')
+      .then (request) ->
+        socket.write(tcpResponse)
+        read = length = 0
+      .catch (err) ->
+        console.log(err)
+        socket.close()
+
+net.createServer(handleTcp).listen(4006)
+{% endhighlight %}
+
+<p>Results:</p>
+{% highlight text %}HTTP : 5333  req/sec
+TCP  : 11765 req/sec{% endhighlight %}
+
+<p>I also tested it without the byte pool (but with the conn pool). That hit <code>9027 req/sec</code>.</p>
+
+<p>You might be put off by the extra code having to write -> read, read -> write the stream, but the reality is the corresponding HTTP code is considerably more complicated, it just happens to be hidden away in a library.</p>
+
+<p>In addition to the speed improvement, we've also managed to move away from the generic data bag of HTTP headers. Admitedly, our router probably won't know the inner details of every request, so you'll still end up having a generic query lookup. But there'll also be common fields that you'll be able to add to the request. Those fields can be typed, and can be arrays or objects.</p>
+
+<p>I'm not 100% sure how I feel about it all. Something about it feels right. When I talk to a DB, I like the idea of a tweaked protocol hidden by a clean interface (I know some newer databases only expose HTTP, but that's never felt right to me). This, to me, is similar. I don't see what value HTTP between the reverse proxy and the upstream adds.</p>

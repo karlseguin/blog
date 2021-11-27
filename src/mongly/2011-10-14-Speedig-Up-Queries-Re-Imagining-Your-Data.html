@@ -1,0 +1,163 @@
+---
+layout: mongly
+title: "Speeding Up Queries: Re-Imagining Your Data"
+multi: false
+tags: [modeling, mongodb, performance]
+---
+<style>
+h1{width:960;margin:20px auto;text-align:center;font-size:36px;}
+h3{margin-top:20px;}
+p{margin-bottom:20px;line-height:36px;}
+p.nopad{margin-bottom:0px;}
+/*pre{font-size:85%;border:1px solid #ccc;border-radius:4px;padding:10px;color:#333;margin-bottom:10px;}*/
+#page{width:960px;margin:0 auto;}
+#intro{font-size:22px;line-height:36px;}
+
+#tldr {width:100%;margin:40px 0;padding:15px 0;border:solid #aaa;border-width:1px 0;}
+#tldr .caption{float:left;width:150px;line-height:55px;}
+#tldr .text{margin-left:160px;line-height:38px;}
+#tldr .caption:after{content:'\203a';padding-left:50px;}
+
+#feature{overflow:auto;}
+#explanation{width:500px;float:left;}
+#example{width:400px;margin-left:550px;}
+#example table{width:400px;}
+#example table th{text-align:left;}
+
+.preNote div{text-align:center;background:#ddd;color:#222;padding:5px 0;border-top-left-radius:5px;border-top-right-radius:5px;border:1px solid #bbb;text-shadow:1px 1px 1px #fff;font-size:95%;}
+.preNote pre {border-top:none;border-top-left-radius:0;border-top-right-radius:0;}
+
+@media screen and (max-width: 800px) {
+  #page{width: 100%; padding: 10px}
+  code[class*="language-"],
+  pre[class*="language-"], pre{margin-left: 0; white-space: pre-wrap; word-break: break-word}
+}
+</style>
+<h1>{{ title }}</h1>
+<p id="intro">NoSQL isn't just about new tools, it's also about new [and old] modeling and data access techniques. Since traditional modeling approaches are still relevant, it would be foolish to <em>forget everything that you know about data modeling</em>. Equally foolish would be to fail to learn, experiment and consider different techniques; especially in the face of poor performing queries.</p>
+
+<div id="tldr">
+  <div class="caption">TL;DR</div>
+  <div class="text">Consider doing more work during inserts and updates (or background tasks), often in the form of denormalization, so that reads are as straightforward as possible.</div>
+</div>
+
+<p>For most applications, reads far outnumber writes. Yet most code is written so that reads are often complex while writes are dead simple. When performance is an issue, going from complex queries (involving a lot of fields, aggregation or map reduce) to simple queries can have <strong>devastatingly awesome</strong> consequences.</p>
+
+<h2>The Sample Scenario</h2>
+<div id="feature">
+  <div id="explanation">
+  <p>We want to build a leaderboard system for groups of friends. When a user goes to his or her score page, he doesn't only see his best-score per level, but also the best score out of his friends.</p>
+  </div>
+  <div id="example">
+    <table>
+      <thead><th>lvl</th><th>your score</th><th>best score</th><th>best by</th></thead>
+      <tbody>
+        <tr><td>1</td><td>500</td><td>900</td><td>Leto</td></tr>
+        <tr><td>2</td><td>200</td><td>350</td><td>Jessica</td></tr>
+        <tr><td>3</td><td>1423</td><td>1445</td><td>Paul</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>A First Attempt</h3>
+<p class="nopad">Our first approach might be to store our data like so:</p>
+{% highlight javascript %}
+db.users.find()
+  {_id: 'Gurney', friends: ['Leto', 'Paul', 'Duncan', 'Jessica', 'Glossu']}
+  ...
+db.scores.find()
+ {_id: ObjectId("..."), level: 1, score: 500, user: 'Gurney'},
+ {_id: ObjectId("..."), level: 2, score: 200, user: 'Gurney'},
+ {_id: ObjectId("..."), level: 1, score: 900, user: 'Leto'},
+ {_id: ObjectId("..."), level: 2, score: 150, user: 'Leto'},
+ {_id: ObjectId("..."), level: 1, score: 800, user: 'Jessica'},
+ {_id: ObjectId("..."), level: 2, score: 350, user: 'Jessica'},
+ ...
+{% endhighlight %}
+
+<p>This approach fits with how we've been taught to build systems. You have well defined and distinct entities which map to real world objects.</p>
+
+<p>With this model, saving scores is simple. We just need to pull our results...It turns out that, at scale, there isn't a great way to do that. The two most likely solutions, I see, are to either do some type of aggregation (GROUP BY in SQL, Map Reduce in MongoDB) or hit the database multiple times (linear to the number of levels we are showing). Neither of which work particularly well with a lot of levels, a lot of friends, or with a sharded architecture.<p>
+
+{% highlight javascript %}
+// The non-critical-path code is optimized...yay
+
+// do this as an upsert, 500 is the new score
+db.scores.update({
+  user: 'Paul',
+  level: 4,
+  score: {$lt: 500}},
+  {$set: {score: 500}
+}, true)
+{% endhighlight %}
+
+<br><br>
+{% highlight javascript %}
+// The frequently accessed code is slow and won't scale
+var m = function() {
+  emit(this.level, {user: this.user, score: this.score})
+}
+
+var r = function(name, scores) {
+  var max = scores[0];
+  for(var i = 1; i &lt; scores.length; ++i) {
+    if (scores[i].score > max.score) { max = scores[i]; }
+  }
+  return max;
+}
+var friendsList = db.users.findOne({_id: 'Gurney'}, {friends:1}).friends;
+db.scores.mapReduce(m, r, {query: {user: {$in: friendsList}}, out: {inline: 1}})
+{% endhighlight %}
+
+<h3>A Better Approach</h3>
+<p class="nopad">Rather than looking at your data and wondering how to query it, consider thinking about an ideal query and figuring out how to model it. Our idea query would be:</p>
+
+{% highlight javascript %}
+db.scores.find({user: 'Gurney'})
+{% endhighlight %}
+
+<p class="nopad">This query is simple, it requires a single index on <code>user</code> and it can scale (we'd shard on <code>user</code>). In order to work, a score document would need to look like: </p>
+{% highlight javascript %}
+db.scores.find()
+{_id: ObjectId("..."), level: 1, score: 500,
+  user: 'Gurney', best: {user: Leto, score: 900}
+},
+...
+{% endhighlight %}
+
+<p>In order to reach this state, whenever a user scores a new personal best, we potentially have to update anyone who has that user as a friend:</p>
+
+{% highlight javascript %}
+// same as before
+db.scores.update({user: 'Paul', level: 4, score: {$lt: 500}},
+  {$set: {score: 500}}, true)
+
+// n returns the number of updated scores
+var updated = db.runCommand( "getlasterror" ).n
+
+// if this was a new personal best for Paul
+if (updated) {
+  //find everyone who has Paul as a friend
+  var cursor = db.users.find({friends: 'Paul'}, {_id:1})
+  var friends = cursor.map(function(doc) { return doc._id; })
+
+  // update their best entry if Paul's new score is better than their
+  // existing best
+  db.scores.update({user: {$in: friends}, 'best.score': {$lt: 500}},
+                   {$set: {'best.user': 'Paul', 'best.score': 500}},
+                   false, true);
+}
+{% endhighlight %}
+
+<p>Saving a score has gotten more complicated. However, writes often aren't the bottleneck. In this case, the complexity only happens when the score is a personal best. The rest of the time, it's the same code. We could further optimize the code by having Paul know who has him as a friend, but that isn't the type of denormalization we're focusing on today.</p>
+
+<h2>To The Purists</h2>
+<p>We could argue with purists that, in the end, pragmatism must win. A perfectly designed system that can't handle the load isn't perfect. I go a step further though. To me, the denormalized view of a score (the one that not only includes your score, but also the best score) is the proper one. Yes, we've duplicated data, but by doing so, our design reflects what a score, in our system, is.</p>
+
+<h2>Conclusion</h2>
+<p>If a read query is slow, and you've done what you can with indexes, then the solution may be to push the workload to inserts, updates or a background task. If you have difficulty visualizing it, think of it first in terms of an ideal query, then the structure which would satisfy the query, and finally how to maintain that structure.</p>
+
+<p>This approach can be abused. But more often than not, people are not, whatsoever, thinking about the problem from this perspective.</p>
+
+<p>When a query is slow, don't only ask <em>how can I make this faster?</em> Ask <em>how can I make this simpler?</em> If another part must pay a price, at least that's an option to  evaluate.</p>

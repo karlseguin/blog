@@ -1,0 +1,51 @@
+---
+layout: post
+date: 2015-01-30
+title: "A decade of unit testing"
+description: "What a decade of coding has taught me about testing code"
+tags: [testing]
+---
+
+<p>There are few programming-related topics that make me squirm as much as testing. Once upon a time, I would have described my approach to testing as an <em>evolution</em>. Nowadays, I'm increasingly doubtful about how and what to test as well as the value of testing itself.</p>
+
+<p>To understand this uncertainty, you must first understand that, for me, unit testing is, first and foremost, a design activity. Yes, unit tests add value with respect to correctness and refactoring; but it's a tests ability to ferret out code smells, tight coupling and complexity which has provided me the most value. Incidentally, I believe that this is the spirit of TDD; it isn't about what you do first, but rather what drives your design.</p>
+
+<p>I still believe unit testing is an amazing design tool / canary. But, after so long, those lessons are intrinsically part of how I code. Having given up its lessons, unit testing's value to me is now about measuring correctness. But its ability to do so is limited.</p>
+
+<p>I used to believe in heavy mocking. I'd write a test for each interaction, something like:</p>
+
+{% highlight ruby %}
+it "saves the data in the model" do
+  expect(User).to receive(:save).with('leto', 'atreides')
+  post :create, first: 'leto', last: 'atreides'
+end
+{% endhighlight %}
+
+<p>(This is a good example of how unit tests can help identify code smells: if you're having to setup many mocks/stubs, you're method probably needs to be refactored.)</p>
+
+<p>The problem with this code is the assumption on how <code>User.save</code> behaves. What if, for example, it expects <code>(last, first)</code> rather than <code>(first, last)</code>. You can write a unit test on the producer and verify the output, and a unit test on the consumer and verify its behavior, but your test have completely decoupled the most critical component: making sure the consumer and producer speak the exact same language. This is a trivial example, but the challenge gets much worse when you're at a system boundary and passing around "payloads".</p>
+
+<p>The solution is to favor integration tests. While this solves the problem of mismatch communication, integration tests are harder to write, can often require a custom harness (which, in 3 months, no one will understand) and typically aren't as flexible when it comes to testing corner cases.</p>
+
+<p>When all is said and done, my current testing approach can be broken down as:</p>
+
+<h5>1. Laser-focused unit tests</h5>
+<p>I unit tests to validate the correctness of non-trivial code and don't test how method X interacts with method Y. I never use a mock and will only rarely use a stub. Unit tests are to make sure that 5 + 7 returns 12, not that 5 and 7 get passed to another method.</p>
+
+<p>This means that I unit tests private methods. Or, more accurately, I don't care if a method is private or not. If the code is complex, if it's likely to break or to be misunderstood, if it handles a number of corner cases, it gets tested. For many this is a big no-no. Oh well.</p>
+
+<p>New developers should favor more unit tests. A test that's painful to write, requiring a lot of setup and containing numerous expectations, is an opportunity to improve.</p>
+
+<h5>2. Integration tests are a must</h5>
+<p>Even though it's going to be a pain to setup and it might be brittle, integration tests are absolutely and totally necessary. This is increasingly true as systems move toward loosely coupled services.</p>
+
+<p>I don't try to cover corner cases, but rather focus on the most common paths. The goal is to avoid any oh-shit stuff from getting through</p>
+
+<h5>3. Less code coverage</h5>
+<p>I've never been a fan of code coverage as a metric. It has never, in my experience, been an indicator for quality. But, with focused unit tests and integration tests covering only the most common cases, my code coverage today is a lot lower than it was a couple years ago. I'm not actively trying to lower my coverage, I'm just trying to increase the signal to noise.</p>
+
+<h5>4. Logging</h5>
+<p>This isn't going to be true for everyone, but robust logging is a significantly better investment than exhaustive code coverage. Specifically, you want centralized logging where every error is actionable (even if that action is just to filter out future occurrences). Between having no tests or no logging, I'd pick no tests (well, maybe not, since adding logging is a lot easier than adding tests, but you get what I mean).</p>
+
+<h5>Conclusion</h5>
+<p>To conclude, it's safe to say I still believe in unit testing and I feel that integration tests are becoming more and more critical. I now spend less time testing: unit tests are focused on testing code, not interactions, and integration tests are the common paths. I rely more on logging which is easier to implement and other benefits, to ensure that the system behaves as it should.</p>

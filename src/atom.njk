@@ -1,0 +1,25 @@
+---
+layout: null
+permalink: "/atom.xml"
+---
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+	<title>Karl Seguin</title>
+	<subtitle>{{ metadata.subtitle }}</subtitle>
+	<link href="http://www.openmymind.net/atom.xml" rel="self"/>
+	<link href="http://www.openmymind.net/"/>
+	<updated>{{ collections.posts | getNewestCollectionItemDate | dateToRfc3339 }}</updated>
+	<id>https://www.openmymind.net/</id>
+	<author><name>Karl Seguin</name></author>
+	{%- set posts = collections.all | public | reverse %}
+	{%- for post in posts.slice(0, 20) %}
+	{% set absolutePostUrl %}{{ post.url | url | absoluteUrl(metadata.url) }}{% endset %}
+	<entry>
+		<title>{{ post.data.title }}</title>
+		<link href="{{ absolutePostUrl }}"/>
+		<updated>{{ post.date | dateToRfc3339 }}</updated>
+		<id>{{ absolutePostUrl }}</id>
+		<content type="html">{{ post.templateContent | htmlToAbsoluteUrls(absolutePostUrl) }}</content>
+	</entry>
+	{%- endfor %}
+</feed>

@@ -1,0 +1,270 @@
+---
+layout: post
+date: 2014-10-18
+title: "Practical SOA / microservices - Hydration - Part 2"
+tags: [design, performance, scalability, soa]
+description: "Leveraging a service oriented architecture presents a number of design and performance challenges. A hydration layer that sits at the top of your services can help."
+---
+<p>In <a href=/Practical-SOA-Hydration-Part-1/>part 1</a> we saw how we can use hydration, a modern form of edge side include, to bring together data from multiple services. In this part we'll look at the code. This isn't an end-to-end solution that you can just drop into your system. It's just something to get you headed in the right direction.</p>
+
+<h3>Responses</h3>
+<p>We actually have to consider four distinct types of responses:</p>
+<ul>
+  <li>cached + hydrated
+  <li>uncached + hydrated
+  <li>cached + unhydrated
+  <li>uncached + gunhydrated
+</ul>
+
+<p>The request that stands apart from the others is uncached+unhydrated. It's unique because it's the only one that doesn't need us to explicitly read the data into memory -- we can pipe one end of to the other. I'm actually not going to show how to do that because it adds quite a bit of complexity, and we can simply use the cached+unhydrated model response type. We might pay the price of an extra copy, but that's nothing. (To be clear, I'd have to think hard about how to implement this cleanly, I've never handled this case specifically, and it's never been a problem.)</p>
+
+<p>First we want a <code>Response</code> interface:</p>
+
+{% highlight go %}
+type Response interface {
+  Header() http.Header
+  Status() int
+  Body() []byte
+}
+{% endhighlight %}
+
+<p>This is the type that actually gets returned out of the middleware chain to the main handler. A very simple handler might look like:</p>
+
+{% highlight go %}
+func handler(output http.ResponseWriter, req *http.Request) {
+  response, err := Proxy(req)
+  if err != nil {
+    log.Println(err.Error())
+    output.WriteHeader(500)
+    return
+  }
+  for k, v := range response.Header() {
+    response.Header()[k] = v
+  }
+  body := response.Body()
+  output.Header()["Content-Length"] = []string{strconv.Itoa(len(body))}
+  output.WriteHeader(response.Status())
+  output.Write(body)
+}
+{% endhighlight %}
+
+<p>The proxy would really be a chain of middlewares which handle logs and maybe authentication, caching and so on. I won't actually show the caching here, but I'll make it so that data is cacheable. To keep this relatively simple though, we'll just have a single "middleware" called <code>Proxy</code>:
+
+
+{% highlight go %}
+func Proxy(req *http.Request) (Response, error) {
+  upstreamRequest := createRequest(req)
+  response, err := http.DefaultClient.Do(upstreamRequest)
+  if err != nil {
+    return nil, err
+  }
+  readResponse := NewNormalResponse(response)
+  hydrateField := response.Header.Get("X-Hydrate")
+  if len(hydrateField) == 0 {
+    return readResponse, nil
+  }
+  return NewHydrateResponse(readResponse, hydrateField)
+}
+{% endhighlight %}
+
+<p>From the above code, all we need to do is complete <code>NewNormalResponse</code> and <code>NewHydrateResponse</code> functions and we're done. (<code>createRequest</code> converts the incoming <code>*http.Request</code> into the request to send to your service; it's your routing logic.)
+
+<h3>NormalResponse</h3>
+<p>I'll start with handling the case where we aren't hydrating the data. This works for both cachable and uncacheable requests. The <code>NormalResponse</code> implementation is simple:</p>
+
+{% highlight go %}
+type NormalResponse struct {
+  status int
+  header http.Header
+  body   []byte
+}
+
+func (r *NormalResponse) Header() http.Header {
+  return r.header
+}
+
+func (r *NormalResponse) Status() int {
+  return r.status
+}
+
+func (r *NormalResponse) Body() []byte {
+  return r.body
+}
+{% endhighlight %}
+
+<p>And converting our service's response into <code>NormalResponse</code> is mostly a matter of copying values:</p>
+
+{% highlight go %}
+func NewNormalResponse(response *http.Response) Response {
+  var body []byte
+  length := response.ContentLength
+  if length > 0 {
+    body = make([]byte, length)
+    io.ReadFull(response.Body, body)
+  } else if length == -1 {
+    buffer := bytes.NewBuffer(make([]byte, 0, 16384))
+    io.Copy(buffer, response.Body)
+    body = buffer.Bytes()
+    // if we're going to cache this request
+    // we should consider trimming the buffer
+  }
+  response.Body.Close()
+  return &NormalResponse{
+    status: response.StatusCode,
+    header: response.Header,
+    body:   body,
+  }
+}{% endhighlight %}
+
+<p>There's a comment in the block where the content length isn't known. This <a href=/Go-Slices-And-The-Case-Of-The-Missing-Memory/>something which has frustrated me before</a>.</p>
+
+<p>We now have a <code>NormalResponse</code> which handles the two cases, cached and uncached, where we aren't doing hydration. We can store this object in memory, or not, and return it to our handler.<p>
+
+<h3>HydrateResponse</h3>
+<p>Finally, we get to the point of this post: creating a response object that we can both cache and hydrate. As a reminder, we want to turn the following JSON into something that lets us efficiently resolve the references on the fly:</p>
+
+{% highlight json %}
+{
+  "page": 1,
+  "total": 54,
+  "results": [
+    {
+      "!ref": {
+        "id": "9001p",
+        "type": "product"
+      }
+    },
+    {
+      "!ref": {
+        "id": "322p",
+        "type": "product"
+      }
+    },
+    ...
+  ]
+}
+{% endhighlight %}
+
+<p>Because references can be deeply nested, there's really only one way to do this: don't parse this into JSON. It might seem like a hack, but I guarantee you that the code ends up being simpler and considerably faster.
+
+<p>What we want to do is break this data into <code>parts</code>. There's two types of <code>parts</code>: <code>LiteralPart</code> and <code>ReferencePart</code></p>
+
+{% highlight go %}
+type LiteralPart []byte
+
+type ReferencePart struct {
+  id string
+  t string
+}{% endhighlight %}
+
+
+<p>Before we jump into how to create these parts, I want to show you how it gets sent to the user. Our <code>Response</code> interface demands a method, <code>Body</code>, which exposes the response as a <code>[]byte</code>. Here's the implementation for a <code>HydrateRespone</code>:</p>
+
+{% highlight go %}
+func (res *HydrateResponse) Body() []byte {
+  // should use a pre-allocated buffer pool
+  // to minimize the amount of allocations
+  buffer := bytes.NewBuffer(make([]byte, 0, 16384))
+  for _, part := range res.parts {
+    buffer.Write(part.Render())
+  }
+  return buffer.Bytes()
+}
+{% endhighlight %}
+
+<p>Essentially, each part knows how to render itself. The response just glues them together. Speaking of the response, here's the structure:</p>
+
+{% highlight go %}
+type HydrateResponse struct {
+  status int
+  header http.Header
+  parts []Part
+}
+{% endhighlight %}
+
+<p>From the two above snippets, we know that the <code>Part</code> interface looks like:</p>
+
+{% highlight go %}
+type Part interface {
+  Render() []byte
+}
+{% endhighlight %}
+
+<p>Let's keep going down this road. Here's the <code>Render</code> code for our two part types:</p>
+
+{% highlight go %}
+func (p LiteralPart) Render() []byte {
+  return p
+}
+
+func (p *ReferencePart) Render() []byte {
+  return Get(p.id, p.t)
+}
+{% endhighlight %}
+
+<p><code>Get</code> is a placeholder. Maybe you're holding the objects in memory, or maybe in Redis or a relational database. For testing purposes, this is what I used:</p>
+
+{% highlight go %}
+func Get(id, t string) []byte {
+  return []byte(`"id":"12321p"`)
+}
+{% endhighlight %}
+
+<p>Notice the data isn't enclosed in braces. I know, I know. It sucks. It makes the parsing a lot easier though ... definitely fixable if you're so inclined.</p>
+
+<p>There's only one piece left: creating our <code>Parts</code>. To re-cap though, the plan is to take our response, split it into alternating <code>LiteralPart</code> and <code>ReferencePart</code>. I say alternating because most of the time you'll have have some actual data, followed by a reference, followed by more data, then a reference and so on. You'll <strong>never</strong> have two <code>LiteralParts</code> in a row, but you could have two or more <code>ReferenceParts</code> in a row.</p>
+
+<p>Here's the code:</p>
+
+{% highlight go %}
+func NewHydrateResponse(res Response, fieldName string) (Response, error) {
+  position := 0
+  body := res.Body()
+  needle := []byte("\"" + fieldName)
+  parts := make([]Part, 0, 10)
+  for {
+    index := bytes.Index(body, needle)
+    if index == -1 {
+      parts = append(parts, LiteralPart(body[position:]))
+      break
+    }
+    parts = append(parts, LiteralPart(body[position:index]))
+    body = body[index:]
+    start := bytes.IndexRune(body, '{')
+    if start == -1 {
+      //should probably at least log an error
+      continue
+    }
+    end := bytes.IndexRune(body, '}')
+    if end == -1 {
+      //should probably at least log an error
+      continue
+    }
+    end += 1
+
+    var ref map[string]string
+    if err := json.Unmarshal(body[start:end], &ref); err != nil {
+      return nil, err
+    }
+    parts = append(parts, &ReferencePart{ref["id"], ref["type"]})
+    body = body[end:]
+  }
+
+  return &HydrateResponse{
+    status: res.Status(),
+    header: res.Header(),
+    parts: parts,
+  }, nil
+}
+{% endhighlight %}
+
+<p>I don't plan on explaining this in any great detail. It's moving forward through the data looking for the index of <code>!ref</code> (or whatever value you returned in the <code>X-Hydrate</code> header). If you picked field with a '{' in it, you'll break the above code (it could be fixed, but just don't pick a field name with that inside of it!).</p>
+
+<p>Once we've found a <code>!ref</code> we look for the next '{' and '}'. We grab that content and parse it. This is a little heavier than I like, but it does mean that we can embedded data in our reference. Here we're doing an <code>id</code> and <code>type</code>, but we could embed even more (not a nested object though, else that throws off the parser which is looking for the next '}').</p>
+
+<p>Whether or not this response is cached, you need to go through the same logic. Again, you could optimize the non-cached path by hydrating while parsing. Meh.</p>
+
+<h3>Conclusion</h3>
+<p>I've put some <a href="https://github.com/karlseguin/hydrator">working code up on Github</a>.</p>
+
+<p>If anyone else is putting this in production, I'd love to know more about it. It's super fun stuff.</p>

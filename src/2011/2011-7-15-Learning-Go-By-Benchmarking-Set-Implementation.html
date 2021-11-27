@@ -1,0 +1,285 @@
+---
+permalink: "/2011/7/15/Learning-Go-By-Benchmarking-Set-Implementation/"
+layout: post
+date: 2011-07-15
+title: "Learning Golang By Benchmarking Set Implementations"
+tags: [data structures, golang]
+---
+<p>As my twitter followers probably know, the last couple days I've been having fun learning Google's Go language. My goal is to build something in the FlockDB universe, but for now I'm just getting familiar with things. For those who aren't familiar with it, Go is Google's attempt to build a modern system programming language. A modern day C, if you will.</p>
+
+<p>Go has some pretty neat features. And it has some annoying limitations. I'll blog about those when I get more familiar with it. One thing that I can definitively say is that it is both young and there appears to be a strong will to keep it slim and focused. The result is a comparatively lacking framework (or set of built-in <em>packages</em> as they are called). For example, there's no built-in <code>Set</code>.</p>
+
+<p>Please keep in mind that I don't really know what I'm doing.</p>
+
+<p>My goal tonight was to benchmark various Set implementation, in the hope that I'd not only find a good implementation but also familiarize myself with Go. I want to be very clear: I have specific requirements for my Set. I'm therefore focusing on testing against <strong>my</strong> use-case. What is my use-case? Basically I want to populate a collection with integers and explicitly remove all duplicates on demand. In other words, I only care about unique values when I care about unique values - the rest of the time, duplicates are ok. Ordering isn't important. Here's an example of how I might use it: </p>
+
+{% highlight clike %}
+func Load(users []User) ([]int) {
+  ids := new(MySpecialCollection)
+  for user := range users {
+    for id := range.user.friendIds {
+      ids.Add(id)
+    }
+  }
+  ids.RemoveDuplicates()
+  return ids;
+}
+{% endhighlight %}
+
+<p>So, I want to get all the unique ids of all the user's friends. Ids are removed once at the end and then the "set" is returned.</p>
+
+<p>We'll begin by defining an interface: </p>
+
+{% highlight clike %}
+type Set interface {
+  Add(value int)
+  Contains(value int) (bool)
+  Length() (int)
+  RemoveDuplicates()
+}
+{% endhighlight %}
+
+<p>We only really care about <code>Add</code> and <code>RemoveDuplicates</code>. However, the <code>Contains</code> and <code>Length</code> methods will help us test our implementation (kinda pointless to see which runs faster if we don't also test that they actually work!)</p>
+
+<p>The first implementation uses a map (Go's built-in hashtable type). This is our baseline because it's the simplest most obvious solution. Here's the implementation: </p>
+
+{% highlight clike %}
+type HashSet struct {
+  data map[int]bool
+}
+
+func (this *HashSet) Add(value int) {
+  this.data[value] = true
+}
+
+func (this *HashSet) Contains(value int) (exists bool) {
+  _, exists = this.data[value]
+  return
+}
+
+func (this *HashSet) Length() (int) {
+  return len(this.data)
+}
+
+func (this *HashSet) RemoveDuplicates() {}
+
+func NewSet() (Set) {
+  return &HashSet{make(map[int] bool)}
+}
+{% endhighlight %}
+
+<p>If this is your first time looking at Go, you might be a little lost. First we define our type called <code>HashSet</code> and define a private member data (it's private because the name starts with a lowercase letter) which is a map. One really cool thing about Go is that you don't have to explicitly implement an interface. Simply implement its methods and it can safely be cast to it (it's awesome!) Methods are defined as functions with a receiver <code>(this *HashSet)</code>. All of the implementations are pretty straighforward. <code>RemoveDuplicates</code> does nothing because duplicates are never added (that's just a basic property of a hash/map).</p>
+
+<p>Two things about the above code worth exploring. First, the <code>Contains</code> method is somewhat funky. In Go, methods can return multiple values. Getting a value from a map (<code>this.data[value]</code>) returns two values. The actual value at the key, and true/false on whether the value existed. We discard the actual value by assigning it to the magic variable <code>_</code> and assign whether the value existed or not to the <code>exists</code> variable - which is actually a named returned parameter. The other thing is the <code>NewSet</code> function. Functions like this is how you do a constructor. I think it kinda sucks. Within our "constructor" we actually initialize our map using the special <code>make</code>. <code>make</code> is something else which I think sucks about Go. Three built-in types need to be instantiated with <code>make</code>, all the other types are instantiated with <code>new</code> (or the &ampTYPE{} syntax we are using here, which is syntactical sugar for <code>new</code> and is similar to C#'s constructor initializers).</p>
+
+<p>We'll create two tests to make sure our implementation works:</p>
+
+{% highlight clike %}
+import(
+  "testing"
+  "rand"
+)
+
+func TestCanAddUniqueValues(t *testing.T) {
+  values := []int{5,4,3,9,1,2,8}
+  set := NewSet()
+  for _,v := range values {
+    set.Add(v)
+  }
+  set.RemoveDuplicates()
+  Assert(t, set.Length() == len(values), "Wrong length")
+  for _,v := range values {
+    Assert(t, set.Contains(v), "Missing value")
+  }
+}
+
+func TestUniqueRemovesDuplicates(t *testing.T) {
+  values := []int{5,4,3,5,2,1,2,3,4,5,1,2,2}
+  uniques := []int{5,4,3,2,1}
+  set := NewSet()
+  for _,v := range values {
+    set.Add(v)
+  }
+  set.RemoveDuplicates()
+  Assert(t, set.Length() == len(uniques), "Wrong length")
+  for _,v := range uniques {
+    Assert(t, set.Contains(v), "Missing value")
+  }
+}
+func Assert(t *testing.T, condition bool, message string) {
+  if (!condition) {
+    t.Fatal(message)
+  }
+}
+{% endhighlight %}
+
+<p>Testing in Go isn't particularly pretty. But, at least we'll be able to make sure that whenever <code>RemoveDuplicates</code> is called on our set, that duplicates are, in fact, removed.</p>
+
+<p>Now comes the interesting part. Go has built-in benchmarking capabilities, and it's pretty neat. Rather than define a <code>Test</code> function, we define a <code>Benchmark</code> method, like so:</p>
+
+{% highlight clike %}
+func BenchmarkSmallSetWithFewCollisions(b *testing.B){
+  for i := 0; i < b.N; i++ {
+    set := NewSet()
+    for j := 0; j < 100; j++ {
+      set.Add(rand.Int() %700)
+      }
+    }
+  }
+}
+{% endhighlight %}
+
+<p>If you look at the first <code>for</code> loop, you'll notice that we are looping <code>b.N</code> times. <code>b</code> is the parameter which is passed into our function. The way it works is that the engine will loop through our code as many times as it needs to until it feels comfortable that it has an accurate measurement for the cost of a single iteration. This'll become more clear briefly.</p>
+
+<p>My goal was to test the performance of a small, medium and large set (100, 5000 and 100000 items) and for each of those, with a small, medium and large number of duplicates. The above code will generate a set of 100 values, where a given value can be between 0 and 699 - so duplicates are pretty rare. Here's what all 9 benchmarks look like:</p>
+
+{% highlight clike %}
+func benchmark(b *testing.B, size int, fill int) {
+  for i := 0; i < b.N; i++ {
+    set := NewSet()
+    for j := 0; j < size; j++ {
+      set.Add(rand.Int() % fill)
+    }
+  }
+}
+
+func BenchmarkSmallSetWithFewCollisions(b *testing.B){
+  benchmark(b, 100, 700)
+}
+func BenchmarkSmallSetWithMoreCollisions(b *testing.B){
+ benchmark(b, 100, 100)
+}
+func BenchmarkSmallSetWithManyCollisions(b *testing.B){
+ benchmark(b, 100, 25)
+}
+func BenchmarkMediumSetWithFewCollisions(b *testing.B){
+  benchmark(b, 5000, 35000)
+}
+func BenchmarkMediumSetWithMoreCollisions(b *testing.B){
+ benchmark(b, 5000, 5000)
+}
+func BenchmarkMediumSetWithManyCollisions(b *testing.B){
+ benchmark(b, 5000, 1250)
+}
+func BenchmarkLargeSetWithFewCollisions(b *testing.B){
+  benchmark(b, 100000, 700000)
+}
+func BenchmarkLargeSetWithMoreCollisions(b *testing.B){
+ benchmark(b, 100000, 100000)
+}
+func BenchmarkLargeSetWithManyCollisions(b *testing.B){
+ benchmark(b, 100000, 25000)
+}
+{% endhighlight %}
+
+<p>And, here's the output from running this against our simple <code>HashSet</code> implementation:</p>
+
+{% highlight clike %}
+set.BenchmarkSmallSetWithFewCollisions		50000		52600 ns/op
+set.BenchmarkSmallSetWithMoreCollisions		50000		42991 ns/op
+set.BenchmarkSmallSetWithManyCollisions		50000		31406 ns/op
+set.BenchmarkMediumSetWithFewCollisions		1000		2663531 ns/op
+set.BenchmarkMediumSetWithMoreCollisions	1000		1703337 ns/op
+set.BenchmarkMediumSetWithManyCollisions	1000		1411807 ns/op
+set.BenchmarkLargeSetWithFewCollisions		50			54807860 ns/op
+set.BenchmarkLargeSetWithMoreCollisions		50			48436380 ns/op
+set.BenchmarkLargeSetWithManyCollisions		50			34149020 ns/op
+{% endhighlight %}
+
+<p>The first column is the benchmark that was run. The 2nd column is how many iterations it ran (or the value of <code>b.N</code>). The last column is the time it took (in nanoseconds) per loop. From the above, we can tell that the more collisions there are, the faster the code (I'd guess that's because it has to insert less values into the map).</p>
+
+
+<p>For my second implementation, I decided to use an array and scan the array for a duplicate before adding it. The interesting method here is <code>Add</code> and <code>Contains</code>:</p>
+
+{% highlight clike %}
+func (this *RealtimeArraySet) Add(value int) {
+  if this.Contains(value) == false {
+    this.data = append(this.data, value)
+  }
+}
+func (this *RealtimeArraySet) Contains(value int) (exists bool) {
+  for _, v := range this.data {
+    if v == value {
+      return true
+    }
+  }
+  return false
+}
+{% endhighlight %}
+
+<p>And, here are the results:</p>
+
+{% highlight clike %}
+set.BenchmarkSmallSetWithFewCollisions		100000		22390 ns/op
+set.BenchmarkSmallSetWithMoreCollisions		100000		19421 ns/op
+set.BenchmarkSmallSetWithManyCollisions		100000		17037 ns/op
+set.BenchmarkMediumSetWithFewCollisions		100			19248020 ns/op
+set.BenchmarkMediumSetWithMoreCollisions	100			12210990 ns/op
+set.BenchmarkMediumSetWithManyCollisions	500			5158366 ns/op
+set.BenchmarkLargeSetWithFewCollisions		1			7482466000 ns/op
+set.BenchmarkLargeSetWithMoreCollisions		1			4660109000 ns/op
+set.BenchmarkLargeSetWithManyCollisions		1			1785185000 ns/op
+{% endhighlight %}
+
+<p>For small sets, this is much faster. For large sets, it's much slower. This isn't really a surprise. Doing a linear search in the array just can't scale with large sets.</p>
+
+<p>The last implementation I did was to allow duplicates to get added to the array, but to remove them when explicitly told to:</p>
+
+{% highlight clike %}
+func (this *OnDemandArraySet) Add(value int) {
+  //the append method will automatically grow our array if needed
+  this.data = append(this.data, value)
+}
+func (this *OnDemandArraySet) RemoveDuplicates() {
+  length := len(this.data) - 1
+  for i := 0; i < length; i++ {
+    for j := i + 1; j <= length; j++ {
+      if (this.data[i] == this.data[j]) {
+        this.data[j] = this.data[length]
+        this.data = this.data[0:length]
+        length--
+        j--
+      }
+    }
+  }
+}
+{% endhighlight %}
+
+<p>We remove duplicates by comparing every value to every other value. This leans heavily on Go slices. You can think of a Go slice as a movable window above an array. Slices are really efficient. When we find a duplicate, we replace it with the last element and shrink by 1. So, if we have:  [1,2,3,2,5,6] it'll become [1,2,3,6,5]  (the 6 overwrites the duplicate 2 and the slice is shrank). Again, all of this is efficient - we aren't creating copies of array, just playing with pointers. The results:</p>
+
+{% highlight clike %}
+set.BenchmarkSmallSetWithFewCollisions		200000		12362 ns/op
+set.BenchmarkSmallSetWithMoreCollisions		200000		12425 ns/op
+set.BenchmarkSmallSetWithManyCollisions		200000		12430 ns/op
+set.BenchmarkMediumSetWithFewCollisions		5000		682792 ns/op
+set.BenchmarkMediumSetWithMoreCollisions	2000		720831 ns/op
+set.BenchmarkMediumSetWithManyCollisions	2000		706491 ns/op
+set.BenchmarkLargeSetWithFewCollisions		100			12645380 ns/op
+set.BenchmarkLargeSetWithMoreCollisions		100			12682960 ns/op
+set.BenchmarkLargeSetWithManyCollisions		100			12863000 ns/op
+{% endhighlight %}
+
+<p>Under all circumstances, this is a clear winner. In the simplest case it's 4.25x faster than the map and 1.8x faster than the original array implementation. In the most complex case it's 2.6x faster than the map and 138x faster than the original array implementation. (I did play with pre-allocating the underlying structures with different sizes, it didn't change anything.)</p>
+
+<p>Beyond raw speed, we can also measure how much memory each approach takes. For this, I simply enabled Go's memoryprofile and looped through each set a fixed number of times. To be honest, I'm not positive what all the values mean, but I extracted the three which seemed the most relevant: </p>
+
+{% highlight clike %}
+HashSet
+Alloc = 1227039448
+TotalAlloc = 2249302288
+HeapInuse = 1241645056
+
+RealTimeArraySet
+Alloc = 1033523080
+TotalAlloc = 1033574400
+HeapInuse = 1047220224
+
+OnDemandArraySet
+Alloc = 3631414928
+TotalAlloc = 3631466248
+HeapInuse = 3659673600
+{% endhighlight %}
+
+<p>No huge surprise here. Since the fastest implementation doesn't discard duplicates until we tell it to, it takes the most amount of memory. The RealTimeArraySet takes the least amount of memory because duplicates are discarded, and there's little overhead to the underlying structure (an array). I'm quite surprised at how close the memory footprint of the map is to the array.</p>
+
+<p>The source code for this is available at <a href="https://github.com/karlseguin/golang-set-fun">https://github.com/karlseguin/golang-set-fun</a>.</p>

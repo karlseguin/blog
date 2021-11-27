@@ -1,0 +1,171 @@
+---
+layout: post
+date: 2017-03-22
+title: "Learning Elixir's GenServer - Part 1"
+description: "An introduction to Elixir's GenServers and concurrent programming"
+tags: [concurrency, elixir]
+---
+
+<p>It won't be long into your journey of learning Elixir before you run into GenServers and its friends (Agents, GenEvents, etc). Although these are well documented and have a simple API, I think it takes most people a bit of exposure, and maybe a different perspective, to get comfortable using them. I'm focusing on GenServer because it's the most powerful and once you understand it, you'll understand them all.</p>
+
+<p>By now, the immutability of data in Elixir is, no doubt, something you're familiar with. One of the purposes for this is to eliminate the many insidious bugs that can arise from sharing data across threads. Despite the dangers, sharing data is often unavoidable. This is where GenServer, as well as a few other modules, come into play. Its goal is to allow you to safely share and modify data across processes.</p>
+
+<p>(To be clear, when we say "process", we mean an Elixir process, not an OS process. If the concept is unfamiliar, you can think of them as lightweight threads / goroutines).</p>
+
+<p>If you're coming from Go, as I did, this brief description might sound a little like channels. But by comparison, channels are low-level and simplistic constructs. (Elixir has something similar to channels, but they are rarely used directly in application code). You see, GenServes, GenEvents and Agents, along with Supervisors and Workers, are more like a framework for building concurrent-enabled applications. It would be possible to build something akin to a GenServer in Go (or any language) but the fact is that in Elixir/Erlang these have been thoroughly battle tested are idiomatic to Elixir programming, and fit with the rest of the ecosystem.</p>
+
+<p>One last thing before we look at code. Maybe the above paragraph put you off. Maybe you want to build your own concurrency framework, tweaked to your needs and preferences. I'll try to discourage you. Not because I think NIH is a bad thing, but because I believe they've built something useful as-is. They've built a simple API around a common set of concurrency-oriented patterns and, more likely than not, they'll save you a bunch of time and bugs while staying out of your way.</p>
+
+<p>Let's look at a real problem. Externally, we identify data using UUIDs and, in some cases, helpful abbreviations. Internally though, some of our space or performance sensitive features use integers. We therefore have a mapping from external value to internal integer. We want to do this mapping in code. Ideally, we want to hold a single instance of this map in memory and have shared access to it. In short, we want to share access to a map of strings to integers.</p>
+
+<p>In Go, we might do something like:</p>
+
+{% highlight go %}var (
+  lock sync.RWMutex
+  lookup map[string]int
+)
+
+func init() {
+  lookup = make(map[string]int)
+  // populate lookup
+}
+
+func Get(value string) int {
+  lock.RLock()
+  defer lock.RUnlock()
+  return lookup[value]
+}
+{% endhighlight %}
+
+<p>In Elixir, the simplest way to achieve this would be with an Agent (I'll have a brief follow up blog post to describe this). But we'll implement it using a GenServer because we'll promptly add another feature that isn't Agent-friendly.<p>
+
+<p>Here's the start of the Elixir solution:</p>
+
+{% highlight elixir %}defmodule Goku.IdMap.Starter do
+  # Call by the supervisor
+  def start_link() do
+    GenServer.start_link(Goku.IdMap, nil, name: "idmap")
+  end
+end
+
+defmodule Goku.IdMap do
+  # this line makes the module suitable to be passed
+  # to GenServer.start_link
+  use GenServer
+
+  # Called by GenServer.start_link (which we called above)
+  def init(nil) do
+    {:ok, load()}
+  end
+
+  # load the data (probably from a database, but we'll
+  # hard-code some values for simplicity)
+  defp load() do
+    %{"goku" => 1, "gohan" => 2}
+  end
+end
+{% endhighlight %}
+
+<p>For clarity, I've split this up into two modules. This is uncommon in practice (we'll merge them shortly), but I think it makes what's going on clearer.</p>
+
+<p>We'd assign <code>Goku.IdMap.Starter</code> to a Supervisor, which would call the <code>start_link</code> function. The Supervisor doesn't know that it's supervising a GenServer, it simply expects the id of the process it needs to monitor.</p>
+
+<p>We call <code>GenServer.start_link</code> and specify the module that implements the GenServer behaviour, in this case <code>Goku.IdMap</code>, along with any parameters to pass to it (<code>nil</code> in this case, which is why <code>init</code> takes a <code>nil</code>). It's the <code>GenServer.start_link</code> function which, internally, spawns a new process and calls the specified module's <code>init</code> function. <code>init</code> is expected to return the data to store within this new process or, its "state").</p>
+
+<p>Normally, you'd put this in a single module:</p>
+
+{% highlight elixir %}defmodule Goku.IdMap do
+  use GenServer
+
+  # __MODULE__ is the current module.
+  # In this case it's the same as Goku.IdMap.
+  # We'll soon make more use of @name.
+  @name __MODULE__
+
+  def start_link() do
+    GenServer.start_link(__MODULE__, nil, name: @name)
+  end
+
+  def init(nil) do
+    {:ok, load()}
+  end
+
+  # load the data (probably from a database, but we'll
+  # hard-code some values for simplicity)
+  defp load() do
+    %{"goku" => 1, "gohan" => 2}
+  end
+end
+{% endhighlight %}
+
+<p>But presented this way, it's harder to see the relationship between the Supervisor, start_link, GenServer and init.</p>
+
+<p>We now have a running GenServer process with data. How do we access this data from other processes? The answer is to call use the <code>GenServer.call</code> function. <code>call</code> takes the pid or name of the GenServer we want to call, and an argument we want to pass to it. It only accepts a single argument, so you'll normally pass a tuple into it. Notice that when we started the GenServer we gave it a name. This makes it a lot easier to interact with our GenServer. We <em>could</em> give our GenServer a friendly name, like <code>"idmap"</code> and then pepper <code>GenServer.call</code> throughout our code, say:</code>
+
+{% highlight elixir %}# A controller's action
+def index(conn, %{"id" => id}) do
+  internal = GenServer.call("idmap", {:get, id})
+  ...
+end
+{% endhighlight %}
+
+<p>But that's not very good design. It's much better to keep the details of how our idmap is implemented hidden. For this reason, you sould prefer to encapsulate the GenServer interaction within the module itself. Externally, it looks like just another function call:</p>
+
+{% highlight elixir %}# A controller's action
+def index(conn, %{"id" => id}) do
+  internal = Goku.IdMap.get(id)
+  ...
+end
+{% endhighlight %}
+
+<p>Which means we need to add a <code>get</code> function to our <code>Goku.IdMap</code> function:</p>
+
+{% highlight elixir %}defmodule Goku.IdMap do
+   ...
+
+   def get(id), do: GenServer.call(@name, {:get, id})
+end
+{% endhighlight %}
+
+<p>(We could keep calling it "idmap", but there's little point as it's never used externally, and using the module name avoids any future conflicts (but use a friendly name if you prefer.))</p>
+
+<p>Clearly, I hope, we're still not done. We use <code>GenServer.call</code> but what exactly does that do, and how does it know to get the value from the state (the state could be anything, it doesn't have to be a map). It doesn't, we need to add that part:</p>
+
+{% highlight elixir %}defmodule Goku.IdMap do
+   ...
+
+   def get(id), do: GenServer.call(@name, {:get, id})
+
+   def handle_call({:get, id}, _from, lookup) do
+    {:reply, Map.get(lookup, id), lookup}
+   end
+end
+{% endhighlight %}
+
+<p>When we called <code>IdMap.get(id)</code> from our controller's action, that was happening within the process that was handling our request. Therefore, the <code>GenServer.call</code> happens within that same process. This dispatches a request to the GenServer process, the process that owns the data. That means that <code>handle_call</code> is running in a different process (again, think thread) than the one requesting the data. <code>call</code> is synchronous; it blocks until it receives a <code>:reply</code>. We can issue non-blocking requests, or add a timeout to our synchronous request. But I don't want to look at those other cases today, I want to focus on exactly what's happening in the above case.</p>
+
+<p>There are serious implications to how the above works. First though, I want to make it clear that although this is part of the same module, at runtime, part of it is being executed in one process (the <code>get</code> function) while another part is being executed by a different process (the <code>handle_call</code> function). There's nothing magical about this, but it's important to remember.</p>
+
+<p>In Go, with channels, you're moving data around. At any point in time, only one goroutine owns the data, but it can move from goroutine to goroutine. Go doesn't even enforce this single-owner model. In Elixir, it's strictly enforced because the data is always owned by the same process. You're not saying "give me the data when it's free so I can do some processing", you're saying "hey, owner of the data, do some processing for me."</p>
+
+<p>Although this is safer and easier to reason about, it potentially introduces a bottleneck as only a single process has directly accesss to the state. How to get past that issue isn't something we'll tackle today. The solutions are going to be specific to the problem, and it won't be a real issue until you get very high load (if it's ever really an issue). The simplest solution though would be to have multiple GenServer processes, each with a copy of the data, and having <code>IdMap.get</code> randomly <code>call</code> one or the other.</p>
+
+<p>Finally, for completeness, notice that <code>handle_call</code> took 3 parameters and returned a tuple of 3 values. For its inputs, the arguments are, in order, the parameters passed to the <code>call</code> function, the process that made the call (used only in more advanced scenarios) and the state/data of the process (what our <code>init</code> function returned). We have a single <code>handle_call</code> method here, but you'll typically have more (we could add a <code>set</code>), so you'll often pattern match the first argument.</p>
+
+<p>The first value of the return is the type of response. It will almost always be <code>:reply</code>, but you could <code>:stop</code> the entire GenServer (drastic!) or return <code>:noreply</code> which is more advanced, as the caller will stay blocked until you eventually do reply (this is where the 2nd input parameter comes into play). In the case of <code>:reply</code>, the second return value is what to actually return to the caller. The third one is the new state to store in the GenServer. In this case, we don't change the input. However, imagine if we were using a GenServer for a Queue:</p>
+
+{% highlight elixir %}# queue is empty
+def handle_call(:pop, _from, []), do: {:reply, nil, [])
+
+def handle_call(:pop, _from, [head | rest]) do
+  {:reply, head, rest}
+end
+{% endhighlight %}
+
+<p>This state-modification further demonstrates the safety of having one and only one process own the data. No other process has access to the GenServer's state.</p>
+
+<p>There's a bit more that I wanted to cover, but I'll save that for another post. To me, the "ah-hah" moment came when I understood the interaction between the processes and the data. It's true that, when compared to the Go version, it feels quite heavy (although the Agent version that we skipped would be simpler than both). Certainly the overhead of dispatching to another process only to read a value from a map, seems excessive. And maybe in this case, it is. But, there is no sharing between Elixir processes (that's why they're called processes and not threads). And, beyond the fact that there's no other choice, I'm hopeful that you can see that, as the access pattern gets more complicated, the paradigm becomes increasingly more beneficial because the complexity of managing shared state stays at 0.</p>
+
+<p>Bluntly, Elixir is strongly opinionated about how concurrency should be done. And that opinion favors safety above all else. If accessing the idmap becomes a bottlneck (unlikely), we'll do a bit of restructuring (probably shard the data across multiple genservers). No big deal.</p>
+
+<p>In the next post, we'll look at how to periodically refresh our GenServer data. For now, I hope you have a better understanding of how GenServer works. And, even though our example is simple, I hope you have a greater appreciation for the type of common patterns the minimalistic GenServer API enables (even that short queue samples highlights how some of that flexibility might be put to use).</p>

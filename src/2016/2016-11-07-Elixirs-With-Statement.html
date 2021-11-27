@@ -1,0 +1,89 @@
+---
+layout: post
+date: 2016-11-07
+title: "Elixir's With Statement"
+description: "An example of using Elixir's with statement"
+tags: [elixir, learning]
+---
+
+<p>A reason that I'm such a huge fan of Elixir is that everything just seems to click. The code is elegant and expressive while managing to be efficient.</p>
+
+<p>One thing that hasn't clicked until just now is the <code>with</code> statement. It turns out that it's pretty easy to understand and really quite useful. It addresses a specific and not-uncommon problem in a very Elixir-way. What's the problem? Pretend we have the following:</p>
+
+{% highlight elixir %}
+defmodule User do
+  defstruct name: nil, dob: nil
+
+  def create(params) do
+  end
+end
+{% endhighlight %}
+
+<p>The <code>create</code> function should either create a <code>User</code> struct or return an error if the <code>params</code> are invalid. How would you go about doing this? Here's an example using pipes: </p>
+
+{% highlight elixir %}
+def create(params) do
+  %User{}
+  |> parse_dob(params["dob"])
+  |> parse_name(params["name"])
+end
+
+defp parse_dob(user, nil), do: {:error, "dob is required"}
+defp parse_dob(user, dob) when is_integer(dob), do: %{user | dob: dob}
+defp parse_dob(_user, _invalid), do: {:error "dob must be an integer"}
+
+defp parse_name(_user, {:error, _} = err), do: err
+defp parse_name(user, nil), do: {:error, "name is required"}
+defp parse_name(user, ""), do: parse_name(user, nil)
+defp parse_name(user, name), do: %{user | name: name}
+{% endhighlight %}
+
+<p>The problem with this approach is that every function in the chain needs to handle the case where any function before it returned an error. It's clumsy, both because it isn't pretty and because it isn't flexible. Any new return type that we introduced has to be handled by all functions in the chain.</p>
+
+<p>The pipe operator is great when all functions are acting on a consistent piece of data. It falls apart when we introduce variability. That's where <code>with</code> comes in. <code>with</code> is a lot like a <code>|></code> except that it allows you to match each intermediary result.</p>
+
+<p>Let's rewrite our code:</p>
+
+{% highlight elixir %}
+def create(params) do
+  with {:ok, dob} <- parse_dob(params["dob"]),
+       {:ok, name} <- parse_name(params["name"])
+  do
+    %User{dob: dob, name: name}
+  else
+    # nil -> {:error, ...} an example that we can match here too
+    err -> err
+  end
+end
+
+defp parse_dob(nil), do: {:error, "dob is required"}
+defp parse_dob(dob) when is_integer(dob), do: {:ok, dob}
+defp parse_dob(_invalid), do: {:error "dob must be an integer"}
+
+defp parse_name(nil), do: {:error, "name is required"}
+defp parse_name(""), do: parse_name(nil)
+defp parse_name(name), do: {:ok, name}
+{% endhighlight %}
+
+<p>Every statement of <code>with</code> is executed in order. Execution continues as long as <code>left &lt;- right</code> match. As soon as a match fails, the <code>else</code> block is executed. Within the <code>else</code> block we can match against whatever WAS returned. If all statements match, the <code>do</code> block is executed and has access to all the local variables in the <code>with</code> block.</p>
+
+<p>Got it? Here's a test. Why did we have to change our success cases so that they'd return <code>{:ok, dob}</code> and <code>{:ok, name}</code> instead of just <code>dob</code> and <code>name</code>?</p>
+
+<p>If we didn't return <code>{:ok, X}</code>, our match would look like:</p>
+
+{% highlight elixir %}
+def create(params) do
+  with dob <- parse_dob(params["dob"]),
+       name <- parse_name(params["name"])
+  do
+    %User{dob: dob, name: name}
+  else
+    err -> err
+  end
+end
+...
+{% endhighlight %}
+
+<p>However, a <a href="/Pattern-Matching-In-Elixir/">variable on the left side matches everything</a>. In other words, the above would treat the <code>{:error, "BLAH"}</code> as matches and continue down the "success" path.</p>
+
+<p>If you found this useful, check out my short series <a href=/Elixir-A-Little-Beyond-The-Basics/>Elixir, A Little Beyond The Basics</a> to get more fundamental understanding of Elixir.</p>

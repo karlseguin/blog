@@ -1,0 +1,22 @@
+---
+layout: mongly
+title: ObjectIds Are Predictable
+multi: false
+theme: dark
+tags: [mongodb]
+---
+<style>
+body{font-family:Comfortaa,verdana;background:#222;}
+h1{border-bottom:2px solid #aaa;padding-bottom:30px;margin-bottom:30px;}
+#page{width:960px;margin:50px auto;font-size:28px;color:#ddd;}
+li{padding:10px;}
+</style>
+
+
+<h1>{{ title }}</h1>
+<ul>
+  <li>Do not treat ObjectIds as secure.</li>
+  <li>For example, don't use them as password-reset tokens.
+  <li>Treat ObjectIds as you would an auto-incrementing integer.</li>
+  <li>This is not a design flaw of ObjectId.</li>
+</ul>

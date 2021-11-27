@@ -1,0 +1,53 @@
+---
+layout: post
+date: 2015-03-19
+title: "An efficient integer set"
+description: "Creating  a custom integer set in golang, aimed at reducing memory usage and improved performance"
+tags: [data structures, golang, performance]
+---
+
+<p>Not long ago, I spent time exploring possible benefits of custom integer set. Sets are normally implemented atop general purpose hashtables that most work under a number of different conditions. My needs were constrained, but not uncommonly so. The sets would overwhelming be used for reads: membership checks (mostly unions and intersections). The size of the sets would be known ahead of time, and wouldn't change too frequently. For any set of insignificant size, the values would be randomly distributed.</p>
+
+<p>Again, I think these are fairly common requirements. As an example, imagine two sets containing the user ids of a system, split by gender.</p>
+
+<p>The structure that I came up with is essentially a two dimensional array. Technically, it's a jagged array, but given random values, it ought to end up quite rectangular. This is really just a slightly specialized hashtable. If there's any cleverness here, it's only in its simplicity.</p>
+
+<p>To store roughly 1 million integers, we'll create buckets of arrays. To lookup a value (either to test membership, to insert, or to delete) we first select the bucket, then search the array. We set a limit on the size of array (say 32) so we'll need 1000000/32 buckets. This is essentially a modulus operator and an array search. The array search can be linear, or, we can favor lookup speed at the cost of insertion speed, and keep the array ordered as values are added.</p>
+
+<p>The bucketing idea is a common way to implement hashtables. Given that we have 1 million values but only 31250 buckets, collisions will happen. How a hashtable handles collisions generally defines its performance and space characteristics. Since we know the approximate size ahead of time, and we don't expect it to change too much, we can pre-allocate the right number of buckets needed to maintain arrays of a certain size. The simplest code to see if value exists, looks like:</p>
+
+{% highlight go %}
+func (s *IntSet) Exists(value int) bool {
+  bucket := s.buckets[value % len(s.buckets)]
+  for i := 0; i < len(bucket); i++ {
+    if bucket[i] == value {
+      return true
+    }
+  }
+  return false
+}
+{% endhighlight %}
+
+<p>Now, there are a lot of improvements we can make to this code. For one, instead of using the modulus operator (%), we can use a simple bitwise and (&amp;), provided the number of buckets we have is a power of 2. <code>X % 16</code> can be rewritten as <code>X &amp; 15</code>, which is much faster (about 2x faster in my little Go test).</p>
+
+<p>As already mentioned, we could also keep our values sorted. This would provide two possibilities: we could do a binary search through the array, or we could continue doing a linear search, but break early. For now, let's look at improved linear search solution:</p>
+
+
+{% highlight go %}
+func (s *IntSet) indexOf(value int) (int, bool) {
+  bucket := s.buckets[value & len(s.buckets)-1]
+  l := len(bucket);
+  for i := 0; i < l; i++ {
+    v := bucket[i]
+    if v < value {
+      continue
+    }
+    return i, v == value
+  }
+  return l, false
+}
+{% endhighlight %}
+
+<p>Instead of just checking if the value exists, our method now also tells us where in the array it exists (or out to exists). This makes the indexOf reusable for <code>Exists</code>, <code>Set</code> and <code>Remove</code>.</p>
+
+<p>The next few posts will explore this structure/code in greater detail. For now, you can look at the actual class at <a href="https://github.com/karlseguin/intset">https://github.com/karlseguin/intset</a>. As a final note, compared to a <code>map[int]struct{}</code>, the intset takes around 1/2 the memory and performs anywhere from a little bit worse to as much as 10x better. For most cases, it seems to be roughly twice as fast.</p>

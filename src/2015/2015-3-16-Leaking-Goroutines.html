@@ -1,0 +1,104 @@
+---
+layout: post
+date: 2015-03-16
+title: "Leaking Goroutines"
+description: "A reminder of something obivious: goroutines hold strong references to their structure"
+tags: [golang]
+---
+
+<p>Admittedly this should be classified in a <em>duhhh</em> category of knowledge, but...</p>
+
+<p>I recently wrote code that used the useful <a href="http://golang.org/pkg/sync/atomic/#Value"><code>atomic.Value</code></a> type to support hot reloading a configuration. In doing so, I introduced a goroutine (and memory) leak.</p>
+
+<p>The bug was 100% my fault, and didn't have anything to do with <code>atomic.Value</code> other than the fact that it's the type of issue you'll most likely run into when swapping out values like that. Consider this code:</p>
+
+{% highlight go %}
+type Writer struct {
+  queue chan []byte
+}
+
+func NewWriter() *Writer {
+  w := &Writer{
+    queue: make(chan []byte, 10),
+  }
+  go w.process()
+  return w
+}
+
+func (w *Writer) Write(message []byte) {
+  w.queue <- message
+}
+
+func (w *Writer) process() {
+  for {
+    message := <- w.queue
+    // do something with message
+  }
+}
+{% endhighlight %}
+
+<p>If you create a worker which later falls out of scope, not only will the worker continue to exist, but you'll have lost all references to it:</p>
+
+{% highlight go %}
+func main() {
+  fmt.Println(runtime.NumGoroutine()) // 4
+  test()
+  fmt.Println(runtime.NumGoroutine()) // 5
+}
+
+func test() {
+  NewWriter()
+}
+{% endhighlight %}
+
+<p>The solution is to use a channel, add a <code>Stop</code> method and change the <code>process</code> method to:</p>
+
+{% highlight go %}
+type Writer struct {
+  queue chan []byte
+  stop chan struct{}
+}
+
+func (w *Writer) Stop() {
+  w.stop <- struct{}{}
+}
+
+func (w *Writer) process() {
+  for {
+    select {
+    case message := <-w.queue:
+      // do something with message
+    case <-w.stop:
+      return
+    }
+  }
+}{% endhighlight %}
+
+<p>Of course, the burden is still on the caller to <code>Stop</code> the worker.</p>
+
+<h3>update</h3>
+<p><a href=https://twitter.com/dqminh>@dqminh</a> pointed out that instead of introducing the new <code>stop</code> channel, we could simply have called <code>close</code> on the existing <code>queue</code>. For the above, this is definitely a more elegant solution. However, it's possible that the your worker code won't be channel-bound, say:</p>
+
+{% highlight go %}
+func (s *Storage) compact() {
+  for {
+    time.Sleep(time.Minute)
+    //do compaction
+  }
+}
+{% endhighlight %}
+
+<p>In such cases, you're back to a <code>stop</code> channel in conjunction with the lovely <code>time.After</code>:</p>
+
+{% highlight go %}
+func (s *Storage) compact() {
+  for {
+    select {
+    case <-time.After(time.Minute):
+      // do compaction
+    case <-s.stop:
+      return
+    }
+  }
+}
+{% endhighlight %}

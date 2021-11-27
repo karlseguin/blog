@@ -1,0 +1,92 @@
+---
+layout: post
+date: 2014-10-22
+title: "Using Small Arrays Instead Of Small Dictionaries"
+tags: [data structures, golang, performance]
+description: "For a small set of key values, can an array outperfom a map? Yes!"
+---
+
+<p><strong>update:</strong> I built a <a href="https://github.com/karlseguin/params">small golang library</a> that does this. It provides pooling facilities and automatically converts itself to a map past a specified treshold.</p>
+
+<p>I ran across some code yesterday that was using more memory that I felt comfortable with. This, unsurprisingly, resulted in more time spent allocating and garbage collecting than I wanted. Most of the memory was being allocated for small and short-lived dictionaries. Small is arbitrary, so let's say less than 10 keys.</p>
+
+<p>An approach I like for this type of problem is to use a pool. However, a pool of dictionaries is cumbersome. We could delete every key once we're done, but depending on the implementation, that could make things much worse. Alternatively, we could pair our dictionary with an array of valid keys, but then you risk having an ever-growing dictionary.</p>
+
+<p>The solution that I settled on was to replace the dictionary with an array. The array is laid out as a <code>[k1, v1, k2, v2, ..., kn, vn]</code>. Because the array is easily pooled, the memory issue was solved. Testing it, the change went from 330MB to 14.5MB. The improvement is actually more impressive than that. The 330MB would have kept growing, whereas the 14.5M is a one-time cost (assuming our pool is big enough).</p>
+
+<p>That leaves an obvious question: <em>what about performance?</em> When N is this small, big-O notation isn't too meaningful. Other factors become more exagerated. The cost of calculating the hash and the sequential locality of values within the array become relatitively more significant.</p>
+
+<p>It's hard to give hard numbers because there are a lot of variations we can play with. For example, if we isolate the code to getting values from a dictionary vs the array, the two end up being comparable. If you're wondering what the get looks like on the array, it's nothing too special:</p>
+
+{% highlight go %}
+for i := 0; i < len(lookup); i += 2 {
+  if lookup[i] == needle {
+    value = lookup[i+1]
+    break
+  }
+}
+{% endhighlight %}
+
+
+<p>If we also benchmark the cost of creating and populating our dictionary and array, then the array starts to pull ahead. This really depends on the ratio of reads vs creations. If you do 10000 reads for every creation, the cost of creation is relatively small. If, like in my case, you only do ~10 or so reads, the cost of creation becomes a bigger factor.</p>
+
+<p>In my specific case, the representative test is to compare having to repeatedly create the dictionary (since a pool isn't available) versus a non-recreated array. This isn't really fair, but it is the actual scenario. In this case, the array approach is two to three times faster.</p>
+
+<p>Here are the two benchmarks (created with the help of <a href="https://twitter.com/SchumacherFM">@SchumacherFM</a>:</p>
+
+{% highlight go %}
+package main
+
+import (
+  "math/rand"
+  "strconv"
+  "testing"
+)
+
+const (
+  SIZE    = 10
+  LOOKUPS = 10
+)
+
+func BenchmarkMap(b *testing.B) {
+  rand.Seed(int64(b.N))
+  for n := 0; n < b.N; n++ {
+    lookup := make(map[string]string, SIZE)
+    for i := 0; i < SIZE; i += 1 {
+      k := strconv.Itoa(i) // FYI: converts int to string
+      lookup[k] = "value"
+    }
+
+    for i := 0; i < LOOKUPS; i++ {
+      needle := strconv.Itoa(rand.Intn(SIZE))
+      if _, ok := lookup[needle]; ok {
+      }
+    }
+  }
+}
+
+// ZOMG, this is actually a Go slice, not an array!!
+func BenchmarkArray(b *testing.B) {
+  lookup := make([]string, SIZE*2)
+  for i := 0; i < SIZE; i += 2 {
+    lookup[i] = strconv.Itoa(i / 2)
+    lookup[i+1] = "value"
+  }
+  rand.Seed(int64(b.N))
+  b.ResetTimer()
+  for n := 0; n < b.N; n++ {
+    for i := 0; i < LOOKUPS; i++ {
+      needle := strconv.Itoa(rand.Intn(SIZE))
+      for j := 0; j < SIZE; j += 2 {
+        if lookup[j] == needle {
+          break
+        }
+      }
+    }
+  }
+}
+{% endhighlight %}
+
+<p>Again, this is a bit like comparing apples and oranges, but you can easily change the map version to not repeatedly create the map, just as you can easiy change the array code to repeatedly recreate an repopulate the array.</p>
+
+<p>I did play with sorting the array keys and doing a binary search, but for such a small array, that ended up being slower.</p>

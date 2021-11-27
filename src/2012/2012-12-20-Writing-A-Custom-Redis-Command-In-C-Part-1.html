@@ -1,0 +1,102 @@
+---
+layout: post
+date: 2012-12-20
+title: "Writing a Custom Redis Command In C - Part 1"
+tags: [c, redis]
+---
+
+<p>Not too long ago, we found ourselves in need of a <code>zdiff</code> command in Redis. We could have implemented it in Lua, like much of our other code, but why not do it straight in Redis? One of the great things about Redis is how clean the codebase is; even for a very rusty C programmer like myself.</p>
+
+<p>The first thing you'll want to do is define your command. At the bottom of <code>redis.h</code> add the function signature:</p>
+
+{% highlight c %}
+  void xdiffCommand(redisClient *c);
+{% endhighlight %}
+
+<p>In <code>redis.c</code>, we'll register our function. Near the top, you'll find a well-documented <code>redisCommandTable</code>. First we'll register our command, then we'll explain each part. So, at the bottom of this variable, add a new entry:</p>
+
+{% highlight c %}
+  {"xdiff",xdiffCommand,5,"r",0,NULL,1,2,0,0,0},
+{% endhighlight %}
+
+<p>The first value is the name of the command, followed by the actual function (the one we declared in <code>redis.h</code>). Next we have the number of arguments. We'll take five arguments: the name of the command itself ("xdiff"), a sorted set, a set we want to use to diff, an offset and a count.Next we provide flags that tell Redis about our command - like whether using it might grow memory, whether it's read-only or does writes and so on. The next value, 0, is used internally by Redis (Redis will store a numeric representation of the previous flags value here). The next four values, starting from NULL and ending with 0, are all about keys. We'll get back to the NULL, but the 1 and 2 tell Redis that the first key that we'll specify is the 1st parameter, and the last one is the 2nd parameter. The 0 is the step Redis should use to get the keys. For example, if we wanted a command that alternate between <code>key1 value1 key2 value2 key3 value3</code>, we'd use <code>1,5,1</code> - the step of 1 meaning to skip every other value. The last two 0s are used internally by Redis (they track statistics about your command). Back to the NULL, some commands make use of keys in a way that cannot be expressed by the simple <code>start,stop,step</code> pattern. For such commands, we specify a custom function that'll take care of identifying the keys of a specific call.
+
+<p>In case you aren't clear on what <code>xdiff</code> will do, we'll take a sorted set, and find the first count values that aren't also in a set, starting at a given offset. For example, we could use it to do something like:</p>
+
+{% highlight text %}
+zadd duncan:friends 101 murbella 100 leto 95 paul 85 teg 85 gurney 80 chaini 70 thufir 60 leto2
+
+sadd family:atreides ghanima paul jessica leto leto2
+
+xdiff duncan:friends family:atreides 1 2
+
+#skips murbella since the offset is 1, and not 0
+output: teg gurney
+{% endhighlight %}
+
+<p>We'll add a new file, <code>custom.c</code> to the <code>src</code> folder (best to keep our code as separate as possible to make it easy to pull in changes from the main project). Next, in <code>src/Makefile</code> find <code>REDIS_SERVER_OBJ</code> and add <code>custom.o</code> at the end of the line. Finally, open our newly created file, <code>custom.c</code>, and add the following:
+
+{% highlight c %}
+#include "redis.h"
+
+void xdiffCommand(redisClient *c) {
+
+}
+{% endhighlight %}
+
+<p>You should now be able to compile Redis (via <code>make</code>).</p>
+
+<p>The <code>redisClient</code> structure represents the context being executed - web programmers might think of it as both the request and the response. We won't deal with it directly; we will pass it to a number of existing functions though. For example, the first thing we'll want to do is add some validation to make sure all of our inputs are ok (since we told Redis that we expected 5 arguments, it'll take care of at least that basic amount of validation for us).</p>
+
+<p>Starting simply, we can use the <code>getLongFromObjectOrReply</code> function to get both the <code>offset</code> and <code>count</code> arguments:</p>
+
+{% highlight c %}
+long offset, count;
+
+if ((getLongFromObjectOrReply(c, c->argv[3], &offset, NULL) != REDIS_OK)) { return; }
+if ((getLongFromObjectOrReply(c, c->argv[4], &count, NULL) != REDIS_OK)) { return; }
+{% endhighlight %}
+
+<p>These two lines tell Redis to load the 3rd and 4th arguments into our <code>offset</code> and <code>count</code> variables as <code>longs</code>. If this fails, Redis will reply with an error message (or we can specify a custom error message as the 4th parameter). We could default our variables (say to 0 and 10), but let's simply exit our function instead.</p>
+
+<p>We also want to load our sorted set and set (<code>argv[1]</code> and <code>argv[2]</code>) and want to make sure that they are of the correct types:</p>
+
+{% highlight c %}
+  robj *zobj, *sobj;
+
+  zobj = lookupKeyReadOrReply(c, c->argv[1], shared.czero);
+  if (zobj == NULL || checkType(c, zobj, REDIS_ZSET)) { return; }
+
+  sobj = lookupKeyReadOrReply(c, c->argv[2], shared.czero);
+  if (sobj == NULL || checkType(c, sobj, REDIS_SET)) { return; }
+{% endhighlight %}
+
+<p>Not too different than before. We define two redis objects, <code>zobj</code> and <code>sobj</code> and try to load them from the given arguments. If they are either null or of the wrong type, we exit. (This is probably the wrong behavior with respect to our second argument, the set. If the set is not present (null), the expected behavior would probably be to apply our paging (offset/count) to the entire zset without doing any diff).</p>
+
+<p>The redisObjects (<code>robj</code>) is a fundamental building block. It wraps the underlying data structure (accessible via the <code>void *ptr</code> member) and provides a <code>type</code>, which <code>checkType</code> relies on, a reference count (<code>int refcount</code>) and and lru value (for expiration, I imagine), along with a couple other members (one of which we'll explore in detail in our next part).</p>
+
+<p>The last bit, for today, is just to reply with a dummy answer when all our validation passes:</p>
+
+{% highlight c %}
+#include "redis.h"
+
+void xdiffCommand(redisClient *c) {
+  long offset, count;
+  robj *zobj, *sobj;
+
+  if ((getLongFromObjectOrReply(c, c->argv[3], &offset, NULL) != REDIS_OK)) { return; }
+  if ((getLongFromObjectOrReply(c, c->argv[4], &count, NULL) != REDIS_OK)) { return; }
+
+  zobj = lookupKeyReadOrReply(c, c->argv[1], shared.czero);
+  if (zobj == NULL || checkType(c, zobj, REDIS_ZSET)) { return; }
+
+  sobj = lookupKeyReadOrReply(c, c->argv[2], shared.czero);
+  if (sobj == NULL || checkType(c, sobj, REDIS_SET)) { return; }
+
+  addReplyLongLong(c, 9001);
+}
+{% endhighlight %}
+
+<p>You can go ahead and build the code. Next, run redis (<code>./src/redis-server</code>) and connect to it via the <code>redis-cli</code> client. You can try various arguments with <code>xfind</code> to make sure it's all working properly (don't worry, we'll add proper tests at some point).</p>
+
+<p>In the next part, we'll build the core of <code>xdiff</code>.</p>

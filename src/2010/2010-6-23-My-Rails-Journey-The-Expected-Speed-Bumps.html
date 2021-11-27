@@ -1,0 +1,18 @@
+---
+permalink: "/2010/6/23/My-Rails-Journey-The-Expected-Speed-Bumps/"
+layout: post
+date: 2010-06-23
+title: "My Rails Journey - The Expected Speed Bumps"
+tags: [ruby]
+---
+<p>So after using Rails to <a href="http://github.com/karlseguin/mylittleblog">write my blog</a>, I decided to move onto a slightly more complicated project using Rails 3 and Mongo (via Mongoid). My plan is to move to progressively more complicated projects until things start to fee natural. I think my expectations are realistic, I know that despite all the productivity claims, it'll be slow going at first. In fact, I looked at Rails a few years back and have a good understanding of just how different everything (Ruby, Rails, the community, testing, ...) is.</p>
+
+<p>Yesterday I ran into, what seems like, <a href="http://github.com/karlseguin/mongoid/commit/10214d70330c58b28241b89bb11dceea14746693">a bug in Mongoid</a>. Attributes (what we call properties in .NET/Java, and in the Mongoid-world they aren't part of the persisted document) of an embedded document weren't behaving like I thought they should. It took me a while, but I eventually figured out that the instance when the attribute is assigned is different that the one which it reads from. What I actually think it happening is that Mongoid clones embedded documents, but only clones the fields that are persisted - not the attributes. I managed to get a failing spec which hopefully will allow someone else to fix the bug.</p>
+
+<p>But there's the depressing thing - I can't actually fix the bug myself. The mongoid code is beyond my comprehension - it almost doesn't look like programming to me. In the scale of things, I'm a very average programmer. I don't pick up new languages nearly as quickly as some people do. If anything sets me apart from the vast sea of 9-5 programmers, its my enthusiam and desire for quality. Eventually I, like anyone else, can master Ruby - the difference is that I'm motivated, willing and have realistic expectations.</p>
+
+<p>This certainly doesn't mean that you should avoid learning Ruby, or even that learning Ruby is difficult. I just believe that its different...and that my existing knowledge of programming and programming languages is, in many ways, a liability. Having reflection hovering at the surface of my mind simply gets in the way or mastering ruby.</p>
+
+<p>Maybe I'm going about this the wrong way. Maybe I should pick up a Ruby book and try to really immerse myself into the language first. Maybe the challenge isn't as big as it seems, and I just need to understand some fundamental rubyism. Maybe I should stick to more mature frameworks (like ActiveRecord instead of Mongoid) and then not worry so much about ending knee deep in low level framework code - but that doesn't feel right to me.</p>
+
+<p>Hopefully in the coming weeks I'll be able to share some clarity with you. Hopefully.</p>

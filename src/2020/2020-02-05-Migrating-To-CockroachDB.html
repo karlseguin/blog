@@ -1,0 +1,53 @@
+---
+layout: post
+date: 2020-02-05
+title: "Migrating to CockroachDB"
+description: "CockroachDB is a newSQL database, behaving much like a traditional database while providing consistent HA and scalability out of the box."
+tags: [learning]
+---
+
+<p>I recently had the opportunity to put a system into production backed by CockroachDB. While I'm a huge fan of PostgreSQL, I wanted something that provided better out of the box support for high availability.</p>
+
+<p>CockroachDB belongs to a class of databases referred to as NewSQL. They're called this because they maintain most of what traditional SQL databases offer while adding scalability as a first class citizen. Cockroach not only provides ACID guarantees and SQL support (including joins), but also consistent data distribution via the raft consensus algorithm.</p>
+
+<p>The system that we used it for is for managing our product. It has relatively low traffic and more tolerance for latency. A failure in this system would not be catastrophic; thus it was a good choice to experiment with a different database. We're currently using version 19.2</p>
+
+<p>Overall, I'm happy with how the effort turned out and with CockroachDB in general. Because it uses PostgreSQL's wire protocol, existing PostgreSQL drivers should work as-is. But we did run into some challenges that are worth pointing out. Here's a list of things you might want to consider:</p>
+
+<p><strong>1.</strong> Cockroach's backup capability is basic. For the free version (which we're using), you can only take full backups. Even the paid version, which gives you incremental backups, pales in comparison to what you can do for free with PostgreSQL and barman. We wanted CockroachDB for HA, but this is a huge step back in our disaster recovery capabilities.</p>
+
+<p><strong>2.</strong> We ran into two security issues. The first is that if you want password-authentication, you must configure your cluster to communicate using certificates. You can start each node in "insecure" mode, but then can't use password authentication. There's a <a href="https://github.com/cockroachdb/cockroach/issues/16188">issue</a> about this. Like the people posting there, our network is already secured, so this requirement is just an unnecessary nuisance.</p>
+
+<p>Secondly, permissions capabilities seem basic. Our driver, Elixir's Postgrex library, requires access to <code>pg_type</code>. Thankfully, CockroachDB exposes this view, but the only way to access it is to grant <a href="https://github.com/cockroachdb/cockroach/issues/43177">select</a> on the entire database. If you need things like row-level-security you're definitely out of luck.</p>
+
+<p><strong>3.</strong> <a href="https://github.com/cockroachdb/cockroach/issues/9683">Partial indexes aren't available</a>. This is particularly painful if you're relying on unique constraints for upserts based on partial indexes. You can work around this, but you'll have to re-work your code. </p>
+
+<p><strong>4.</strong> <a href="https://github.com/cockroachdb/cockroach/issues/27791">There's no range data types</a> nor support for <a href="https://github.com/cockroachdb/cockroach/issues/24873">enums</a>. Again, you can change your code to accommodate this. For example, we have constraints in place to avoid overlapping date ranges which had to be moved into code.</p>
+
+<p><strong>5.</strong> I've grown increasingly enamored with triggers. There are times when they're just so convenient that their poor visibility is a small price to pay. Sadly, triggers, along with user defined functions and stored procedures aren't available.</p>
+
+<p><strong>6.</strong> <code>on conflict do nothing</code> can fail with a <a href="https://github.com/cockroachdb/cockroach/issues/37880">duplicate key error</a> in a pretty simple and basic case. Thankfully the error can be addressed in code.</p>
+
+<p><strong>7.</strong> Foreign key checks <a href="https://github.com/cockroachdb/cockroach/issues/31632">can't be deferred.</a> This is a pain.</p>
+
+<p><strong>8.</strong> There's no full text search nor geospatial capabilities.</p>
+
+<p><strong>9.</strong> There's no way to have an index on an array column.</p>
+
+<p><strong>10.</strong> As far as I could tell, there's no way to determine if an upsert was executed as an insert or an update. In postgresql you can check <code>xmax</code>.</p>
+
+<p><strong>11.</strong> CockroachDB comes with its own CLI tool, but it feels pretty basic. For example it doesn't read <code>.psqlrc</code> and doesn't support things like <code>HISTFILE</code>. Since it's using PostgreSQL's wire protocol, you can use <code>psql</code>. Not everything will work (<code>\d TABLE</code> stands out), but I've found it much more pleasant to use (especially if you're using both CockroachDB and PostgreSQL).</p>
+
+<p><strong>12.</strong> At scale, CockroachDB is supposed to perform well. But going from our single PostgreSQL instance to a 3 node cluster, performance is worse. This is true even for simple queries involving 1 node (say, getting a record by id or running locally with a single node). Still a few extra milliseconds of latency is a fair price for better availability. But the performance characteristics aren't the same as a relational database. You won't have access to the same mature monitoring and diagnostic tools, and you'll have access to fewer levers. You should benchmark your most complicated and largest queries.</p>
+
+<p><strong>13.</strong> Telemetry is on by default. It can be disabled by setting the <code>COCKROACH_SKIP_ENABLING_DIAGNOSTIC_REPORTING</code> environment variable to <code>true</code>.
+
+<p>In the end, the migration was mostly painless. Every limitation and difference was quickly worked around. The developers that weren't involved in the migration have been able to continue developing almost as though nothing has changed (now and again they'll run into a limitation, like not having partial index, and ask "does cockroach not support ....").</p>
+
+<p>CockroachDB has a useful page that documents <a href="https://www.cockroachlabs.com/docs/stable/sql-feature-support.html">what they do and don't support</a> as well as <a href="https://www.cockroachlabs.com/docs/stable/sql-feature-support.html">a more detailed list</a>. If you're considering using it, that's a good start.</p>
+
+<p>Still, the fundamentals are different enough that you'll need to spend some time on their site to get familiar with the underlying architecture and implementation. Thankfully, their content is detailed, well written and well organized.</p>
+
+<p>There are a lot of CockrorachDB features we aren't using, like partition tables, content locality, replication zone, change data capture and so on. Conversely, there are a lot of PostgreSQL features that we weren't using, which might have been much harder to migrate away from. I do worry that we'll eventually get a complex requirement that PG (or one of its many extensions) could have helped us solve. But, with PostgreSQL I was worrying a lot more about how to detect a failure and failing over to standby.</p>
+
+<p><strong>update:</strong> I forgot to mention something important. The system that was migrated has solid tests and good coverage. While a lot of the differences we ran into are obvious (like lack of range types and triggers), others were more subtle (especially the odd on conflict behavior). Test coverage made a pretty significant impact in the speed of the migration and our confidence in pushing live.</p>

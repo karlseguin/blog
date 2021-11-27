@@ -1,0 +1,50 @@
+---
+permalink: "/2011/7/6/The-Only-Thing-I-Think-I-Know-About-Proper-CSS/"
+layout: post
+date: 2011-07-06
+title: "The Only Thing I Think I Know About Proper CSS Usage"
+tags: [ui]
+---
+<p>A couple years ago I wrote a pretty meaningless post which boiled down to sticking a generic <code>last</code> class on the last row of a table (as opposed to a more specialized <code>lastRow</code> class) to build up an arsenal of resuable CSS classes. One of the commenters wasn't a very big fan of this approach, stating that:</p>
+
+<blockquote>by defining class names specifically tied to their design element, you are merely moving the design out of the style sheet and back into the content.</blockquote>
+
+<p>It turns out that this is a pretty widely accepted approach to proper CSS design. In fact, the W3C Q&A has a <a href="http://www.w3.org/QA/Tips/goodclassnames">pretty good write up about this</a>:</p>
+
+<blockquote>Often people use class names like bluetext, or redborder. A much better way to name your classes is with the role a certain HTML element of that class has. <strong>Good names don't change</strong>.Think about why you want something to look a certain way, and not really about how.</blockquote>
+
+<p>To me, what this means is that your stylesheets should be context-aware. For example, the non-semantic way of styling the title within your header, might look something like:</p>
+
+{% highlight html %}
+<style>
+.large{font-size:1.4em;}
+.blue{color: blue;}
+.bold{font-weight:bold;}
+</style>
+
+<div id="header">
+   <h1 class="bold blue xxlarge">Unicorns and Vampires</h1>
+</div>
+{% endhighlight %}
+
+<p>The problem with this approach is that your HTML is in complete control of your site's style. If you're writing code like this, you might as well just use a <code>strong</code> and <code>font</code> tags.</p>
+
+<p>The better approach is to just make your stylesheet smart:</p>
+
+{% highlight html %}
+<style>
+#header .title{font-size:1.4em; color:blue; font-weight:bold;}
+</style>
+
+<div id="header">
+   <h1 class="title">Unicorns and Vampires</h1>
+</div>
+{% endhighlight %}
+
+<p>This is a pretty glaring (though not uncommon) example. However, classes which specify floating behavior (.left, .right or .clear), sizes (.wide, .large, ...) or structural positions (.last, .first, .odd, ...) are equally poor. Unfortunately, not all browsers support CSS3 structural pseudo-classes (like nth-child), so classes like .last or .first are sometimes the most pragmatic solution.</p>
+
+<p>All of this leads me to the topic of CSS frameworks. I have to admit that I don't have a huge deal of experience with them, and what exposure I do have might simply be the result of truly poor implementations. However, my general feeling is that the generic nature of CSS frameworks makes them ill-suited to intelligently control a specific page. There are solutions that map generic CSS framework classes to semantic classes, but, to me, that's getting a little bit crazy (in terms of complexity and useless abstraction).</p>
+
+<p>It isn't that I'm against the principles CSS frameworks promote. Rather simply, it's the non-tailored implementation. To me, the best solution is to look at CSS frameworks to learn about widely accepted design/layout principles, and then strip that bloat down to your specific needs and apply it in a lightweight and semantic manner  (you know, manually).</p>
+
+<p>The only other thing I want to say is just how heavily you're able to lean on this approach. It takes some practice and a willingness to make frequent revisions. I constantly find myself removing classes and other markup from my HTML, because I'm able to tailor my CSS selectors to my specific design/layout.</p>

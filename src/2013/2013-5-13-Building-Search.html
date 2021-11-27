@@ -1,0 +1,58 @@
+---
+layout: post
+date: 2013-05-13
+title: "Building Search"
+description: "using node's natural library to tokenize, stem and rank words and redis' sorted sets to store the inverse index"
+tags: [data structures, redis]
+---
+
+<p>We had 3 major goals when we rebuilt our internal search engine:</p>
+<ul>
+  <li>It had to be fast
+  <li>It had to be distributed with each API cluster
+  <li>It had to incorporate holdbacks
+</ul>
+
+<p>Given that it's one of our most called endpoint, we really wanted it to be fast and distributed; but doubted that we'd be able to make it as fast as everything else. Our concern was with integrating it into our <a href=/scaling-viki/Chapter-3-Holdbacks/>holdback system</a> (that thing that determines whether you can or can't watch a video based on various conditions).</p>
+
+<p>Initially, Cris and I saw this implemented in one of two ways. Either we'd bring holdback data into the search index or we'd do searching and holdbacks as two separate steps and merge the results.</p>
+
+<p>A quick recap on holdbacks: we subtract restricted videos from a set of results (a diff of two sets):</p>
+
+{% highlight javascript %}
+  ['39v', '56v', '9553v']  // results that match a criteria
+- ['39v', '49v']           // videos restricted by your region/platform/...
+---------------------------
+  ['56v', '9553v']         // videos we'll return
+{% endhighlight %}
+
+<p>When you consider that we have some heavily tweaked code to filter, sort, holdback and fetch results, a third possibility is worth considering: bring the search index to the holdback system.</p>
+
+<p>Using <a href="https://github.com/NaturalNode/natural">Node's Natural library</a> we generate inverse indexes of our data. We index titles and keywords differently than descriptions. Titles are tokenized and weighed heavily. For example, given the tittle "Astro Boy", we'll generate three tokens: <code>astro</code>, <code>boy</code> and <code>astroboy</code>. The first two will be weighed at 50% of the maximum title score (since there are 2 tokens and they each match 1/2) and the last is worth the full 100% (it's a full match). For the more verbose descriptions we'll tokenize and stem words, then use Natural's TfIdf capabilities to rank the words. Title matches are worth a whole lot more than description matches.</p>
+
+<p>We weigh based on other factors as well. For example, a show's popularity and in the case of news we'll decay based on age. But really the entire thing is quite procedural and it's just a matter of tokenizing, stemming, and ranking - with the library taking care of a lot of the heavy lifting.</p>
+
+<p>Even for non-latin languages it works pretty well. We do tokenize Chinese and Japanese inputs by individual characters. If I'm not mistaken, some languages like Korean are tricky because they can be a mix of both (space and character tokenized)...oh, and forget about ever stemming Thai.</p>
+
+<p>After we run through the process, we end up with sorted sets with the key being the word/token and the values being the videos that match it along with their weight. When a search request comes in, we run it through the same token + stemming logic and end up with an array of tokens. From there, it's just more set arithmetics. It looks something like:</p>
+
+{% highlight lua %}
+  -- index
+  -- read this as '12v' has a score of 20, '45v' a score of 4000
+  token:astro  =  [20, '12v'  ,  4000, '45v'  ,  5000, '586v']
+  token:flower =  [15, '25v'  ,  1000, '54v'  ,  2000, '667v']
+  token:boy    =  [10, '50v'  ,  4000, '45v'  ,  6000, '542v']
+
+  -- search
+  zunionstore 'temp', 2, 'token:astro', 'token:boy', 'aggregate', 'sum'
+
+  -- temp is now equal to
+  [ 10, '50v'  ,  20, '12v'  ,  5000,'586v'  ,  6000, '542v'  ,  8000, '45v']
+{% endhighlight %}
+
+<p>Thanks to Redis' <code>zunionstore</code> command, we end up with a <code>temp</code> sorted set which has all the scores aggregated. From here we go through our custom <code>vfind</code> which specifically works against a sorted set and applies holdbacks.</p>
+
+<h2>It isn't Perfect</h2>
+<p>The bar was pretty low...I think (hope?) most people agree that it's an improvement. In terms of performance, the 95th percentile of server-side processing is 6ms. There's one area where we're failing though. Our <a href="/scaling-viki/Appendix-C-Our-Simple-AutoComplete/">auto complete is implemented as a trie</a> which means a search for <code>ast</code> will result in <code>astro boy</code> showing up. However, our full search only has an index for <code>astro</code>, so the same result doesn't show up. In fact, more often them not, partial searches return no results.</p>
+
+ <p>Google behaves pretty similar. The auto complete for a partial word and the actual result for that same full search are completely different. But at least they show results. It's something we'll hopefully be able to fix at some point. The simplest solution is to create indexes for all prefixes. It's just a matter of doing it and seeing how much memory it costs</p>

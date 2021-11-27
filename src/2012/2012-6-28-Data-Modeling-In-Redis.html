@@ -1,0 +1,168 @@
+---
+layout: post
+date: 2012-06-28
+title: "Data Modeling In Redis"
+tags: [modeling, redis]
+---
+<p>When you first start using Redis you probably see it with a fairly narrow perspective. Maybe you're thinking of it for caching, or you are looking to its sets to maintain a unique list, like tags. The more you use it, the more you find it useful.</p>
+
+<p>Up until now, I've always used Redis to implement specific features (or parts of a feature). I've used it for ranking, real time statistics, simple queues and so on. I've never used it to hold an applications' domain data. Lately though I've been playing with the idea of re-writing mogade to use Redis exclusively. So far it's been fun to think about how I'd model it and to play with some prototypes. I thought I'd share some preliminary findings.</p>
+
+<p>Specifically, I've been focusing on scores, since that's the most important part of mogade. Redis doesn't have secondary indexes. For the most part, you can only get a value by a key.  That means that if you store a user with her username as the key, there's no way to find the user by email. That is, not unless you maintain your own index. The point is that you really need to think about how you need to query your data.</p>
+
+<p>In mogade scores are queried two different ways. The first, is to get a page of scores for a leaderboard. The second is to get a specific user's existing score to see if the new score is better. There's a bit more to it than that. For example, a score belongs to a leaderboard which belongs to a game. Also, a score belongs to a specific scope: daily, weekly or overall. As you'll see in the first example, this doesn't really change anything.</p>
+
+<p>Before we can look at how to model our scores, note that we'll be using sorted sets to order them. For example, if we want to get the 10 leaders of a leaderboard (say, id 23323) for the daily scope (1), we'd do: </p>
+
+{% highlight ruby %}
+  # zrevrange instead of zrange because we want the top/highest scores first
+  redis.zrevrange '23323:1', 0, 10
+{% endhighlight %}
+
+<p>What the above would do is return the top 10 usernames. <a href="/Paging-And-Ranking-With-Large-Offsets-MongoDB-vs-Redis-vs-Postgresql/">I've already explored this part of the design</a>. What we want to focus on here is how to store and retrieve the other information associated with a score (time, points, level and so on).<p>
+
+<p>Our first modeling attempt will be to use Redis strings, the most basic data structure. As an example, we might have the following keys:</p>
+
+{% highlight ruby %}
+  redis.set '23323:1:leto',    {:points => 9001, :time => ..., :level -> ...}
+  redis.set '23323:1:ghanima', {:points => 3994, :time => ..., :level -> ...}
+  redis.set '23323:1:duncan',  {:points => 3444, :time => ..., :level -> ...}
+  redis.set '23323:2:leto',    {:points => 10000, :time => ..., :level -> ...}
+{% endhighlight %}
+
+<p>Using this approach, we can retrieve a page of leaderboard records using the <code>mget</code> command:</p>
+
+{% highlight ruby %}
+  users = redis.zrevrange '23323:1', 0, 10
+  redis.mget users.map{|u| "23323:1:#{u}" }
+{% endhighlight %}
+
+<p>Give the above dummy data, the code would essentially result in the following being executes: </p>
+
+{% highlight ruby %}
+  redis.mget ['23323:1:leto', '23323:1:ghanima', '23323:1:duncan']
+{% endhighlight %}
+
+<p>To avoid polluting the global key space, we could store all the scores within a hash. Pretty much just adding a level of indirection: </p>
+
+{% highlight ruby %}
+  redis.hset 'scores', '23323:1:leto',    {:points => 9001, :time => ..., :level -> ...}
+  redis.hset 'scores', '23323:1:ghanima', {:points => 3994, :time => ..., :level -> ...}
+  redis.hset 'scores', '23323:1:duncan',  {:points => 3444, :time => ..., :level -> ...}
+  redis.hset 'scores', '23323:2:leto',    {:points => 1000, :time => ..., :level -> ...}
+{% endhighlight %}
+
+<p>Using this approach, we can retrieve a page of leaderboard records using the <code>hmget</code> command:</p>
+
+{% highlight ruby %}
+  users = redis.zrevrange '23323:1', 0, 10
+  redis.hmget 'scores', users.map{|u| "23323:1:#{u}" }
+{% endhighlight %}
+
+<p>There's no practical difference between the two. <code>hmget</code> and <code>mget</code> are both O(N) operations (where N is the number of values/fields being retrieved). Also, from what I've observed, there isn't too much of a memory difference between them. The second version is just a bit cleaner.</p>
+
+
+<p>We can split our hash a number of different ways. For example, each leaderboard could be our key, or leaderboard + scope:</p>
+
+{% highlight ruby %}
+  redis.hset '23323', '1:leto',    {:points => 9001, :time => ..., :level -> ...}
+  redis.hset '23323', '1:ghanima', {:points => 3994, :time => ..., :level -> ...}
+  redis.hset '23323', '1:duncan',  {:points => 3444, :time => ..., :level -> ...}
+
+  #or
+  redis.hset '23323:1', 'leto',    {:points => 9001, :time => ..., :level -> ...}
+  redis.hset '23323:1', 'ghanima', {:points => 3994, :time => ..., :level -> ...}
+  redis.hset '23323:1', 'duncan',  {:points => 3444, :time => ..., :level -> ...}
+{% endhighlight %}
+
+
+<p>Again, in terms of memory and processing time, there isn't much (if any) difference between these different approaches. However, each one allows you to do unique things. For example, by storing everything in a single hash (named 'scores', for example), we can quickly get a count of all scores in our system:</p>
+
+{% highlight ruby %}
+  redis.hlen 'scores'
+{% endhighlight %}
+
+<p>Of course, by breaking it up by leaderboard, we can quickly get a count per-leaderboard, and we can easily delete/reset an entire leaderboard. What if we needed all of these features? An efficient way to count all the scores as well as reset an individual leaderboard? Depending on which approach you take, you'll get one and have to build the other. In this case, it'd probably be easiest (and much more efficient) to organize them by leaderboard for easy reset, and introduce a score counter:</p>
+
+{% highlight ruby %}
+  #whenever there's a new score
+  redis.incr 'score:count', 1
+{% endhighlight %}
+
+<p>(It's worth noting that our sorted set used for ranking would come in handy here as it's essentially a secondary index that contains a list of all the scores in a particular leaderboard + scope. Therefore, both approaches, in this case, are quite simple).</p>
+
+<p>So far the different ways we've seen to organize scores don't impact our main goal. One approach makes it easier to reset a leaderboard, while the other to get a total count of all scores, but they all take the same memory and getting a page of scores driven by rank is two efficient calls.</p>
+
+<p>There is another way we could organize our data which could have a significant impact. This is because mogade's actual usernames are a SHA1 hash (username + deviceid). Given a key, the username accounts for most of the size (<code>232:1:86f7e437faa5a7fce15d1ddcb9eaeaea377667b8</code>). All of the examples we've looked at so far include the username for every single score of every single scope. We can organize our data and minimize username duplications:</p>
+
+{% highlight ruby %}
+  redis.hset 'leto',    '23323:1', {:points => 9001, :time => ..., :level -> ...}
+  redis.hset 'leto',    '23323:2', {:points => 1000, :time => ..., :level -> ...}
+  redis.hset 'ghanima', '23323:1', {:points => 3994, :time => ..., :level -> ...}
+  redis.hset 'duncal',  '23323:1', {:points => 3444, :time => ..., :level -> ...}
+{% endhighlight %}
+
+<p>This means instead of having: </p>
+
+{% highlight ruby %}
+  23323:1:86f7e437faa5a7fce15d1ddcb9eaeaea377667b8 -> data
+  23323:2:86f7e437faa5a7fce15d1ddcb9eaeaea377667b8 -> data
+  23323:3:86f7e437faa5a7fce15d1ddcb9eaeaea377667b8 -> data
+{% endhighlight %}
+
+<p>We have:</p>
+
+{% highlight ruby %}
+  86f7e437faa5a7fce15d1ddcb9eaeaea377667b8  -> 23323:1 -> data
+                                            -> 23323:2 -> data
+                                            -> 23323:3 -> data
+{% endhighlight %}
+
+<p>For 3 million scores across 5 leaderboards and 3 scopes, this approach saved about 250MB. Given the small data associated with each score, that's around 50% of the overall memory.</p>
+
+<p>There's a steep price to pay for this though. Our previous examples were all able to make use of either <code>hmget</code> or <code>mget</code>. However, organized this way, we need to get different fields in different keys. Rather than being able to get all our scores in a single query, we need to issue 1 query per score:</p>
+
+{% highlight ruby %}
+  users = redis.zrevrange '23323:1', 0, 10
+  scores = []
+  users.each do |user|
+    scores << redis.hget user, '23323:1'
+  end
+{% endhighlight %}
+
+<p>Redis can pipeline commands (fire a command before it received a response to the previous one), which we could leverage in this case:</p>
+
+{% highlight ruby %}
+  users = redis.zrevrange '23323:1', 0, 10
+  redis.pipelined do
+    scores = users.map {|user| redis.hget user, '23323:1' }
+  end
+{% endhighlight %}
+
+<p>While fast, it won't be as fast as <code>hmget/mget</code>. Some initial benchmark showed it to be ~2x slower in Ruby. The node version, while faster in all other tests, struggled massively with this multi-query approach. I suspect that 20 000 000 asynchronous fetches is beyond the node's driver capability to gracefully handle.</p>
+
+<p>2x slower might seem bad. But we are literally talking about microseconds. Users won't be able to tell the difference between 1 microsecond and 2 microseconds. And, CPU is cheaper to scale than memory. So, if I did rebuild this, I'd strongly consider this last approach for my specific needs.</p>
+
+<p>Finally, in Redis 2.6 we can leverage lua scripting to implement our own command which will act similar to <code>mget</code> and <code>hmget</code>, but across different keys:</p>
+
+{% highlight ruby %}
+script = <<eos
+  local scores = {}
+  for index, user in ipairs(KEYS) do
+    scores[index] = redis.call('hget', user, ARGV[1])
+  end
+  return scores
+eos
+
+users = redis.zrevrange '23323:1', 0, 10
+scores = redis.eval script, users, '23323:1'
+{% endhighlight %}
+
+<p>Rather than being 2.x, it's roughly only 20% slower.</p>
+
+<p>To be clear, these performance numbers are from simulated runs fetching millions of scores in a tight loop. Running it again might result in 10% difference, or maybe a 50% difference. But we are really talking about the difference between 1 microsecond and 1.5 microsecond (for example).</p>
+
+<h3>Conclusion</h3>
+<p>Hopefully you've learned a couple things. First of all, there are a lot more ways to organize data in redis. Strings versus hashes, and where to partition your key versus your fields, may very well be driven by your specific requirements. Under some circumstances, it definitely can have an impact on memory size and query speed. The memory aspect of it is probably only significant when you have a lot of keys and the size of the data doesn't dwarf the size of the key (which is the case for mogade, so key size  is worth considering.)</p>
+
+<p>Pipelining is great, but the multi-get commands are better. If there is something to learn about that though it's not to worry about hitting Redis many times to achieve something. This is a big shift from relational databases, but an important one in order to effectively use redis.</p>

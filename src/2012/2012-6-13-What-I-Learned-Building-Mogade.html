@@ -1,0 +1,28 @@
+---
+layout: post
+date: 2012-06-13
+title: "What I Learned Building Mogade"
+tags: [learning]
+---
+
+<p>I think every programmer should have side projects. They provide the best opportunity for learning and trying. There's no one to convince that a new technology will be worth it or that a different approach is worth exploring. There also tends to be less business risk.</p>
+
+<p>It's easy for me to list how mogade has benefited my technical knowledge. The Little MongoDB Book and The Little Redis Book are children of the knowledge I gained on the project. On top of that, I'm more comfortable in Linux and Ruby than I've ever been. This isn't to say that mogade is perfect. In fact, it's quite horrible as far as I'm concerned, but it's only through the experience of doing it that I've gained that hindsight.</p>
+
+<p>What isn't as obvious are the less technology-specific things I've learned. I'm not sure if these are interesting to anyone, but I figured I'd share them anyways.<p>
+
+<p>My first lesson was that you never know what your users are going to want. A feature request that almost all of my early adopters wanted was the ability to specify the time of day leaderboards reset on. Even today I think it's a somewhat silly feature, but I'm clearly in the minority. You just don't know where things will go.</p>
+
+<p>On the flip side, many features are hardly used. Early on there were two leaderboard modes, but almost everyone picked the best-score-per-user one. Supporting both was pretty messy. I eventually got rid of the unused one, but I wish I hadn't wasted the time in the first place. These first two points highlight the benefit of shipping early and with a minimum viable product. Get your product in the hands of users and take it from there.</p>
+
+<p>I also learned that most users are super appreciative and understanding. Maybe that has to do with the fact that it's free and has been stable. I also think it's because mogade serves a neglected audience. Users help each other out, promote the service and always have nice things to say. People who know me know that I could learn something from them.</p>
+
+<p>And as great as my users are, I hope they'll forgive me for pointing out that I'm sometimes a little shocked by the questions asked. I expected that my audience, game developers, would easily integrate mogade into their games without any difficulty. This <em>is</em> true for most of them, but not all. It's great that people of all skill levels are programming. It certainly a good learning experience in itself; in terms of writing the api, the documentation and engaging users. However, if mogade was any bigger, support for things that are general programming questions/problems, would be overwhelming. </p>
+
+<p>When I open sourced the server, I didn't expect to get many pull requests. But I expected to get some. I don't think I've ever gotten one. I'm not really sure that I've learned anything with respect to this, but I do find it interesting. Maybe it's because the server is a Rails app that uses Mongo and Redis, while my users are mostly building games in Silverlight.</p>
+
+<p>On the more technical side of things, I can't stress enough how awesome and useful it is to work on cheap and weak hardware. Some of the most frequently accessed code paths have been iterated over 3 or 4 times to improve performance and reduce memory usage. I call it <em>scaling small</em>. Too much CPU and RAM leads to shitty code and shitty developers. This is especially true of platforms that auto-scale (not that I blame the platforms). If you want to learn, work in a relatively constrained environment. I'm glad mogade costs me money to host. Even though it isn't a lot, it's enough to make me constantly try to squeeze the most out of every line of code I write.</p>
+
+<p>Also, versioning APIs sucks. It's not that it's hard, it's that once you publish an API, you pretty much have to support it forever. This is especially true when your API is being consumed through multiple layers. I can't force game developers to upgrade, because they can't force their users to upgrade. The lesson here is simple, if you don't have to make something public, don't!</p>
+
+<p>When you think about it, it's pretty awesome to be able to learn so much while providing people with something they find useful. Granted, none of these are life changing lessons. Most are even common sense, but it's still worthwhile.</p>

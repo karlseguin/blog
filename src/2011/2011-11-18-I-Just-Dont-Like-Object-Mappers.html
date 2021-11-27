@@ -1,0 +1,26 @@
+---
+permalink: "/2011/11/18/I-Just-Dont-Like-Object-Mappers/"
+layout: post
+date: 2011-11-18
+title: "I Just Don't Like Object Mappers"
+tags: [design]
+---
+<p>It seems like people are talking about ORMs again lately, so I wanted to share my thoughts. In fact, it's something I'm always interested in talking about since my take on this appears to be in the minority, and I've always been uncomfortable about that (on this topic).</p>
+
+<p>I have a hard time getting behind mappers. It doesn't matter if we are talking about full-blown ORMs, or DataMapper pattern or lighter-weight ODMs. My problem with them is always about relationship management. In a lot of projects, I think the complete object graph you get with mappers makes a lot of sense. But, for a lot (most?) web applications, where you are often dealing with short-lived units of work (so short lived that calling them units of work is silly), has always felt heavy handed to me. And, the more we push out to the client with things like backbone.js, the more I prefer to hand-write explicit methods.</p>
+
+<p>Even for simple stuff, I find it heavy. Say you are letting people vote on something, I just rather write code that explicitly does (via some hard-coded SQL):</p>
+
+{% highlight clike %}
+  update answers set votes = votes + 1 where id = @id
+{% endhighlight %}
+
+<p>than to load an answer by id, update its votes, and then save the object.</p>
+
+<p>Yes, part of my problem is performance. At my last job we started troubleshooting why a list of 20 items was rendering so slowly, only to find the database being hit thousands of times to render that page (select n + 1 causing select n + 1 type thing). And this was written by senior and experienced Java developers (teehee)...and it isn't the first time that I've seen it.</p>
+
+<p>But the real problem is the complexity and the obscurity of what's going on. And, when mappers start getting clever with things like proxying values, lazy loading and identity maps, the complexity and the chance of something blowing up on you skyrockets. Call me stupid, but I spent years working with NHibernate and when we ran into problems with detached objects, I still had no clue (nor did anyone else on the team) how to fix it.</p>
+
+<p>Again, when you are doing so much of your work in very short-lived and highly-focused requests, the idea of loading the current answer to get its comments, just seems silly. Just write a method that <code>gets_comments_by_answer_id</code> and move on.</p>
+
+<p>For me, the only benefit of a mapper which could be enticing is writing database-agnostic code. But, I only consider that a benefit (a huge benefit) if you actually need it (like, you sell a boxed product that users can configure to run against X, Y or Z databases). If you are building a website on your own servers, for your own stack, it just isn't worth it.</p>

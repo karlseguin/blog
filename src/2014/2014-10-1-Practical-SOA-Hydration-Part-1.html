@@ -1,0 +1,155 @@
+---
+layout: post
+date: 2014-10-01
+title: "Practical SOA / microservices - Hydration - Part 1"
+tags: [design, performance, scalability, soa]
+description: "Leveraging a service oriented architecture presents a number of design and performance challenges. A hydration layer that sits at the top of your services can help."
+---
+<h3>The Problem</h3>
+<p>One of the problems we ran into building a system around a service oriented architecture was having multiple services returning the same type of data. The example that we'll use is a shopping site. Within a shopping site, we can conceive of multiple services that return list of products:</p>
+
+<ul>
+  <li>Search
+  <li>Recommendations
+  <li>User's favorites
+  <li>Line items in an basket or invoice
+  <li>Various lists (new items, on sale, staff picks, ...)
+  <li>Probably more...
+</ul>
+
+<p>You can argue that some of these should be inside single service. If you think they should <strong>all</strong> be one service, well, I hope you'll find this post interesting nonetheless.</p>
+
+<p>We want a product to look the same regardless of which service it comes from, without duplicating the display logic / view model. For example, a simple product response always look like this:</p>
+
+{% highlight json %}{
+  "id": "9001p",
+  "name": {
+    "en": "Dune"
+  },
+  "type": "book"
+}{% endhighlight %}
+
+<p>(I'll look at what happens when you want slight differences in the response later)</p>
+
+<h3>Possible Solution</h3>
+<p>We're building an endpoint which is responsible for returning the user's favorite products. We've decided to put this logic+data with other user-specific stuff. To get products out of it, we either make users aware of products, or make products aware of users:</p>
+
+  <img src=/assets/forposts/practical_soa/proxying.png width=521 height=313 alt="Coupling the user and product services via proxying" style="display:block;margin:30px auto">
+
+<p>Even if a public API is being used between the two services, neither of these solutions seem ideal to me. Furthermore, we're introducing the performance hit of another HTTP call.</p>
+
+<h3>Hydration</h3>
+<p>The solution we ended up using is a JSON-specific form of <a href="http://en.wikipedia.org/wiki/Edge_Side_Includes">Edge Side Include</a> (I implemented it, but I'm not the one <a href="https://twitter.com/ac_roca">who came up with it</a>). At first glance, it looks like a minor variation of the above, but I'm hoping I can convince you otherwise.</p>
+
+  <img src=/assets/forposts/practical_soa/hydrator.png width=521 height=166 alt="Hydrator keeps the services decoupled" style="display:block;margin:30px auto">
+
+<p>Here's what the response from the users service looks like:</p>
+
+{% highlight json %}
+{
+  "page": 1,
+  "total": 54,
+  "results": [
+    {
+      "!ref": {
+        "id": "9001p",
+        "type": "product"
+      }
+    },
+    {
+      "!ref": {
+        "id": "322p",
+        "type": "product"
+      }
+    },
+    ...
+  ]
+}
+{% endhighlight %}
+
+<p>It also includes a <code>X-Hydrate</code> header with a value of <code>!ref</code> - which tells the hydrator that (a) this response needs to be hydrated and (b) the name of the hydration key. The hydrator should remove the header before sending out the response.</p>
+
+<h3>Asynchronous</h3>
+<p>It isn't absolutely necessary, but to me, one of the key points here is that the products are asynchronously pushed to the hydrator. It further reduces coupling, it vastly improves performance, and its a huge boon to caching (more on this shortly).</p>
+
+<p>Whenever a product is created, updated or deleted, the hydrator's local key-value storage is updated. This is based on <a href="/Grow-Up-Use-Queues/">the idea that every DB write should be put into a queue</a>. The result is that once we've received a response with an <code>X-Hydrate</code> header, we can parse out the ids and types and issue something like a redis <code>mget</code> to build the real response (or we could use LevelDB, or an RDBMS, or...).</p>
+
+<p><a href="/Practical-SOA-Hydration-Part-2/">Part 2 has some actual code</a></p>
+
+<h3>Caching</h3>
+<p>When you bring caching and hydration together, you can see a massive positive impact on your cache hit ratio. For most systems, I'm a big believer in long cache TTLs with proactive purges. Again, using our queue, when product X gets updated, one of the queue workers sends out a purge request. Without hydration though, what do you purge?</p>
+
+<p>You can <code>PURGE /products/X</code>, but what about all those lists of products, either from searching, filtering, paging, curated lists, recommendation, and so on? How do you purge all of the pages that product X belongs to?</p>
+
+<p>With hydration, that isn't a problem. You cache the unhydrated list (preferably in a parsed format) separately from the product data. So you can have a hundred lists which reference product X, but they'll always hydrate on-demand with the most up-to-date data.</p>
+
+<p>The impact on caching is more than just being able to set a long TTL. It can also reduces the size of your cache. Your lists become a fraction of their original size by only containing references rather than full blown objects.</p>
+
+<h3>Response Variations</h3>
+<p>Some services might want to return a slightly different product structure. For example, your full text search service might want to add a <code>weight</code> field.</p>
+
+<p>There are two solutions to this. We can either nest the reference:</p>
+
+{% highlight json %}
+{
+  "page": 1,
+  "total": 54,
+  "results": [
+    {
+      "weight": 1.0,
+      "product": {
+        "!ref": {
+          "id": "9001p",
+          "type": "product"
+        }
+      }
+    },
+    ...
+  ]
+}
+{% endhighlight %}
+
+<p>Which would get expanded into:</p>
+
+{% highlight json %}
+{
+  "page": 1,
+  "total": 54,
+  "results": [
+    {
+      "weight": 1.0,
+      "product": {
+        "id": "9001p",
+        ....
+      }
+    },
+    ...
+  ]
+}
+{% endhighlight %}
+
+<p>Or return two different objects:</p>
+
+{% highlight json %}
+{
+  "page": 1,
+  "total": 54,
+  "results": [
+    {
+      "!ref": {
+        "id": "9001p",
+        "type": "product"
+      }
+    },
+    ...
+  ],
+  "weights": [1.0, ...]
+}
+{% endhighlight %}
+
+<h3>Conclusion</h3>
+<p>Ultimately the goal is to make it possible to build any number of services without having to either repeat code or couple them. It's also very much about performance. Giving the hydrator it's own key-value store of data, and updating it asynchronously eliminates much of the SOA overhead you'll have. By leveraging that same update channel to proactively purge caches, we can set very long TTLs in our internal caches and not have to worry about stale results.</p>
+
+<p>Part 2 will have actual code :)</p>
+
+<p>Finally, if you're building something using SOA, the hydrator is just a small part in a infrastructure layer you'll likely have sitting at the top of your request pipeline. This system is going to do a lot of things: <a href="https://news.ycombinator.com/item?id=4382542">early SSL termination</a>, routing, <a href="/Space-Efficient-Percentile-Calculations/">logging</a>, some authentication, hydration and <a href="/High-Concurrency-LRU-Caching/">caching</a>.</p>

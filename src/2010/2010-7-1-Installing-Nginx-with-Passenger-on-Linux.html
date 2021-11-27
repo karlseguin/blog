@@ -1,0 +1,88 @@
+---
+permalink: "/2010/7/1/Installing-Nginx-with-Passenger-on-Linux/"
+layout: post
+date: 2010-07-01
+title: "Installing Nginx with Passenger on Linux (from source)"
+tags: [devops]
+---
+<p>Hopefully you've been hearing some comments over the last while about how good the package management story is with Linux and Ruby. Basically, Ubuntu/Debian makes use of Aptitude, while Ruby makes use of RubyGems. Aptitude in particular has made installing things on Linux quicker and easier than Windows.</p>
+
+<p>In most cases the package you get from aptitude is exactly what you want. However, you'll sometimes want a build with a non default configuration. In such cases you'll have to grab the source, configure your makefile, build and install. I admit that it can be a little intimidating at first, but it really is easy, and it'll cover that last 5% that Aptitude can't. (there's actually a much easier way to get passenger/nginx up and running, but its good to know and understand the linux build process)</p>
+
+<p>What we are going to look at in specific is configuring <a href="http://wiki.nginx.org/Main">nginx</a> to use <a href="http://modrails.com/">Phusion Passenger</a> - the combination is quickly becoming the preferred way to host Ruby on Rails. Even if you aren't interested in Rails development, nginx is very popular and super-fast reverse proxy/load balancer/http server used in front of many IIS boxes, so its good to be familiar with it.</p>
+
+<p>Depending on what's already on your box, some of these steps might be unnecessary. Also, I'm not an expert at this - if it doesn't work, try and figure it out (it didn't work at first for me either, but google is great</p>
+
+<h3>Step 1 - Get The Source</h3>
+<p>The first step is to download the nginx source. You can do this however you like, but <code>wget http://sysoev.ru/nginx/nginx-0.8.43.tar.gz</code> is probably the quickest way (you should check <a href="http://wiki.nginx.org/NginxInstall">the nginx download page</a> to see if there's a newer version than 0.8.43).</p>
+
+<h3>Step 2 - Untar It</h3>
+<p>Next we have to unarchive and decompress the source using the <code>tar</code> command: <code>tar -xvf nginx-0.8.43.tar.gz</code>. This creates a folder named <code>nginx-0.8.43</code>.</p>
+
+<h3>Step 3 - Setup</h3>
+<p>You'll probably need to install the core build tools, which you can do by executing <code>apt-get install build-essential</code>. You'll also want to install Ruby. I use REE (Ruby Enterprise Edition). Download the latest source (using wget) from <a href="http://www.rubyenterpriseedition.com/download.html">here</a>, untar it, and run the installer. It'll walk you through the installation processing - telling which and how to install missing dependencies. Once done, we can add ruby's bin folder to our path: <code> export PATH=$PATH:/opt/ruby-enterprise-1.8.7-2010.02/bin/</code> (your path may be different)</p>
+
+<p>Next we install the passenger phusion gem: <code>gem install passenger</code>.</p>
+
+<h3>Step 4 - Configure</h3>
+<p>In following steps we'll make (which builds the code) and then make install (which installs the built code). Before we do that we need to generate a MakeFile (which those two steps use). This is where we change our package from what we could otherwise get from Aptitude (that's essentially what Aptitude does, it gives us a pre-configured and pre-built package). The <a href="http://wiki.nginx.org/NginxInstallOptions">nginx install page</a> gives us the possible compile-time options as well as samples. We can run one of the samples from the nginx page (all it does is create a Makefile, so go ahead and play with it). Change to the nginx directory and run (./XYZ is how you execute XYZ in Linux, the \ lets us break the command across multiple lines):</p>
+
+{% highlight clike %}
+./configure \
+  --conf-path=/etc/nginx/nginx.conf \
+  --error-log-path=/var/log/nginx/error.log \
+  --pid-path=/var/run/nginx.pid \
+  --lock-path=/var/lock/nginx.lock \
+  --http-log-path=/var/log/nginx/access.log \
+  --with-http_dav_module \
+  --http-client-body-temp-path=/var/lib/nginx/body \
+  --http-proxy-temp-path=/var/lib/nginx/proxy \
+  --with-http_stub_status_module \
+  --http-fastcgi-temp-path=/var/lib/nginx/fastcgi \
+  --with-debug \
+  --with-http_flv_module
+{% endhighlight %}
+
+<p>You'll probably get some errors - for example, I'm told that the HTTP rewrite module requires the PCRE library. I'm also given some options. We can install PCRE, tell nginx to skip loading the HTTP rewrite module, or point nginx to the PCRE source. You can install PCRE by running <code>apt-get install libpcre3 libpcre3-dev</code>. You'll probably get more errors which you can resolve however you want (by installing the necessary library (it isn't always easy to know what library you need), or skipping the module).</p>
+
+<h3>Step 5 - More Headers Module</h3>
+<p>The above is just a sample, we're going to build nginx exactly how we want it. First though, I need to download any extra module I want to build with. I'm particularly interested in <a href="http://wiki.nginx.org/NginxHttpHeadersMoreModule">More Headers Module</a>, which gives us more control over headers than what can be done with the core. Its pretty easy, download the latest version form <a href="http://github.com/agentzh/headers-more-nginx-module/downloads">github page</a>, untar it, and we can now configure nginx to use this module via the add-module directive: <code>--add-module=/root/headers-more-nginx-module</code>.</p>
+
+
+<h3>Step 6 - Our Configure</h3>
+<p>Here's the actual configuration options I'll be using:</p>
+{% highlight clike %}
+./configure \
+  --conf-path=/etc/nginx/nginx.conf \
+  --error-log-path=/var/log/nginx/error.log \
+  --pid-path=/var/run/nginx.pid \
+  --lock-path=/var/lock/nginx.lock \
+  --http-log-path=/var/log/nginx/access.log \
+  --http-client-body-temp-path=/var/lib/nginx/body \
+  --http-proxy-temp-path=/var/lib/nginx/proxy \
+  --without-http_fastcgi_module \
+  --without-http_uwsgi_module \
+  --with-http_stub_status_module \
+  --with-http_gzip_static_module \
+  --add-module=/root/headers-more-nginx-module \
+  --add-module=/opt/ruby-enterprise-1.8.7-2010.02/lib/ruby/gems/1.8/gems/passenger-2.2.15/ext/nginx
+{% endhighlight %}
+
+<p>As you can see I've disabled a couple built-in modules, added a couple ones, and added our more-header and passenger module. The path of your passenger module might be different, but it should be similar except for the possibility of different version numbers.</p>
+
+<h3>Step 7 - Make</h3>
+<p>Now that we have everything configured, we can build it. To do so, simply run <code>make</code>. Once completed, you can install it by running <code>make install</code>.</p>
+
+<h3>Step 8 - Configuring nginx</h3>
+<p>You'll want to configure nginx to fit your specific needs, but to get passenger working you'll need to specify these two directives (in the http section of the configuration):</p>
+{% highlight clike %}
+  passenger_root /opt/ruby-enterprise-1.8.7-2010.02/lib/ruby/gems/1.8/gems/passenger-2.2.15;
+  passenger_ruby /opt/ruby-enterprise-1.8.7-2010.02/bin/ruby;
+{% endhighlight %}
+<p>also, you specify <code>passenger_enabled on</code> within the appropriate nginx locations</p>
+
+<h3>Step 9 - Final touches</h3>
+<p>You'll want a start/stop script for nginx, you can <a href="/assets/forposts/nginx_start_stop.txt">grab mine</a>, place it in <code>/etc/init.d</code>, give it execute permission <code>chmod +x /etc/init.d/nginx</code> and use <code>/etc/init.d/nginx start|stop|restart|reload</code> (if it fails because of missing directories, go ahead and create them and try again). Finally, we can make nginx auto start by executing <code>/usr/sbin/update-rc.d -f nginx defaults</code>.</p>
+
+<h3>Conclusion</h3>
+<p>Hopefully you have everything up and running. All you need to do is read up on nginx configuration to set up your sites. A long time ago I remember configuring/making and not really getting it. Now it all seems pretty trivial. Hopefully you think so too, and remember, if you screw anything up or want to change something (like include another module), you can just start the process over (remember to stop relevant running processes (like nginx) and to make/make install after configuring.)</p>

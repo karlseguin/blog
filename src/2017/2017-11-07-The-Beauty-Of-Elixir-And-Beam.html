@@ -1,0 +1,51 @@
+---
+layout: post
+date: 2017-11-07
+title: "The Beauty of Elixir and Beam"
+description: "Processor isolation enabled by the synergy of the Beam runtime, the standard library and the Elixir language is the biggest leap in developer efficiency since Garbage Collection"
+tags: [elixir]
+---
+
+<p>I've never felt as strongly about a language and its ecosystem as I do about Elixir. I think it represents a significant leap in productivity. It encourages designs that are intuitive and maintainable. The synergy between the runtime, libraries, tools and language is almost magical.</p>
+
+<p>I'm not an optimist. I find the state of software engineering dreadful. If doctors were like software developers, the mortality rate for checkups would be around 50%. I think this is more a cultural problem than a tooling one. We need to get better at developer-written automated tests, error handling, code reviews and pair programming. But tools can help, and none more so, in my opinion, than Elixir.</p>
+
+<p>Side Note: I'm using Beam, Elixir, the standard library (and to some degree Erlang) interchangeably. Part of that is laziness. Part of it is that the synergy between them makes it inaccurate to talk about a property belonging to a specific layer. Features of the VM (called Beam) are embraced and emboldened by the libraries and languages.</p>
+
+<h3>Process isolation</h3>
+<p>The bulk of what I want to talk about can be summed up using two words: process isolation. Even if you know nothing about Elixir, I think the basics are easy grasp.</p>
+
+<p>Elixir doesn't have threads. It has processes. That can make talking about them a little confusing: am I talking about an Elixir process or an OS process? But as you learn Elixir, you should come to realize: process <em>is</em> a good name for them. Elixir processes only have access to their memory. They can't access another process' memory, nor is there global memory that can be shared between them. Coordination happens via message. If Process A wants access to some of Process B's data, it can ask for it, but it'll only get a copy of the data (in other words, Process B can't break Process A).</p>
+
+<p>Elixir processes are boundaries that can be used to make code more cohesive and less coupled. High cohesion and low coupling are still design activities, but you have runtime, library and language support to steer you towards cleaner designs. Behaviour that manipulates state has to be executed by the process that owns the state. In and of itself this is great, but it also tends to make it easier to figure out how to organize your code and easier to test because of the reduced surface-area and explicit API.</p>
+
+<h4>Failure isolation</h4>
+<p>With process isolation comes failure isolation: a process crash won't spread. However one process can opt to link its fate to another process. Or, a process can monitor other processes and, through the messaging systemt, be notified when the monitored process dies. This is what enables supervisors: a process that monitors and restart other processes. A typical Elixir program has a supervisor hierarchy which not only works to keep a system up, but also in a known state.</p>
+
+<p>A philosophy is born from these features: let it crash. I've always believed that most errors are exceptional and cannot be reasonably handled beyond logging them. I understand that in some systems this isn't sensible (and even then you'll have to weigh the danger of a crashed process to one in an potentially unknown state). Some languages, like Go, make it a tedious and cruel chore to <em>let it crash</em>. For this reason, I've always preferred exceptions. With Elixir though, I've come to realize that exceptions are a superficial part of what the tooling should be. Isolation, linking, monitoring and libraries that leverage this foundations ought to be the norm.</p>
+
+<p>There's more that I could say to further highlight how much thought has been put into dealing with errors. But they're more subtle and require some existing knowledge of Elixir and the standard library to explain. Maybe you could build all this tooling without process isolation, but in the case of Elixir, it all flows from there.</p>
+
+<h4>Not a silver bullet</h4>
+<p>You can still write bad code. You can have processes responsible for too much state or log too much to standard error. Elixir gives you the tools to help you do better. By extension, it also gives you an environment to learn how to do better. The documentation, libraries and community all largely guide you towards using the runtime, stdlib and language to its fullest potential.</p>
+
+<p>As an example, we recently had a glutenous process. The lack of behavioural cohesion was made obvious by the fact that a process was responsible for a lot of disparate pieces of information. The source of the problem was obvious because a process gives you a concrete unit to look and see what state, and by extension what behaviours, it's responsible for. By moving the state into distinct processes, everything else started to gel. Functions were relocated to the appropriate process' module, and those functions needing multiple pieces of data were broken down where possible. Tests became more focused and less brittle, because the code under test became simpler, more cohesive. </p>
+
+<h3>All the other things</h3>
+<p>It would be distracting to spend too much time talking about the other things that make Elixir a wonderful language. It would also be a mistake to not briefly talk about them. It's a functional language with immutable data structures. It has a powerful macro system and pattern matching. The runtime lets you collect a great deal of insight about a running system and lets you run ad-hoc code against it. If you believe that learning new perspectives and techniques is key to professional growth, as I do, Elixir is christmas come early.</p>
+
+<p>By comparison, Go, Java, Ruby, Python, C#, Crystal, etc are siblings. They share a similar memory and threading model, data structures, evaluation strategies and idioms. A reasonable person would be intimidated by this. If Elixir makes Ruby and Go look like brother and sister, won't it be hard to learn?  Not really. For all of its differences, the language is approachable.</p>
+
+<p>You can build something meaningful without understanding all of the details. People often start by building a Phoenix (ruby on rails type framework) application. There's a bad kind of magic in Phoenix. It makes heavy use of macros, which I'd say is the only really hard thing to master. But if you follow the scaffolding templates and focus on building your app, you can build a real system. By the time you need to add more complex features, pattern matching and immutable data structures will be second nature, and you'll be ready to peel the next layer.</p>
+
+<p>Aided by a modern and readable syntax, solid documentation and a helpful community, it's discoverable. It takes time to master, but mastery isn't required to start.</p>
+
+<h3>Great unless...</h3>
+<p>There are systems that aren't a good fit for Elixir. It requires a runtime which immediately eliminates some types of applications. If you want to throw CPU cores at a large data set, process isolation becomes a limitation. The Elixir way is distribution, but despite recent trends, I'd recommend scaling up before scaling out. Related, it doesn't have the best number crunching performance.</p>
+
+<p>In short, don't use Elixir when you know it's a bad fit.</p>
+
+<h3>You like garbage collection don't you?</h3>
+<p>A friend of mine maintains a large ruby on rails application. I asked him what he would think if someone rewrote it in C. He thought it was a stupid question. I asked him to humor me. "For this type of application", he explained, "the advantages of Ruby are applicable and the advantages of C are liabilities."</p>
+
+<p>This, I told him, is why you should use Elixir on your next project.</p>

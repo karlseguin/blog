@@ -1,0 +1,106 @@
+---
+permalink: "/2010/9/6/A-different-way-for-me-to-page/"
+layout: post
+date: 2010-09-06
+title: "A different (for me) way to page"
+tags: [modeling, performance, ui]
+---
+<p>So, how do <em>you</em> present a list of paged results? For a long time I've followed a simple pattern: get the paged results from the database, get a count of total matches, and return some type of <code>PagedResult</code> object. Doesn't matter if you are using a stored procedure, nhibernate or activerecord. But I've always been bothered by one thing: constantly returning the record count (or page count) to the client.</p>
+
+<p>Context time. As you've probably guessed, I'm going to talk about only getting the total number of records once and caching it; but that only works under certain, yet common, conditions. There are two key questions you need to ask yourself: how does the data get updated and how acceptable is it to show the wrong number of pages?</p>
+
+<p>For example, a system I once built got nightly dumps of data - making the data rather stale and the total number of records highly cacheable. Another one displayed a user his or her  activities - as long as the user was looking at the list, the list wasn't going to change. If you are presenting users with a lot of pages, then an accurate up to the minute count might not be important because they aren't likely to go browsing page after page. On the flip side, if the data is shared amongst multiple users and there's low tolerance for staleness, this approach isn't for your system.</p>
+
+<p>With that out of the way, I wanted a simple approach which would avoid redundant count calls. I didn't want to implement any fancy caching logic. Instead I wanted to leverage the natural client-side caching that happens until the user clicks refresh or navigates somewhere else - a particularly ideal solution when you use ajax for your paging. Here's what my jQuery plugin ended up looking like:</p>
+
+{% highlight javascript %}
+(function($)
+{
+  $.fn.pagedList = function(options)
+  {
+    var opts = $.extend($.fn.pagedList.defaults, options);
+    return this.each(function()
+    {
+    if (this.pagedList) { return false; }
+      var $container = $(this);
+      var page, count, $pages;
+      var pl =
+      {
+        initialize: function()
+        {
+          pl.changePage(1);
+          $.get(opts.countUrl, {}, lt.countCallback, 'json');
+        },
+        countCallback: function(r)
+        {
+          count = r.count;
+          pl.initializePager();
+        },
+        initializePager: function()
+        {
+          for(var i = 1; i <= count; ++i)
+          {
+            var $div = $('<div>').data('page', i).text(i);
+            opts.pager.append($div)
+          }
+          $pages = opts.pager.children();
+          $pages.click(function()
+          {
+            pl.changePage($(this).data('page'));
+          });
+          pl.activatePage(1);
+        },
+        changePage: function(i)
+        {
+          if (page == i) { return; }
+          page = i;
+          pl.load();
+        },
+        load: function()
+        {
+          $container.load(opts.listUrl, {page:page})
+          pl.activatePage(page);
+        },
+        activatePage: function(p)
+        {
+          if ($pages == null) { return; }
+          $pages.removeClass('active');
+          $pages.filter(':eq(' + (p-1) + ')').addClass('active');
+        }
+      };
+      this.pagedList = pl;
+      pl.initialize();
+    });
+  }
+})(jQuery);
+
+$.fn.pagedList.defaults =
+{
+    listUrl: null, countUrl: null, pager: null
+};
+{% endhighlight %}
+
+<p>Calling the plugin is pretty simple, give the following html:</p>
+{% highlight html %}
+<table id="myList">
+   <thead>...</thead>
+   <tbody></tbody>
+</table>
+<div id="#pager"></div>
+{% endhighlight %}
+
+<p>You would use the following javascript:</p>
+
+{% highlight javascript %}
+$('#myList tbody').pagedList(
+   {
+      listUrl: 'results/list',
+      countUrl: 'results/count',
+      pager: $('#pager')
+   }
+);
+{% endhighlight %}
+
+<p>Now, the rest is back end stuff, which is all common stuff.</p>
+
+<p>Is this a premature optimization? I have worked on at least 1 system that really would have benefited from this approach. One thing I do like about this, which isn't performance related, is that it exposes the count separately, which could be used to show context-aware menus/icons. I do have a hard time calling this a micro optimization - I don't feel like there's any significant tradeoffs.</p>

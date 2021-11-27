@@ -1,0 +1,101 @@
+---
+permalink: "/2011/10/27/A-MongoDB-Guy-Learns-CouchDB/"
+layout: post
+date: 2011-10-27
+title: "A MongoDB Guy Learns CouchDB"
+tags: [mongodb]
+---
+
+<p>I <a href="http://mogade.com/">use</a> and <a href="http://mongly.com">contribute</a> to MongoDB a lot. But one thing that NoSQL has taught us is the importance and benefits of exploring and experimenting with different data storage (oftentimes within the same project). So I decided to build a sample application using CouchDB.</p>
+
+<p>It's safe to call me biased. I even have some loose ties to 10gen (the makers of MongoDB). Inevitably, I'll favor things I already know and understand, especially when you consider that what I know of CouchDB might be wrong, so take this with a grain of salt.</p>
+
+<p>MongoDB and CouchDB are both document-oriented databases. Aside from both storing documents though, it turns out that they don't share much in common. This actually surprised me, I was expecting them to be more similar than different. Some of it is, to me, pretty minor, but I don't want to skip over anything I noticed and risk being accused of skipping over CouchDB "wins".</p>
+
+<h3>Installation</h3>
+<p>Installation of both CouchDB and MongoDB is pretty straightforward. They both win.</p>
+
+<h3>30 Seconds In</h3>
+<p>So you have  MongoDB and CouchDB installed and running, what's the first thing you do? In MongoDB, you open up the shell utility, and mess around. In CouchDB you open up your browser and point to the now-locally-running Futon, CouchDB's web-based administrative utility. Futon is pretty, informative and easy to use.</p>
+
+<p>I honestly think some people will prefer the mongo shell and some will prefer Futon. You get a lot more power in the mongo shell (it is a full javascript environment after all). But there's no doubt that Futon is professional and confidence-building. Personally, the first thing I did after spending a few seconds in Futon was grab a CouchDB gem and start programming against it. So, <strong>I</strong> much prefer the mongo shell, but it really doesn't matter because each is capable of doing the other's "default". So it's a tie.</p>
+
+<h3>Protocol</h3>
+<p>MongoDB uses a custom binary protocol. CouchDB uses HTTP REST. There's undeniably something nice about CouchDB's approach. Practically anything can be a CouchDB client, which is why not having a shell really isn't a big deal: your normal shell is Couch's shell.</p>
+
+<p>On the flip side, whether you use CouchDB or MongoDB, most of what you do will use a library, which completely abstracts the underlying protocol. Yes, CouchDB's approach leads to nice and impressive documentation/examples, but it doesn't really change how you code. I just don't plan on having a jquery plugin hit CouchDB directly. Ultimately, Mongo's approach is more flexible since you can (and people have) built an HTTP REST interface on top of its binary protocol.</p>
+
+<p>I'm just not sold on doing these kind of things over HTTP. The claims of it being open and following established standards don't resonate with me. If I couldn't find a driver in a particular language, CouchDB's approach would undeniably have strong advantages. But MongoDB's binary protocol is well documented and simple, plus drivers are available in a lot of languages.</p>
+
+<h3>Organization</h3>
+<p>In CouchDB, you have the concept of a database most people are familiar with, which contains documents. MongoDB has the same concept of a database, but rather than containing documents directly, a database contains one or more collection which contain your documents. In other words, MongoDB has one extra layer of containers.</p>
+
+<p>Since we are dealing with schemaless documents, there's nothing stopping you from using a single collection in MongoDB and achieving the same thing. Conversely, you can assign a field (call it <code>doc_type</code>) to all your documents in CouchDB to simulate multiple collections. In fact, the two Flask frameworks that I looked at do just that. </p>
+
+<p>Given that you can simulate either approach with either engine, you could say it isn't a huge deal. And it isn't. But between the two, the CouchDB approach seems wrong. It isn't just that collections help organize things beyond your documents, like indexes (or views in Couch), sharding and provide additional administrative flexibility (backup tools are collection-aware, for example). And it isn't that the collection approach is more efficient, resulting in less wasted space and cpu cycles. It's that the collection-per-entity (or table-per-entity) just maps well with how most of our applications are laid out. When you start all of your views (which we'll talk about next) with <code>if (this.doc_type == 'comment') { }</code> something feels wrong.
+
+<h3>Querying</h3>
+<p>Here's where things start getting interesting. Anyone who's used a RDBMS will find MongoDB's approach to querying familiar. It all revolves around the <code>find</code> command and typical indexes. For example, even if you've never seen MongoDB, you can probably understand this code: </p>
+{% highlight javascript %}> db.posts.createIndex({tags: 1, dated:1})
+> var cursor = db.posts.find({tags: 'nosql'}).skip(10).limit(10).sorted({dated:1})
+> cursor.count()
+20
+> cursor.toArray()
+[{name: 'blah'.....}, ...]
+
+//you can also query on fields that aren't indexed
+> db.posts.find({author: 'leto'}){% endhighlight %}
+
+<p>CouchDB takes a different approach. You can only query against views (and preferably predefined viewed), which are built using MapReduce. So, to get a page of posts containing the tag 'nosql', we first define a view:</p>
+
+{% highlight javascript %} //our simple view doesn't have a reduce phase, just a map phase
+function(doc) {
+  if (doc.doc_type != 'post') { return; }
+  for(var tag in doc.tags) {
+    emit([doc.tags[tag], doc.dated], null);
+  }
+}{% endhighlight %}
+
+<p>Next we can query the view (shown using python):</p>
+
+{% highlight javascript %}
+for doc in db.view('application/post_by_tags', startkey=["nosql"], endkey=["nosql", {}], limit=10, skip=10, include_docs=True):
+  print doc{% endhighlight %}
+
+<p>Now, this isn't the recommended way to do pagination in CouchDB. Namely because <code>skip</code> isn't particularly efficient (worth pointing that MongoDB has similar issues with large skip values). The <a href="http://guide.couchdb.org/draft/recipes.html#fast">recommended approach</a> is to grab 1 extra document (so grab 11 if we are showing 10) and use the id of the 11th as the startkey when grabbing the next page. Anyways, it doesn't really matter, since I just want to highlight a basic query.</p>
+
+<p>If you don't know MapReduce, it's something that you should learn. What our map function is doing is creating a view that looks like:</p>
+
+{% highlight javascript %}[
+  {key: ['nosql', '2011-09-01']}, value: {_id: doc1_id},
+  {key: ['couchdb', '2011-09-01']}, value: {_id: doc1_id},
+  {key: ['nosql', '2011-09-02']}, value: {_id: doc2_id},
+  ..
+]{% endhighlight %}
+
+
+<p>The id of the document is automatically included in the value, which is why we emit a null value. Notice that when we query the view we tell it to <code>include_docs</code>. Being able to emit an explicit value lets you create standalone views the present data specifically for a query. In a way, it can decouple how you store your data to how it comes back from a query. The reason the <code>date</code> is included in our key is because documents in a view are sorted by key. Since our key is an array, our ranged query starts at <code>["nosql"]</code> and ends at <code>["nosql", {}]</code>, where {} means any date.</p>
+
+<p>When a document is updated or inserted, it goes through the view functions and is inserted in the proper order. This is pretty neat and efficient. (technically the update happens on the next read, for any new or updated documents, with options to make sure a read won't block because of a huge number of changes.)</p>
+
+<p>MongoDB and CouchDB obviously approach this quite differently. In addition to document queries, MongoDB  also support mapreduce for more complex aggregation. Using a <code>processed: false</code> field and a background job, we could create an ugly version of CouchDB views. Again, it feels to me that MongoDB provides more flexibility. It's also pretty clear that the MongoDB approach is simpler.</p>
+
+<p>For 95% of a normal system's queries, I think the MongoDB approach is better (easier, more straightforward), and while its mapreduce capabilities aren't as solid, they cover the remaining 5%. Still, I absolutely love CouchDB's take on this. I think both systems would benefit from copying each other's query capabilities, because, while there's a lot of overlap, I do think they complement each other. It does seem like MongoDB is closer to this as-is, and if I could only pick one or the other, I'd stick with normal indexes and queries.</p>
+
+<h3>I Guess We Have To Talk About CAP</h3>
+<p>As critical as it is, I generally dislike conversations about CAP. When comparing CouchDB to MongoDB though, it'd be silly to skip it. Put plainly, CouchDB is all about Availability. What this means is that during a network partition, the system continues to function. To be clear, we aren't just talking about some network connectivity issue. As the CouchDB documentation highlights, we're talking about CouchDB running on an cellphone, which loses connectivity to the net for hours, and is able to resync to a central server once the internet becomes available again.</p>
+
+<p>How does CouchDB do this? In addition to an <code>_id</code> field, every document has a <code>_rev</code> field. This field is used to identify updated documents and synchronize once-disconnected CouchDB replicas. What happens if both sides of the disconnect update the same document? You could rely on a timestamp (last update wins), or you could resolve the conflict in code via a callback. To be honest, it isn't something I've played with. However, even if you don't play in a split environment, the fact is that updates don't really update and deletes don't really delete. Instead, they insert a new document, with a new version (and in the case of a delete with a delete flag). Eventually CouchDB compaction will clean out old versions. When all is said and done, fundamentally, this is the difference between CouchDB and MongoDB.</p>
+
+<p>MongoDB is more about consistency. You have a single authoritative master server that accepts all writes. Even in a sharded environment, there's one master per shard key cluster. You can read from slaves, which might not be fully up to date, but that's a performance tweak you can opt-into, it doesn't have anything to do with higher availability. Consequently, there is no versioning. In fact, updates can happen in-place, and MongoDB has an algorithm to pad frequently growing documents so that updates can happen in-place. MongoDB's answer to availability is replica-sets. Their effective, but the type of availability that CouchDB provides and the type of availability that MongoDB provide, aren't the same thing.</p>
+
+<h3>Conclusion</h3>
+<p>I want MongoDB to add CouchDB-like views. I also think CouchDB would benefit from having simpler query capabilities. Besides that though, both products are still growing and adding features at an incredible pace. I felt like CouchDB had more warts, for example paging sucks a bit, there's no unique indexes and the way people work around that is a kludge, deletes and updates are a two phase process of pull _rev ids from views and then bulk modify those. But maybe I'm just desensitized to MongoDB warts: developers tend to blindly work through the pain points of their chosen tool (*cough*Java*cough*).</p>
+
+<p>Beyond this sits the main issue of CouchDB's core being: high availability. As I started reading up on CouchDB, I felt like its approach to availability was <strong>a very cool solution to a problem I don't have</strong>. The website doesn't do a great job of demonstrating the benefits. In fact, the most explicit example, cellphones, seems somewhat obsolete since nowadays cellphone apps are often built assuming network connectivity. Why run couchdb on a cellphone when you can just hit a public api that's on the net?</p>
+
+<p>As I thought about it though, I considered a friend of mine who builds information system for a grocery chain. I don't know much about their architecture, but I believe each store is connected to a central warehouse. However each store must continue to be fully operational during any type of disconnect from the central warehouse, which could last for hours. For this type of system, of which there are countless I'm sure, CouchDB starts to make a lot of sense to me.</p>
+
+<p>I have to believe that, for most people building websites, or doing typical enterprise development, this type of network partitioning isn't a primary concern. Most of us are worried about individual boxes going down, and if we do use multiple data-centers, some form of automatic failover is probably what we want (I admit, that might only be true because that's what we're used to).</p>
+
+<p>I guess what I'm trying to say is that you can use CouchDB to build almost any system, but I think systems that almost run in a partitioned environment by default, is where CouchDB shines. For everything else, MongoDB's straight-forwardness, raw performance and scalability, is probably a better choice.</p>

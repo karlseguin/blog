@@ -1,0 +1,234 @@
+---
+layout: post
+date: 2013-10-19
+title: High Concurrency LRU Caching
+description: "Exploring ways to reduce lock contention in an LRU cache"
+tags: [concurrency, data structures, go, performance]
+---
+
+<h2>LRU Cache Introduction</h2>
+<p>The most common way of implementing an LRU cache is to use a hashtable for lookups and a linked list to track when items were used. You might want to read <a href=/Writing-An-LRU-Cache>this introduction</a> if you aren't familiar with the implementation.</p>
+
+<p>There are two <em>Aha!</em> moments most people have writing one. The first is the realization that you need two different data structures. The second is realizing how you link them together. You see, when you GET or SET an item, you do so from the hashtable. However, you need to promote it in the list. Conversely, when you free up space, you do so from the list, but you need to delete it from the hashtable. The result tends to be a wrapper object that looks like:</p>
+
+{% highlight go %}
+type Item struct {
+  key string              //hahstable key
+  value Value             //actual value
+  element *list.Element   //linked list node
+}
+{% endhighlight %}
+
+<p>Such an object gives you access to the linked list from the hashtable, or the hashtable from the linked list.</p>
+
+<h2>Concurrency</h2>
+<p>Supporting concurrent access to our cache is pretty simple. It's important to realize though that granular locks are key to achieving high throughput. If you had a single lock for the entire cache, you'd end up serializing access to it. That's not even worth exploring. As a first step, we can create a separate read-write mutex for our hashtable and our list.</p>
+
+<h3>Hashtable</h3>
+<p>A read-write mutex for the hashtable is efficient. Assuming that we are GETing more than we are SETting, we'll mostly be acquiring read-locks (which multiple threads can secure). The only time we need a write lock is when setting an item. If we keep things basic, it ends up looking like:</p>
+
+{% highlight go %}
+func (c *Cache) Get(key string) Value {
+  c.lookupLock.RLock()
+  item := c.lookup[key]
+  c.lookupLock.RUnlock()
+  if item == nil { return nil }
+  return item.value
+}
+
+func (c *Cache) Set(key string, value Value)  {
+  item := &Item{key: key, value: value,}
+  c.lookupLock.Lock()
+  defer c.lookupLock.Unlock()
+  c.lookup[key] = item
+}
+{% endhighlight %}
+
+<p>If necessary, we could always <a href=/Shard-Your-Hash-table-to-reduce-write-locks>shard our hashtable to support more write throughput</a>.
+
+<h3>List</h3>
+<p>Concurrent access of our list is a much bigger challenge. Why? Because every GET requires a write lock on our list. Promoting an item involves moving a node (or inserting one in the case of an initial set) at the head of the list:</p>
+
+{% highlight go %}
+func (c *Cache) Get(key string) Value {
+  c.lookupLock.RLock()
+  item := c.lookup[key]
+  c.lookupLock.RUnlock()
+  if item == nil { return nil }
+  c.promote(item)
+  return item.value
+}
+
+func (c *Cache) Promote(item *Item) {
+  c.listLock.Lock()
+  defer c.listLock.Unlock()
+  c.list.MoveToFront(item.element)
+}
+{% endhighlight %}
+
+<p>What can we do?</p>
+
+<h4>Window</h4>
+<p>One of my favorite solutions is to use a window to limit how often you'll promote an item. In other words, if an item was recently promoted, it's probably near enough the front of our list that we don't need to re-promote it. Given a large enough cache (both in terms of total space and number of items), your window could be measured in minutes.</p>
+
+<p>To achieve this we must first change our <code>Item</code> structure:</p>
+
+{% highlight go %}
+type Item struct {
+  key string
+  sync.Mutex             //synchronize changes to the item
+  value Value
+  promoted time.Time     //time item was last promoted
+  element *list.Element
+}
+{% endhighlight %}
+
+<p>Now we can reduce the frequency of write locks on our list:</p>
+
+{% highlight go %}
+func (c *Cache) promote(item *Item) {
+  now := time.Now()
+  stale := now.Add(time.Minute * -2)
+
+  item.Lock()
+  defer item.Unlock()
+  if item.promoted.Before(stale) {
+    item.promoted = now
+    c.listLock.Lock()
+    defer c.listLock.Unlock()
+    c.list.MoveToFront(item.element)
+  }
+}
+{% endhighlight %}
+
+<h4>Buffering</h4>
+<p>In addition to using a window, we can also promote in a separate dedicated thread. Go channels make this solution particularly clean:</p>
+
+{% highlight go %}
+//we haven't looked at instantiating the cache yet..
+nc New() *Cache {
+  c := &Cache{
+    list: list.New(),
+    lookup: make(map[string]*Item),
+    promotables: make(chan *Item, 2048),
+  }
+  go c.promoter()
+  return c
+}
+
+func (c *Cache) promote(item *Item) {
+  //leaving out all the window code to keep it simple
+  //but it absolutely works in addition to everything else
+  //we'll explore
+  c.promotable <- item
+}
+
+func (c *Cache) promoter() {
+  for {
+    item := <- c.promotables
+    c.list.MoveToFront(item.element)
+  }
+}
+{% endhighlight %}
+
+<p>Notice that the above code doesn't require a lock on the list. Synchronization is instead done through Go's channels, which gives us buffering for free.</p>
+
+<p>But wait, we're cheating. What about freeing up memory? Well, if we want to keep everything simple and lock free, we can do it all in the promoter (and maybe rename it along the way):</p>
+
+{% highlight go %}
+func (c *Cache) worker() {
+  ms := new(runtime.MemStats)
+  for {
+    item := <- c.promotables
+    c.list.MoveToFront(item.element)
+    runtime.ReadMemStats(ms)
+    if ms.HeapAlloc > c.size {
+      c.gc()
+    }
+  }
+}
+
+func (c *Cache) gc() {
+  for i := 0; i < c.itemsToPrune; i++ {
+    element := c.list.Back()
+    if element == nil { return }
+    item := element.Value.(*Item)
+    c.bucket(item.key).Remove(item.key)
+    c.list.Remove(element)
+  }
+}
+{% endhighlight %}
+
+<p>I like this approach. However, we're leaning heavily on our channel's buffer. If the garbage collection takes long, our <code>promotable</code> channel will fill up, and our <code>promote</code> method will block.</p>
+
+<p>A small improvement would be to make <code>promote</code> non blocking:</p>
+
+{% highlight go %}
+func (c *Cache) promote(item *Item) {
+  //leaving out all the window code to keep it simple
+  select {
+    c.promotable <- item:
+    default:
+  }
+}
+{% endhighlight %}
+
+<p>If we're able to write to the channel, great. Otherwise, the item just won't get promoted. (Go's <code>select</code> is powerful, the <code>default</code> path will execute if all other paths are blocking).</p>
+
+<p>Rather than failing to promote the latest item, we could even attempt to dump the oldest one:</p>
+
+{% highlight go %}
+func (c *Cache) promote(item *Item) {
+  //leaving out all the window code to keep it simple
+  select {
+    c.promotable <- item:
+    default:
+      <-c.promotable  //free up a slot
+      c.promote(item) //try to queue it back up
+  }
+}
+{% endhighlight %}
+
+<p>But this isn't risk free (another goroutines could keep using up our freed slot!)</p>
+
+<h4>Intrusive List</h4>
+<p>What if you aren't comfortable running the promoter and garbage collector in the same thread, for fear of dropping promote requests? Are you back to a coarse lock across the list?</p>
+
+<p>The beauty of a linked list is that it isn't an atomic data structure. When you're promoting an item to the head, you can also safely manipulate the tail, as long as they aren't the same item (or siblings of the item). In other words, synchronizing a linked list can happen at the node level.</p>
+
+<p>(As an aside, a key benefit of a skiplist is exactly this. The ability to lock only those nodes which participate directly in a modification, makes it a concurrent friendly data structure.)</p>
+
+<p>What we want to do is build a linked list with nodes that can be synchronized. Our <code>Item</code> structure already has a mutex (to synchronize access its <code>promoted</code> field). So the ideal solution is to build a linked list with <code>Item</code> as the element. This is called an intrusive linked list since the data and <code>next/prev</code> pointers sit within the same structure.</p>
+
+<p>We're doing all of this so that we can lock a node at a time and manipulate it as needed, rather than using a single lock across the entire list. This isn't as simple as it might first seem (in fact, I won't provide a working solution). The problem is that, if we aren't careful, we'll create dealocks. How? Imagine a list with 26 items, labeld A-Z:</p>
+
+{% highlight text %}
+  A<->B<->C<->D<->E<->...X<->Y<->Z
+{% endhighlight %}
+
+<p>What happens if we want to promote <code>Y</code> while also freeing up memory? Our promoter will lock <code>Y</code>, and our GC will lock <code>Z</code>. Our promoter will then try to lock <code>Z</code> while our GC will try to lock <code>Y</code>. This is a deadlock. To make this work, in pseudocode, we need to do something like:</p>
+
+{% highlight text %}
+function lockFamily(node)
+  lock node
+  if try lock node.next
+    if try lock node.prev
+      //we can safely manipulate this chunk
+    else
+      unlock node.next
+      unlock node
+      lockFamily node  //try again
+    end
+  else
+    unlock node
+    lockFamily node
+  end
+end
+{% endhighlight %}
+
+<p>Not impossible, but not fun either</p>
+
+<h2>Conclusion</h2>
+<p>Ultimately, our goal was to reduce lock contention against our list. We achieved this in three ways. First, we use a window to limit the frequency of promotion. Second, we use a buffered channel to process promotions in a separate thread. Finally, we can do promotion and GC within the same thread.</p>
+
+<p>This is all preliminary work. The idea came to me while walking home last night, and has been quickly implemented as a prototype. If you're interested, and brave, you can <a href="https://github.com/karlseguin/ccache">check out the source code here</a>. It takes care of some of the edge cases that I overlooked (such as promoting a new vs existing item).</p>

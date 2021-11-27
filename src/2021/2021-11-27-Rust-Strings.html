@@ -1,0 +1,232 @@
+---
+layout: post
+date: 2021-11-27
+title: "Rust Strings"
+description: "A look at Rust's two strings, String and &str, to_owned and String::from what they are and when to use them "
+tags: [rust]
+---
+
+<p>If you've seen any Rust code, you've probably seen two string types: <code>&str</code> and <code>String</code>. These can be a little confusing to get used to, but they're actually simple.</p>
+
+<p>You should think of the <code>String</code> like any other structure. All of the ownership rules we previously discussed apply as-is to the <code>String</code> type. The <code>String</code> type does not implement the <code>Copy</code> trait, meaning that assignments move the data to a new owner.</p>
+
+<p>The <code>&str</code> type is a slice that references data owned by something else. This means that the <code>&str</code> type cannot outlive its owner.</p>
+
+<p>To better understand strings, we need to look at some examples. However, there's one important detail we need to address: string literals are of type <code>&str</code>:</p>
+
+{% highlight rust %}
+fn main() {
+  let power_level = "9000!!!";
+  println!("It's over {}", power_level);
+}
+{% endhighlight %}
+
+<p>In the above snippet <code>power_level</code> is a <code>&str</code>. This hopefully makes you ask: who owns the data that <code>power_level</code> references? For string literals, the data is baked into the executable's data section. We'll talk a little more about this later. For now, knowing that string literals are of type <code>&str</code> is enough to start understanding how the two types interact with each other and the ownership model.</p>
+
+<p>Let's write code that keeps a count of the words inputted into our program. First, let's look at the skeleton:</p>
+
+{% highlight rust %}
+fn main() {
+  loop {
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+
+    let words: Vec<&str> = input
+      .split_whitespace()
+      .collect();
+    println!("{:?}", words);
+  }
+}
+{% endhighlight %}
+
+<p>Since <code>input</code> is a <code>String</code>, it owns what we typed, say <code>"it's over 9000!!!"</code> and <code>words</code> contains a list of slices referencing <code>input</code>. (We <code>split_whitespace</code> to create an iterator and use <code>collect</code> to automatically loop through the iterator and put the values into a list). This all works because our <code>&str</code> slices don't outlive the owner of the data they point to (<code>input</code>); it all falls out of scope, and thus gets freed, at the end of each loop iteration. To track the count of words across multiple inputs, you might try:</p>
+
+{% highlight rust %}
+use std::collections::HashMap;
+
+fn main() {
+  // word => count
+  let mut words: HashMap<&str, u32> = HashMap::new();
+
+  loop {
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+
+    for word in input.split_whitespace() {
+      let count = match words.get(word) {
+        None => 0,
+        Some(count) => *count,
+      };
+      words.insert(word, count + 1);
+    }
+    println!("{:?}", words);
+  }
+}
+{% endhighlight %}
+
+<p>(If you're wondering why we need to dereference <code>count</code>, i.e. <code>Some(count) => *count</code>, it's because the <code>get</code> method of the <code>HashMap</code> returns a reference, i.e <code>Option&lt;&T&gt;</code>, which makes sense, as the <code>HashMap</code> still owns the value. In this case, we're ok with "moving" this out of the <code>HashMap</code> since <code>u32</code> implements the <code>Copy</code> trait).</p>
+
+<p>The above snippet will not compile. It'll complain that <code>input</code> is dropped while still borrowed. If you walk through the code, you should come to the same conclusion. We're trying to store <code>word</code> in our <code>words HashMap</code> which outlives the data being referenced by <code>word</code> (i.e. <code>input</code>).</p>
+
+<p>To prove to ourselves that the issue is with <code>input</code> scope's, we can "solve" this  by moving <code>words</code> inside the <code>loop</code>:</p>
+
+{% highlight rust %}
+fn main() {
+  loop {
+    let mut input = String::new();
+    let mut words: HashMap<&str, u32> = HashMap::new();
+    ...
+  }
+}
+{% endhighlight %}
+
+<p>Now everything lives in the same scope, our loop, so everything works. But this "fix" doesn't satisfy our desired behaviour: we're now only counting words per input not across multiple inputs.</p>
+
+<p>The real fix is to store <code>Strings</code> inside of our <code>words</code> counter, not <code>&str</code>:</p>
+
+{% highlight rust %}
+use std::collections::HashMap;
+
+fn main() {
+  // Changed: HashMap<&str, u32> -> HashMap<String, u32>
+  let mut words: HashMap<String, u32> = HashMap::new();
+
+  loop {
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).unwrap();
+
+    for word in input.split_whitespace() {
+      let count = match words.get(word) {
+        None => 0,
+        Some(count) => *count,
+      };
+      // Changed: word -> word.to_owned()
+      words.insert(word.to_owned(), count + 1);
+    }
+    println!("{:?}", words);
+  }
+}
+{% endhighlight %}
+
+<p>We changed two lines, highlighted by the two comments. Namely, instead of storing <code>&str</code> we store <code>String</code>, and to turn our <code>word &str</code> into a <code>String</code> we use the <code>to_owned()</code> method.</p>
+
+<p>You'll probably find yourself using <code>to_owned()</code> frequently when dealing with strings. It's by far the simplest way to resolve any ownership and lifetime issues with string slices, but it's also, more often than not, semantically correct. In the above code, it's "right" that our <code>words</code> counter owns the Strings: the existence of the keys in our map should be tied to the map itself.</p>
+
+<h3>Performance / Allocations</h3>
+<p>A <code>String</code> represents allocated memory on the heap. When the owning variable falls out of scope, the memory is freed. A <code>&str</code> references all or part of the memory allocated by a <code>String</code>, or in the case of a string literals, it references a part our executable's data section. When we call <code>to_owned()</code> on a string slice (<code>&str</code>) a <code>String</code>is created by allocating memory on the heap.</p>
+
+<p>This means that the above code allocates memory for each word that we type. A language with a garbage collector, such as Go, could implement the above more efficiently. But that efficiency would come with two significant costs: a garbage collector to track what data is and isn't being used, and a lack of transparency around memory allocation. Specifically, a slice in Go prevents the underlying memory from being garbage collected, which isn't always obvious and certainly isn't always efficient (you could pin gigabytes worth of data for a single small slice).</p>
+
+<p>Rust is very flexible. We could write an implementation similar to Go's, but it would require considerably more code.</p>
+
+<p>Greater transparency helps explain why string literals are represented as <code>&str</code> instead of <code>String</code>. Imagine a string literal in a loop:<p>
+
+{% highlight rust %}
+fn main() {
+  loop {
+    let mut input = String::new();
+    println!("> ");
+    std::io::stdin().read_line(&mut input).unwrap();
+    ...
+  }
+}
+{% endhighlight %}
+
+<p>Representing <code>" >"</code> as a <code>String</code> would require allocating it on the heap for each iteration. This might not be obvious, and it certainly isn't necessary. Treating string literals as a <code>&str</code> means that allocation only happens when we explicitly require it (via <code>to_owned()</code>).</p>
+
+<h3>Mutability</h3>
+<p>From an implementation and mutability point of view, the <code>String</code> type behaves like Java's <code>StringBuffer</code>, .NET's <code>StringBuilder</code> and Go's <code>strings.Builder</code>. The <code>push()</code> and <code>push_str()</code> methods are used to append values to the string. Like any other data, these mutations require the binding to be declared as mutable:</p>
+
+{% highlight rust %}
+fn main() {
+  // note same as: String::from("hello")
+  let fail = "hello".to_owned();
+  fail.push_str(" world"); // Not mutable, won't compile
+
+  // note same as: String::from("hello")
+  let mut ok = "hello".to_owned();
+  ok.push_str(" world"); // Mutable, will work
+}
+{% endhighlight %}
+
+<p>A <code>&mut str</code> on the other hand, is something you'll rarely, if ever, use. It doesn't own the underlying data so it can't really change it.</p>
+
+<p>Just like you'll commonly use <code>to_owned()</code> to ensure the ownership/lifetime of the value, you'll also commonly use <code>to_owned()</code> to mutate (often in the form of appending) the string. Fundamentally, both of these concepts are tied to the fact that <code>String</code> owns its data.</p>
+
+<h3>String -&gt; &str</h3>
+<p>We saw how <code>to_owned()</code> (or the identical <code>String::from</code>) can be used to turn a <code>&str</code> into a <code>String</code>. To go the other way, we use the <code>[start..end]</code> slice syntax:</p>
+
+{% highlight rust %}
+fn main() {
+  let hi = "Hello World".to_owned();
+  let slice = &hi[0..5];
+  println!("{}", slice);
+}
+{% endhighlight %}
+
+<p>Notice that we did <code>&hi[0..5]</code> and not <code>hi[0..5]</code>. This is because there is a <code>str</code> type, but it isn't particularly useful. Technically, <code>str</code> is the slice and <code>&str</code> is the slice with an added length value. But <code>str</code> is so infrequently used that people just refer to <code>&str</code> as a slice.</p>
+
+<p>You'll often write or use functions which don't need ownership of the string. Logically these functions should accept a <code>&str</code>. For example, consider the following functions:</p>
+
+{% highlight rust %}
+fn is_https?(url: &str) -> bool {
+  url.starts_with("https://")
+}
+{% endhighlight %}
+
+<p>Since it doesn't need ownership of the parameter, <code>&str</code> is the correct choice. We can, obviously, call this function with a <code>&str</code> either directly or by slicing a <code>String</code>. But since this is so common, the Rust compiler will also let us call this function with a <code>&String</code>:</p>
+
+
+{% highlight rust %}
+  // called with a &str
+  is_https("https://www.openmyind.net");
+
+  // called with a &String
+  let mut input = String::new();
+  std::io::stdin().read_line(&mut input).unwrap();
+  is_https(&input);
+
+  // exact same as previous line
+  is_https(&input[..])
+{% endhighlight %}
+
+<h3>Common String Tasks</h3>
+<p>Here are a few comon things you'll likely need to do with strings.</p>
+
+<p>To create a new <code>String</code> from other <code>String</code> or <code>&str</code> (you can mix and match) use the <code>format!</code> macro:</p>
+
+{% highlight rust %}
+let key = format!("user.{}", self.id);
+{% endhighlight %}
+
+<p>To create a <code>String</code> from a <code>[u8]</code> use <code>String::from_utf8</code>. Note that this returns a <code>Result</code> as it will check to make sure the provided byte-slice is a valid UTF-8 string. A <code>str</code> is really just a <code>[u8]</code>, so a <code>&str</code> is really a <code>&[u8]</code>, both with the added restriction that the underlying slice must be a valid UTF-8 string. Similarly, a <code>String</code> is a <code>Vec&lt;u8&gt;</code>also with same same additional requirement.</p>
+
+<p>Because <code>String</code> wraps a <code>Vec&lt;u8&gt;</code>, the <code>String::len()</code> method returns the number of bytes, not characters. The <code>chars()</code> method returns an iterator over the characters, so <code>charr().count()</code> will return the number of characters (and is O(N)). Note that <code>chars()</code> returns an iterator over Unicode Scalar Values, not graphemes. For graphemes, you'll want to use an <a href="https://github.com/unicode-rs/unicode-segmentation">exteranl crate.</a></p>
+
+<p>There's a <code>FromStr</code> trait (think interface) which many types implement. This is used to parse a string into a given type. The implementation for <code>bool</code> is easy to understand:</p>
+
+{% highlight rust %}
+fn from_str(s: &str) -> Result<bool, ParseBoolError> {
+  match s {
+    "true" => Ok(true),
+    "false" => Ok(false),
+    _ => Err(ParseBoolError),
+  }
+}
+{% endhighlight %}
+
+<p>To convert a string to a boolean, or a string to a integer, use:</p>
+
+{% highlight rust %}
+  // unwrapping will panic if the parsing fails!
+  let b: bool = "true".parse().unwrap();
+  let i: u32 = "9001".parse().unwrap();
+{% endhighlight %}
+
+
+<p>Finally, as we already discussed, <code>String</code> has a <code>push()</code> function (for characters) and <code>push_str()</code> method (for strings) to append values onto a <code>String</code>. You'd also be right to expect other mutating methods such as <code>trim()</code>, <code>remove()</code>, <code>replace()</code> and many more.</p>
+
+<div id=pager>
+  <a class=prev href=/Rust-Ownership-Move-and-Borrow-part-3/>ownership - part 3</a>
+  <a class=next></a>
+</div>

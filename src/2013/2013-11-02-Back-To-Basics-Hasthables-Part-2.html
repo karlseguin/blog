@@ -1,0 +1,96 @@
+---
+layout: post
+date: 2013-11-02
+title: "Back To Basics: Hashtables Part 2 (And A Peek Inside Redis)"
+description: "Continuing on from part 1 we look at hashtable rehashing, paying particular attention to Redis' implementation"
+tags: [data structures, golang, redis]
+---
+
+<p>In <a href=/Back-To-Basics-Hashtables/>Part 1</a> we looked at the basic implementation of a hashtable. What we saw was that collisions are a big part of what a hashtable must deal with. Improperly handled, collisions can have a significant negative impact on performance. There are two keys to managing this. First, our hashing algorithm must offer good distribution. Second, our fill factor, which assumes even distribution, must be kept low.</p>
+
+<p>Recapping the previous post, the fill factor is the number of items in our hashtable divided by the number of buckets. The fill factor is really the number of elements we should expect to be chained within a given bucket. If we hold 1 000 000 items within 100 000 buckets, each bucket should have roughly 10 items. Chaining with a simple linked list would require 11 operations (1 to find the bucket, 10 to linearly scan the list).</p>
+
+<p>While critical, fill factors aren't usually exposed to consumers. That's because most implementation automatically adjust the number of buckets they have as items are added (I have no idea if most implementation also shrink when items are removed). This is commonly known as rehashing.<p>
+
+<p>The simplest implementation of rehashing is to add more buckets and remap all keys:</p>
+
+{% highlight go %}
+func (h *Hash) Set(key []byte, value interface{}) {
+  ...
+  h.count++
+  if h.count / len(h.buckets) > 5 {
+    h.rehash()
+  }
+}
+
+func (h *Hash) rehash() {
+  h.size *= 2 //getIndex will use this new value
+  newBuckets := make([]*list.List, h.size)
+  for i := 0; i < int(h.size); i++ {
+    newBuckets[i] = list.New()
+  }
+
+  for i := 0; i < len(h.buckets); i++ {
+    for element := h.buckets[i].Front(); element != nil; element = element.Next() {
+      wrapped := element.Value.(*HashValue)
+      newIndex := h.getIndex(wrapped.key)
+      newBuckets[newIndex].PushBack(wrapped)
+    }
+  }
+  h.buckets = newBuckets
+}
+{% endhighlight %}
+
+<p>This is similar to how buffer-backed arrays work. We double the size and copy values from the old to the new.<p>
+
+<p>In reality, that's all you need to know about reashing and how hashtables keep a reasonable fill factor. However, I'd like to dive a little bit deeper into Redis rehashing implementation. Hashtables play a critical role in Redis. Not only are Sets, Hashes and Strings implemented using hashtables, but it's also the base object which holds all keys. Most of the relevant code sits in <a href="https://github.com/antirez/redis/blob/unstable/src/dict.c">src/dict.c</a>.</p>
+
+<p>Whenever a value is added, <code>_dictExpandIfNeeded</code> is called to begin a rehashing process if necessary. Redis rehashes when the fill factor reaches 1 (or if rehashing is disabled, Redis will still force a rehash when the fill facto reach 5). However, unlike our simplistic approach above, Redis incrementally does a rehash. How? First it starts the same way by doubling the number of buckets. Instead of moving all elements over, it simply marks the hashtable as being in a "rehashing mode". As long as the the hashtable is in "rehasing mode" two sets of buckets exist, the old and the twice-larger new one.</p>
+
+<p>What does the rehashing mode do? If you search the code, you'll see a handful of lines that look like:</p>
+
+{% highlight c %}
+if (dictIsRehashing(d)) _dictRehashStep(d);
+{% endhighlight %}
+
+<p><code>_dictRehashStep</code> moves 1 bucket from the old to the new. This means that hashtables which see a lot of activity get quickly rehashed, while hashtables which see little activity don't take up as much precious cycles. Eventually, when all the buckets are moved over, the old set of buckets can be deleted and the hashtable is no longer in "rehashing mode".</p>
+
+<p>Of course, having two sets of buckets introduces a new level of complexity. Want to delete or get a value? You need to check both sets of buckets (which Redis calls tables). Take a look at the <code>get</code> implementation:</p>
+
+{% highlight c %}
+dictEntry *dictFind(dict *d, const void *key)
+{
+    dictEntry *he;
+    unsigned int h, idx, table;
+
+    if (d->ht[0].size == 0) return NULL; /* We don't have a table at all */
+    if (dictIsRehashing(d)) _dictRehashStep(d);
+    h = dictHashKey(d, key);
+    for (table = 0; table <= 1; table++) {
+        idx = h & d->ht[table].sizemask;
+        he = d->ht[table].table[idx];
+        while(he) {
+            if (dictCompareKeys(d, key, he->key))
+                return he;
+            he = he->next;
+        }
+        if (!dictIsRehashing(d)) return NULL;
+    }
+    return NULL;
+}
+{% endhighlight %}
+
+<p>This might seem like a lot, but let's break it down. The key parts are:</p>
+
+<ol>
+  <li>Do a rehashing step if we're in "rehashing mode"
+  <li>Get the hashcode from the provided key (Redis uses MurmurHash2)
+  <li>Loop through our bucket sets (most of the time there'll only be 1, but when we're rehashing, there'll be 2)
+  <li>Get the bucket which holds the key and iterate through the chain finding a match
+  <li>If we've found our match, we return it
+  <li>Don't check the 2nd bucket set if we aren't rehashing (it won't exist)
+</ol>
+
+<p>The only other relevant piece of information is that Redis will use idle time to reshash the main key's dictionary. You can see this in the <code>dictRehashMilliseconds</code> function which is called from <code>incrementallyRehash</code> in <code>redis.c</code>.</p>
+
+<p>The magic of keeping hashtable efficient, despite varying size, is not that different than the magic behind dynamic arrays: double in size and copy. Redis' incremental approach ensures that rehashing large hasthables doesn't cause any performance hiccups. The downside is internal complexity (almost every hashtable operation needs to be rehashing-aware) and a longer rehashing process (which takes up extra memory while running).</p>

@@ -1,0 +1,99 @@
+---
+layout: post
+date: 2020-02-23
+title: "An Awful Introduction to Make"
+description: "A bit of code to make applying multiple plugs to a single action more ergonomic."
+tags: [learning]
+---
+
+<p>I don't know <code>make</code> very well. But I know enough to maybe help you get some use out of it The first thing you need to know about <code>make</code> is that a target is executed only if one of its prerequisites has a more recent modified timestamp.</p>
+
+<p>For me, the gap between understanding that concept and leveraging it was embarrassingly large. I think the problem is that a lot of us are using higher level tools that already do things like incremental build and where compiling and linking are abstracted away.</p>
+
+<p>If we take a step back and look at make from the point of view of a C programming, we can see how make is useful:</p>
+
+{% highlight text %}
+main.o: main.c
+  gcc -c -o main.o main.c
+
+hello: main.o
+  gcc -o hello main.o
+{% endhighlight %}
+
+<p>What happens when we run <code>make hello</code>? It'll only run the <code>hello</code> target if the modified time of <code>main.o</code> is newer than the modified time of the <code>hello</code> file. Notice that there's also a target for <code>main.o</code> with a prerequisite of <code>main.c</code> which will follow the same rule. The first time you run <code>make hello</code> it'll do what you expect: compile main.c into main.o and then generate the <code>hello</code> binary. If you run <code>make hello</code> again, nothing will happen (besides <code>make</code> telling you that <em>'hello' is up to date.</em>). But if we modify <code>main.c</code> an then run <code>make hello</code>, the <code>main.o</code> and <code>hello</code> targets will be run.</p>
+
+<p>The import thing to note here is that the dependencies flow across multiple levels. Now this is a very simple example. Instead of explicitly making <code>main.c</code> a prerequisite of <code>main.o</code> we could use patterns, e.g <code>%.o: %.c</code>.</p>
+
+<p>The above is barely the tip of what we could do. But my goal isn't to document the depths of <code>make's</code> power (especially since I can't). What I want to do is show how this depedency resolution can be used for simple and common tasks that don't involve compiling and linking.</p>
+
+<p>Let's take this one step at a time. All of our projects have a <code>make t</code> command (I like tea and I enjoying saying "make t"). This target just runs <code>go test</code> or <code>mix test</code>:</p>
+
+{% highlight text %}t:
+  mix test
+{% endhighlight %}
+
+<p>Now, you might be thinking: but there's never a <code>t</code> file. Without a <code>t</code> file, our target will always run (which is what we want). But we can be more explicit and tell <code>make</code> that this is a phony target:</p>
+
+{% highlight text %}
+.PHONY: t
+t:
+  mix test
+{% endhighlight %}
+
+<p>Phony targets aren't just nice-to-have. If we <em>did</em> have a <code>t</code> file that had nothing to do with our <code>t</code> target, using <code>.PHONY: t</code> is how we tell <code>make</code> to ignore the file and just always run the target (without it, <code>make</code> would always tell us that <code>t</code> is up to date.)</p>
+
+<p>In Elixir you define your library dependencies in a <code>mix.exs</code> file and it will generate a <code>mix.lock</code> file with specific versions. If someone adds a dependency or updates a version, you need to run <code>mix deps.get</code> to update your local environment. Knowing this, guess what the following does:</p>
+
+{% highlight text %}
+.deps: mix.exs
+  mix deps.get
+  echo 'generate by make' > .deps
+
+.PHONY: t
+t: .deps
+  mix test
+{% endhighlight %}
+
+<p>First, our <code>t</code> target will always run because it's a phony target. Phony targets can still have prerequisites though. Here, our <code>.deps</code> prerequisite is itself a target which has a prerequisite on the <code>mix.exs</code> file. The first time we run <code>make t</code> the <code>.deps</code> target will run (because the <code>.deps</code> file doesn't exist). This target runs <code>mix deps.get</code> and then generates the <code>.deps</code> file. As long as <code>mix.exs</code> isn't touched, the <code>.deps</code> target won't run (because the <code>.deps</code> file was modified after <code>mix.exs</code>). But if <code>mix.exs</code> is modified, then next time your run <code>make t</code> the <code>.deps</code> target <strong>will</strong> run and you'll get your updated dependencies.</p>
+
+<p>We use this for library dependencies (as shown above), sql migrations, and generating models from protocol buffer definitions. It minimizes friction. Just pull and <code>make t</code> will work. (Ok, it doesn't work 100% of the time, but we also have a <code>make fix</code> that runs through a series of steps (such as clearing build folders) to try to reset a broken project environment).</p>
+
+<p>There's a few other details that might be useful to know.</p>
+
+<p>Lines that begin with tabs usually (always?) belong to a target. These are called recipes, but the important thing to know is that they're executed in a shell (a separate shell per line). By default, <code>make</code> uses <code>/bin/sh</code>. So a Makefile is really made up of Makefile-specific syntax as well as shell scripting. Honestly, I have no clue how to do complicated stuff with <code>make</code>, especially with respect to conditional execution and variables. For this reason, I try to keep my targets to one line (which might be a custom bash script that does all the complex stuff).</p>
+
+<p>(there's a way to make all the lines share the same shell, but as far as I understand that needs to be enabled for the entire Makefile)</p>
+
+<p>By default <code>make</code> will echo the recipe that's being execute. You can silence it by placing <code>@</code> at the start of the reciple. Similarly, by default, if a recipe fails (non zero status code), the target stops. You can ignore errors on a per-recipe basis by placing <code>-</code> at the start of the recipe. Combined, you could do something like:</p>
+
+{% highlight text %}
+make fix:
+  -@psql -X -d postgres -c "drop database app_test"
+  @psql -X -d postgres -c "create database app_test"
+{% endhighlight %}
+
+<p>Prerequisites don't have to be statically defined. For example, here's our <code>proto</code> target:</p>
+
+{% highlight text %}
+proto: $(shell find proto/schemas -name "*.proto")
+{% endhighlight %}
+
+<p>The above uses <code>make's</code> <code>shell</code> function to execute our shell's <code>find</code> command. For simpler cases (where you don't needed to search nested directories for example), you should use the built-in <code>wildcard</code> function:</p>
+
+{% highlight text %}
+schema: $(wildcard *.sql)
+{% endhighlight %}
+
+<p>You can pass named arguments (not sure what they're called) to make:</p>
+
+{% highlight text %}
+make t:
+  mix test $(F)
+{% endhighlight %}
+
+<p>Which can then be called with:</p>
+{% highlight text %}
+make t F=test/input_test.exs
+{% endhighlight %}
+
+<p>Again, all of this is pretty basic stuff. But hopefully it's helpful. Also, it's worth pointing out that <a href="https://www.gnu.org/software/make/manual/html_node/index.html#SEC_Contents">Make's documentation is excellent</a>.</p>

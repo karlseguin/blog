@@ -1,0 +1,71 @@
+---
+layout: post
+date: 2016-05-14
+title: "Interfaces In Nim"
+description: "Getting interface-like behavior in Nim"
+tags: [design, learning]
+---
+
+<p>One of the things you're going to run into when you first use <a href="http://nim-lang.org/">nim</a>, is that it lacks interfaces. As far as I'm concerned, that's a big limitation. However, there is a pattern available to us, which, as far as I can tell, is the "nim way."</p>
+
+<p>The trick is to use a tuple of procs. Let's look at an example. First, we'll create our "interface":</p>
+
+{% highlight python %}
+type
+  IFileSource = tuple[
+    read: proc(path: string): string
+  ]
+{% endhighlight %}
+
+<p>The above creates a new type, <code>IFileSource</code> which is a tuple containing a single key, <code>read</code>. <code>read</code> references a procedure which takes a path to a file (as a string) and returns the file's contents (also as a string).</p>
+
+<p>From the execution point of view, this behaves just like an interface. We can create a procedure which takes an <code>IFileSource</code> and call its <code>read</code> method:</p>
+
+{% highlight python %}
+proc process(fs: IFileSource) =
+  let config = fs.read("config")
+  ...
+{% endhighlight %}
+
+<p>Hopefully, every thing is clear. Next, let's create an implementation which reads from the local file system:</p>
+
+{% highlight python %}
+from os import nil
+
+type
+  LocalFileSource = object
+    root: string
+
+proc read(fs: LocalFileSource, file: string): string =
+  return readFile(os.joinPath(root, file))
+{% endhighlight %}
+
+<p>All that's left is to associate our implementation with our interface. The little mental barrier you need to tear down is that this is an explicit / manual process. By that, I mean we need to create a procedure that converts one to the other:</p>
+
+{% highlight python %}
+proc toFileSource(fs: LocalFileSource): IFileSource =
+  return (
+    read: proc(file: string): string = fs.read(file)
+  )
+{% endhighlight %}
+
+<p>To use it, we'd do:</p>
+
+{% highlight python %}
+let fs = LocalFileSource(root: "./data/")
+process(fs.toFileSource())
+{% endhighlight %}
+
+<p>For simple interfaces like this one, we can [arguably] simplify the code by replacing our <code>LocalFileSource</code> with a closure:<p>
+
+{% highlight python %}
+proc localFileStore(root: string): IFileSource =
+  return (
+    read: proc(file: string): string =
+      readFile(os.joinPath(root, file))
+  )
+
+process(localFileStore("./data/"))
+{% endhighlight %}
+
+<p>I'll confess that it took me a few minutes of staring at the example I found before understanding it. But it's quickly become second nature. Having said that, I've seen a couple comments suggesting that Go-like interfaces (easily one of Go's best features) could be added in the future. That would be nice.</p>

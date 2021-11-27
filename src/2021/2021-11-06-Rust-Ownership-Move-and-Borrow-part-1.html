@@ -1,0 +1,210 @@
+---
+layout: post
+date: 2021-11-06
+title: "Rust Ownership, Move and Borrow - Part 1"
+description: "An introduction to Rust's ownership, move and borrow (or aliasing and references)"
+tags: [rust]
+---
+
+<p>A core aspect of Rust is that every piece of data has one explicit owner. This allows the compiler to detect a greater number of defects, especially around memory safety and concurrency. It also removes the need for a garbage collector: the information that a garbage collector tracks at runtime is known to Rust at compile time.</p>
+
+<p>What does ownership look like? Consider this simple Rust code:</p>
+
+{% highlight rust %}
+#[derive(Debug)] // just so we can print out User
+struct User {
+  id: u32,
+}
+
+fn main() {
+  let u1 = User{id: 9000};
+  print!("{:?}", u1);
+
+  let u2 = u1;
+  print!("{:?}", u2);
+
+  // this is an error
+  print!("{:?}", u1);
+}
+{% endhighlight %}
+
+<p>It won't compile because our user data is initially owned by <code>u1</code> but then moved to <code>u2</code> when we assign <code>u1</code> to <code>u2</code>. When we try to use <code>u1</code> at the end of our function, it is no longer valid as the data that it owned has been moved. The important thing to note here is that, <strong>by default, assignments move ownership</strong>. Function calls are no different:</p>
+
+{% highlight rust %}
+fn print_user(u: User) {
+  println!("{:?}", u);
+}
+
+fn main() {
+  let u = User{id: 9000};
+  print_user(u);
+
+  // this isn an error
+  println!("{:?}", u);
+}
+{% endhighlight %}
+
+<p>Calling <code>print_user(u)</code> moves the data from being owned by the <code>u</code> variable in <code>main</code> to being owned by the function. If we did want to access the data after our function call, we'd have to move the ownership back to main:</p>
+
+{% highlight rust %}
+fn print_user(u: User) -> User {
+  println!("{:?}", u);
+  return u;
+}
+
+fn main() {
+  let u = User{id: 9000};
+  let u = print_user(u);
+  println!("{:?}", u);
+}
+{% endhighlight %}
+
+<p>This can be pretty limiting. Instead of moving data, we can borrow data:</p>
+
+{% highlight rust %}
+fn print_user(u: &User) {
+  println!("{:?}", u);
+}
+
+fn main() {
+  let u = User{id: 9000};
+  print_user(&u);
+  println!("{:?}", u);
+}
+{% endhighlight %}
+
+<p>Notice that the type passed into our function has gone from <code>User</code> to <code>&amp;User</code> and instead of passing <code>u</code> we pass <code>&amp;u</code>.</p>
+
+<p>At this point, the worst thing you can do when you see that ampersand (<code>&amp;</code>) is think: reference. Instead, think: In Rust, we can move or we can borrow. Move is the default. To borrow, we use <code>&amp;</code>. A borrow <em>might</em> be implemented using a reference, but it might not. That's up to Rust to decide. Do not think about this from a performance / efficiency point of view. Think of it purely from an ownership point of view: do I want ownership to change or not? Rust will pick the optimal way to implement it.</p>
+
+<p>Put differently: borrowing is the concept you need to be thinking about. Using a reference is merely one of ways Rust might implement borrowing. Similarly, Rust makes no guarantees about move's implementation. What the ownership model does guarantee, is is the safety of your code.</p>
+
+<p>To make matters more confusing, Rust documentation makes frequent use of the word "aliasing" when referring to borrowing. Aliasing is essentially another way to say "reference". In Rust, the three terms, borrowing, reference and aliasing are generally used interchangeably. Though, as I've tried to point out, borrowing is a more abstract concept.</p>
+
+<h3>Copy</h3>
+<p>Let's go back to our first example, where we showed that assignment moves ownership, and use an integer instead of our <code>User</code> type:</p>
+
+{% highlight rust %}
+fn main() {
+  let u1 = 9001;
+  print!("{:?}", u1);
+
+  let u2 = u1;
+  print!("{:?}", u2);
+
+  // with an integer, this works
+  print!("{:?}", u1);
+}
+{% endhighlight %}
+
+<p>Now the code compiles! Why? Rust has a rich trait system (think interfaces). One such trait is the <code>Copy</code> trait. Types which implement the <code>Copy</code> trait are copied instead of moved. In the above code <code>u1</code> is never moved, it's copied, so we can still use it. We can implement the <code>Copy</code> trait for our <code>User</code> struct:</p>
+
+{% highlight rust %}
+#[derive(Debug)]
+struct User {
+  id: u32,
+}
+
+impl Clone for User{
+  fn clone(&self) -> Self {
+    User{id: self.id}
+  }
+}
+
+impl Copy for User{
+}
+
+fn main() {
+  let u1 = User{id: 9000};
+  print!("{:?}", u1);
+
+  let u2 = u1;
+  print!("{:?}", u2);
+
+  // this now works
+  print!("{:?}", u1);
+}
+{% endhighlight %}
+
+<p>Why we need both <code>Copy</code> and <code>Clone</code> is a small distraction for now. The important thing to note is that while assignments are, by default, a move, we can change that behaviour, on a type by type basis, to be a copy.</p>
+
+<h3>Mutability</h3>
+<p>To introduce the concept of ownership, we've limited our discussion to read-only operations. Even if we changed any of the above code to modify data, say by doing <code>u1.id = 3232</code>, we'd get an error. By default, all bindings in Rust are immutable. This is, like ownership in general, aimed at improving code safety. If we intend to mutate data we must declare our variables using <code>mut</code>:<p>
+
+{% highlight rust %}
+fn main() {
+  let mut a =  1;
+  a += 2;
+  println!("{}", a);
+}
+{% endhighlight %}
+
+<p>Ownership and mutability interact thusly: you can have multiple immutable borrows <strong>or</strong> one mutable borrow. In the following code, only the first block will compile:</p>
+
+{% highlight rust %}
+// the {:?} formatter is generic debug
+fn main() {
+  let mut a1 =  1;
+  let a2 = &a1;
+  let a3 = &a1;  // No Problem. Can have multiple borrows
+  println!("{:?} {:?} {:?}", a1, a2, a3);
+
+  let mut b1 =  1;
+  let b2 = &mut b1;
+  let b3 = &mut b1;  // Fail. Cannot mutably borrow when already mutably borrowed
+  println!("{:?} {:?} {:?}", b1, b2, b3);
+
+  let mut c1 =  1;
+  let c2 = &c1;
+  let c3 = &mut c1;  // Fail. Cannot mutably borrow when already borrowed
+  println!("{:?} {:?} {:?}", c1, c2, c3);
+
+  let mut d1 =  1;
+  let d2 = &mut d1;
+  let d3 = &d1;      // Fail. Cannot borrow when already mutably borrowed
+  println!("{:?} {:?} {:?}", d1, d2, d3);
+}
+{% endhighlight %}
+
+<p>Borrows, mutable or not, exist for the lifetime of their scope. In all of the above cases, the borrows exist until the end of <code>main</code>, which is why we violate the requirements of multiple readers OR one writer. If we limit the scope of the borrows, say by borrowing for a function, the code compiles:</p>
+
+{% highlight rust %}
+fn echo(id: &i32) {
+  println!("{}", id)
+}
+
+fn mut_echo(id: &mut i32) {
+  println!("{}", id)
+}
+
+fn main() {
+  let mut a1 =  1;
+  let a2 = &a1;
+  let a3 = &a1;
+  println!("{:?} {:?} {:?}", a1, a2, a3);
+
+  let mut b1 =  1;
+  echo(&mut b1);
+  echo(&mut b1);
+  println!("{:?}", b1);
+
+  let mut c1 =  1;
+  echo(&c1);
+  echo(&mut c1);
+  println!("{:?}", c1);
+
+  let mut d1 =  1;
+  echo(&mut d1);
+  echo(&d1);
+  println!("{:?}", d1);
+}
+{% endhighlight %}
+
+<p>These examples are trivial and, as a consequence, possibly counter-intuitive. The simplicity of what we're trying to do doesn't align with what we need to understand and consider (at least in my opinion). Personally, I've struggled to gain an intuitive understanding for this aspect of Rust and, as a consequence, I struggle to program in Rust.</p>
+
+<p>To be continued in Part 2, where we'll look at more complicated examples in the hopes of gaining a better understand of Rust's ownership model.</p>
+
+<div id=pager>
+  <a class=prev></a>
+  <a class=next href=/Rust-Ownership-Move-and-Borrow-part-2/>ownership - part 2</a>
+</div>

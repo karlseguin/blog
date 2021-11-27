@@ -1,0 +1,136 @@
+---
+layout: post
+date: 2021-10-01
+title: "Elixir, A Little Beyond The Basics - Part 1: lists"
+description: "An introduction to Elixir for developers who are already familiar with the basics"
+tags: [elixir]
+---
+
+<p>Arrays are a fundamental data structure that you'll find in most languages. Arrays, whether static in size, or able to grow dynamically, have a number of desirable performance characteristics. But when immutability is a core feature of the language and runtime, as it is with Elixir and Erlang, arrays have a fatal flaw: they cannot be updated without requiring the entire array to be copied.</p>
+
+<p>Consider the following javascript example:</p>
+
+{% highlight javascript %}
+a = [1, 2, 3]
+
+b = a
+b[2] = 9
+
+console.log(a)
+{% endhighlight %}
+
+<p>When we print <code>a</code>, what do we see? <code>[1, 2, 9]</code>. Writing to the array is fast - we can update any index in the array in constant time (i.e. regardless of the size of the array). But in order of this to be true, the array must be mutated, which is why when we update <code>b</code> we see the change reflected in <code>a</code>. If we did not want <code>a</code> to change, we'd have to clone it when assigning it to <code>b</code>.</p>
+
+<p>In order to reconcile the need for programs to change data and the desire for immutability, languages like Elixir rely on <a href="https://en.wikipedia.org/wiki/Persistent_data_structure">persistent data structure</a> (the word persisted has nothing to do with persisting the data to disk). These are data structures which can be changed while preserving their previous value. This is generally accomplished by sharing part of the underlying data / structure.</p>
+
+<p>This is best understood by looking at a singly linked list: the data structure behind Elixir's list. Each value in a linked list, often called a Node, points to the next value in the list (up until the end, which is often represented by some <code>null</code> value). Whereas an array is a contiguous block of memory, linked list nodes can be spread out in memory and are only chained together thanks to the <code>next</code> field.</p>
+
+<p>Here's a basic example written in Go:</p>
+
+{% highlight go %}
+type Node struct {
+  value int
+  next  *Node
+}
+
+func NewList(value int) *Node {
+  return &Node{value: value, next: nil}
+}
+
+func (n *Node) Append(value int) {
+  // find the last node (the node where n.next == nil)
+  for ; n.next != nil; n = n.next {
+  }
+  n.next = &Node{value: value, next: nil}
+}
+{% endhighlight %}
+
+<p>You can see that in order to append a value, we must traverse the list until we find the last element (the last element being the one where <code>next</code> is <code>nil</code>). Let's add a <code>Print</code> function and see how this list behaves:</p>
+
+{% highlight go %}
+func (n *Node) Print() {
+  for ; n != nil; n = n.next {
+    fmt.Print(n.value)
+    fmt.Print(" ")
+  }
+  fmt.Println("")
+}
+
+func main() {
+  a := NewList(1)
+  a.Append(2)
+  a.Append(3)
+
+  b := a
+  b.Append(4)
+
+  a.Print()
+  b.Print()
+}
+{% endhighlight %}
+
+<p>Can you guess what this will print?</p> The answer is two identical lines, each with the value of <code>1 2 3 4</code>. Both <code>a</code> and <code>b</code> are operating on the same nodes, so when we modify one of the nodes in any way, it's reflected in both variables:</p>
+
+{% highlight go %}
+[1] --> [2] --> [3] --> nil
+↑ ↑
+a b
+{% endhighlight %}
+
+<p>So far, we haven't isolated changes to <code>b</code>. Let's add another function: <code>Prepend</code> and make use of it:</p>
+
+{% highlight go %}
+func (n *Node) Prepend(value int) *Node {
+  new := &Node{value: value, next: n}
+  return new
+}
+
+func main() {
+  a := NewList(1)
+  a.Append(2)
+  a.Append(3)
+
+  b := a.Prepend(0)
+
+  a.Print()
+  b.Print()
+}
+{% endhighlight %}
+
+<p>Importantly, <code>Prepend</code> returns a new node. This is necessary in order for the newly created node to be accessible: there's no <code>prev</code> field as you'd find in a doubly linked-list. Now our data looks like: </p>
+
+{% highlight go %}
+[0] --> [1] --> [2] --> [3] --> nil
+↑       ↑
+b       a
+{% endhighlight %}
+
+<p>When we call <code>a.Print()</code> we get <code>1 2 3</code>, but when we call <code>b.Print()</code> we get <code>0 1 2 3</code>. Notice that this prepend operation is efficient and doesn't depend on the length of the list. We <strong>have not</strong> mutated <code>a</code>; absolutely nothing about <code>a</code> has changed. What we've done is <em>used</em> <code>a</code> to create <code>b</code>. This type of sharing is fundamental to how persisted data structures work.</p>
+
+<p>There are a lot of consequences to using singly linked lists. As we've just seen, the major benefit is that we get one efficient operation for adding values to the list while keeping it immutable, namely prepend. On the flip side, we cannot efficiently append or randomly access an element. Nor can we traverse the list in reverse (to do this, we need to create a new list). When you first hear this about lists in Elixir it probably seemed like a pretty big deal. And, in truth, in some cases, it is. But what I've come to realize is that overwhelmingly, being able to iterate the list and prepend to it is almost always all I need.</p>
+
+<p>Having said all of this, it <em>is</em> possible to append to a list in Elixir using the <code>++</code> operator:</p>
+
+{% highlight go %}
+a = [1, 2, 3]
+b = a ++ [4, 5]
+{% endhighlight %}
+
+<p>What this does is copy the left value and prepends it to the right. Essentially, we clone <code>a</code>, and end up with two distinct lists:</p>
+
+{% highlight go %}
+[1] --> [2] --> [3] --> nil
+↑
+a
+
+[1] --> [2] --> [3] --> [4] --> [5] --> nil
+↑
+b
+{% endhighlight %}
+
+<p>This is an expensive operation in general, but more so in a loop where a single append keeps copying an every growing list. This is why, for all but the most trivial cases, you'll want to prepend to the list and then, only once you have the final result, reverse it to restore the intended order (or better, just leave is as-is if ordering doesn't matter).<p>
+
+<div id=pager>
+  <a class=prev href=/Elixir-A-Little-Beyond-The-Basics/>introduction</a>
+  <a class=next href=/Elixir-A-Little-Beyond-The-Basics-Part-2-iolist/>iolists</a>
+</div>

@@ -1,0 +1,57 @@
+---
+layout: post
+date: 2012-06-18
+title: "Why Are You Linking To 404s?"
+tags: [logging, redis, ruby]
+---
+
+<p>I wish this could be a cool post about how to detect and correct external links from your site which 404. Unfortunately, it appears that I need to roll the clock back a full decade and talk about links on your website, pointing to your website, which 404.</p>
+
+<p>This is actually something I've noticed more and more recently. My amazement at this degeneration of basic HTML skill culminated last week when, amidst the Azure fanfare, I noticed that its own search engine returned internal results which 404. A few days later, while talking to someone about the Play Framework, I came across links in its documentation pointing to non-existent pages.</p>
+
+<p>There are a number of ways to deal with it, but the simplest is probably to monitor your log files and reactively correct 404s. Here's a simple ruby script that reads the standard nginx log format (also used by Apache) and extracts 404s: </p>
+
+{% highlight ruby %}def parse(io)
+  pattern = /.*"(?<method>[A-Z]{3,}) (?<url>.*?)(\?(.*?))? HTTP\/1\.\d" (?<status>\d\d\d)/
+  results = {}
+  io.each do |line|
+    next unless line.include?(' 404 ')
+
+    match = pattern.match(line)
+    status = match[:status].to_i
+    next unless status == 404
+
+    url = "#{match[:method]} #{match[:url]}"
+    results[url] = 0 unless results.include?(url)
+    results[url] += 1
+  end
+  results
+end
+
+results = parse File.new PATH_TO_ACCESS_LOG{% endhighlight %}
+
+<p>Using the <a href="http://rubygems.org/gems/elif">elif</a> gem, you can use the above method to efficiently read the file backwards. As a side note, this process can be significantly sped up by logging 404s into their own file:</p>
+
+{% highlight clike %}
+error_page 404 /404.html;
+
+location = /404.html {
+  access_log /path/to/log;
+}
+{% endhighlight %}
+
+<p>What you to do with these results is up to you. If you were me and <a href="/Redis-Is-The-Most-Important-Tool-In-My-Toolbelt/">loved Redis</a>, you might use a sorted set:</p>
+
+{% highlight ruby %}
+  redis = Redis.new
+  results.each{|url, count| redis.zincrby('404s', count, url) }
+{% endhighlight %}
+
+<p>This would allow you to use <code>zrevrange</code> to get the worst offenders:</p>
+
+{% highlight ruby %}
+  # top 10 most common 404s
+  redis.zrevrange('404s', 0, 9, :with_scores => true)
+{% endhighlight %}
+
+<p>Of course, this can all get more advanced. Most notably, we might also log the referrer to make it easier to track the source of our 404. Regardless of what approach you take, how simple or complicated you make it, there's no excuse for not monitoring and correcting 404s on your site. This doesn't just apply to internal links (which make you look particularly incompetent), but also external ones as it represents a lost opportunity to help and engage users.</p>

@@ -1,0 +1,84 @@
+---
+layout: post
+date: 2013-07-10
+title: "Golang Slices And The Case Of The Missing Memory"
+description: "Is that a byte array or a slice holding a reference to a much larger (and wasted) array? GoLang"
+tags: [golang]
+---
+
+<p>Slices in Go are an efficient way to represent a portion of an array. What makes slices so useful, besides the fact that <a href="http://golang.org/pkg/reflect/#SliceHeader">they require very little overhead</a>, is that they can always be transparently substituted with an actual array:</p>
+
+{% highlight go %}
+a := []string{"b", "a", "m", "i", "h", "n", "f"}
+sort.Strings(a)
+//a is now equal to ["a", "b", "f", "h", "i", "m", "n"]
+
+b := []string{"b", "a", "m", "i", "h", "n", "f"}
+sort.Strings(b[2:4])
+//b is now equal to ["b", "a", "i", "m", "h", "n", "f"]
+{% endhighlight %}
+
+<p>But there's one important thing to remember about slices, especially if you're keeping them around for a long time: they hold a reference to the underlying array. <em>Well of course they do</em>, you're thinking, <em>they are little more than pointers to the an underlying array, so what?</em></p>
+
+<h3>What Are You?</h3>
+<p>The problem, if you'll be so generous to let me call it that, comes back to that issue of transparency. Slices are so transparent that it isn't always obvious whether you're dealing with a slice or an actual array. As an example, consider the signature of the popular <code>ioutil.Readall</code> function:</p>
+
+{% highlight go %}
+func ReadAll(r io.Reader) ([]byte, error)
+{% endhighlight %}
+
+<p>Does it return an array or a slice of an array? If it's a slice, it's memory footprint might be a lot more than <code>len</code>. To get the size of the underlying structure, you want to use <code>cap</code>. The realization that any function that returns an array might actually be far more wasteful than is immediately evident isn't pleasant (especially to newcomers).</p>
+
+<h3>512 Bytes Of Pain</h3>
+<p>But wait, there's more. A lot of code, in Go's own libraries, in third party libraries and probably in your own code, makes use of the <code>bytes.Buffer</code> structure - a <code>[]byte</code>-backed growing data structure. <code>ioutil.ReadAll</code> itself is a thin wrapper around a <code>bytes.Buffer</code>. And here's where I ran into an unexpected behavior.</p>
+
+<p>The first piece of code is the idiomatic way to read an HTTP response in Go:</p>
+
+{% highlight go %}
+body, _ := ioutil.ReadAll(resp.Body)
+{% endhighlight %}
+
+<p>If we know the size of the response, the above code is rather inefficient. The buffer starts at 512 bytes and uses 2x growth algorithm. The result is a number of unnecessary allocation and  high likelihood of wasted memory (again, this last part isn't immediately obviously until you compare the length of body with its capacity). The solution?:</p>
+
+{% highlight go %}
+buffer := bytes.NewBuffer(make([]byte, 0, resp.ContentLength)
+buffer.ReadFrom(res.Body)
+body := buffer.Bytes()
+{% endhighlight %}
+
+<p>Given a <code>ContentLength</code> of 70KB, what would you imagine <code>len(body)</code> and <code>cap(body)</code> to equal? The length will be the expected 70KB, but the capacity will be 143872 bytes. For a reason that isn't clear to me, the <code>bytes.Buffer</code> class requires <code>bytes.MinRead</code> extra space. It has a value of 512. So unless we create a buffer of <code>res.ContentLength + bytes.MinRead</code>, we'll end up with an array which is 70K*2 + 512 of actual space.</p>
+
+<h3>A Memory Leak</h3>
+<p>Look, what's a memory leak within the context of a runtime that provides garbage collection? Typically it's either a rooted object, or a reference from a rooted object, which you haven't considered. This is obviously different as it's really extra memory you might not be aware of. Rooting the object might very well be intentional, but you don't realize just how much memory it is you've rooted. Sure, my ignorance is at least 75% to blame. Yet I can't help but shake the feeling that there's something too subtle about all of this. Any code can return something that looks and quacks like an array of 2 integers yet takes gigs of memory. Furthermore, <code>bytes.MinRead</code> as a global variable is just bad design. I can't imagine how many people think they've allocated X when they've really allocated X*2+512.</p>
+
+<h3>Solutions</h3>
+<p>If you're dealing with short lived objects, none of this is going to be an issue. However, for long-lived objects, there are a couple simple solution. First and foremost, if you need to track how much memory's actually used (say you're building an LRU cache that keeps itself nice and trim) use <code>cap</code> instead of <code>len</code>. But that doesn't solve the problem of wasted space.</p>
+
+<p>When you know the size of the data, like in the above case with a <code>ContentLength</code>, you should use the <code>io.ReadFull</code>: </p>
+
+{% highlight go %}
+l := resp.ContentLength
+body := make([]byte, l, l)
+_, err := io.ReadFull(res.Body, body)
+{% endhighlight %}
+
+<p>Otherwise, you'll have to first read it into a growing buffer and then copy it back into a fixed-length array. You'll need to decide if the saved memory is worth the extra CPU. We use something like:</p>
+
+{% highlight go %}
+//ioutil.ReadAll starts at a very small 512
+//it really should let you specify an initial size
+buffer := bytes.NewBuffer(make([]byte, 0, 65536))
+io.Copy(buffer, r.Body)
+temp := buffer.Bytes()
+length := len(temp)
+var body []byte
+//are we wasting more than 10% space?
+if cap(temp) > (length + length / 10) {
+  body = make([]byte, length)
+  copy(body, temp)
+} else {
+  body = temp
+}
+{% endhighlight %}
+
+<p>My fog of ignorance has been slightly reduced.</p>

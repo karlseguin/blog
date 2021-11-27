@@ -1,0 +1,178 @@
+---
+layout: post
+date: 2016-01-04
+title: "An Introduction To OpenResty - Part 3"
+tags: [lua, performance]
+description: "Exploring the lua-nginx API and how to build a simple middleware"
+---
+
+<p>In the previous two parts, we setup and introduced OpenResty. It's now time to build something with it.</p>
+
+<p>In part 2, we covered some of the things you need to know, such as nginx's and OpenResty's scaling model (processes and coroutines), and the importance of various phases. That leaves Lua and the nginx lua API still to learn. Both are lightweight and you should be able to pick up the basics from even simple examples. I'll put links at the end of this post for further reading.</p>
+
+<h2>Lua Basics</h2>
+<p>I'm going to give a bullet-list introduction to Lua, which should help if you've used any other dynamic language:</p>
+
+<ol>
+<li>Array indexes start at 1.
+<li><code>~=</code> is used for not equal.
+<li><code>nil</code> is used for nil/null/None.
+<li><code>--</code> for comments, and <code>--[[ BLAH ]]--</code> for multi-line comments.
+<li><code>or</code> and <code>and</code> instead of <code>||</code> and <code>&&</code>.
+<li><code>..</code> to concatenate strings.
+<li>Variables and functions are global by default. You'll end up putting <code>local</code> infront of everything.
+<li>Modules in Lua behave like modules in Node: what you <code>return</code> from a file is what get assigned when you <code>require</code> from another.
+<li>The built-in string library probably doesn't have the method you're looking for; everything is regular expression driven.
+<li>Arrays and dictionaries both use <code>{}</code>: <code>{1,2,3,4}</code> and <code>{name = "leto"}</code>. These are called tables.
+<li>You can make one table a metatable of another. You can do a lot with metatables, such as implementing inheritance. There are a number of special key names that, if the metatable contains, will cause the original table to behave a certain way. For example, the function assigned to the <code>__index</code> key of the metatable, allows you to build functionality similar to Ruby's <code>method_missing</code>.
+</ol>
+
+<h2>Nginx Lua Basics</h2>
+<p>If you're already familiar with nginx, you'll find the the nginx lua API familiar. While we won't go over every method of the nginx lua API, here's an overview of some useful ones.</p>
+
+<p>All of the <a href="http://nginx.org/en/docs/varindex.html">variables which nginx makes available</a> can be accessed via <code>ngx.var.VARIABLE_NAME</code>. For example:</p>
+
+{% highlight lua %}
+# get the page value from the querystring
+local page = ngx.var.arg_page
+
+# get the authorization header
+local authorization = ngx.var.http_authorization
+
+# get the host of the request
+local host = ngx.var.host
+{% endhighlight %}
+
+<p>In an nginx configuration file, the above three variables would be accessed via <code>$arg_page</code>, <code>$http_authorization</code> and <code>$host</code>. In cases where you want to access many querystring or header variables, you can also get a table of them:</p>
+
+{% highlight lua %}
+local args = ngx.req.get_uri_args()
+local headers = ngx.req.get_headers()
+{% endhighlight %}
+
+<p>It's worth pointing out that you can write to an <code>ngx.var.VARIABLE</code> value. These variables can be accessed in later parts of the code, including nginx configuration section which occur in later phases. For example, an upstream can be dynamically determined via:</p>
+
+{% highlight lua %}
+location / {
+  # the variable needs to exist before we write to it
+  set $upstream '';
+  access_by_lua_block {
+    ngx.var.upstream = require('upstreams')()
+  }
+  proxy_pass http://$upstream;
+}
+{% endhighlight %}
+
+<p>One of the more powerful features of nginx lua is that you can issue one or many requests to other nginx locations:</p>
+
+{% highlight lua %}
+location /v1/users {
+  content_by_lua_block {
+    res = ngx.location.capture("/legacy/users")
+    -- we can do something with the response
+  }
+}
+
+location /legacy {
+  proxy_pass http://legacy;
+}
+{% endhighlight %}
+
+<p>Although this looks like it might be issuing another http request to the server's <code>legacy</code> location, it's actually just a function call. Similarly, you can use <code>capture_multi</code> to issue multiple requests in parallel (Lua supports multiple return values). Somewhat related is the <code>ngx.exec</code> method which does an internal redirect (again, no HTTP request), stopping the existing request (and clearing any state associated with it) and starting a new one at the specified location. <code>ngx.redirect</code> on the other hand returns a 302 (can be overridden to 301) to the client.</p>
+
+<p><code>ngx.say</code> and <code>ngx.print</code> are used write a message to the response. The difference between them is that <code>ngx.say</code> emits a trailing newline. Both these methods will first write out the response header if it hasn't already been written.</p>
+
+<p><code>ngx.exit</code> stop processing and return the response when given an argument greater than or equal to 200. Given 0, it only quits the current phase. Here's a pattern you'll often use:</p>
+
+{% highlight lua %}
+ngx.status = 401
+ngx.print('not authorized')
+-- idiomatic to return from any function that ends the phase/request
+-- makes it more obvious what's happening
+return ngx.exit(401)
+{% endhighlight %}
+
+<p>Wondering why you have to set the status AND specify the exit code? The first, <code>ngx.status</code>, sets the response's header (important that we do that before using <code>print</code> or <code>say</code>). <code>ngx.exit</code> on the other hand, is used to control the internal flow of the request (in this case, stopping further processing).</p>
+
+<h2>Verifying Signed Requests</h2>
+<p>We'll keep our example straightforward: authenticating a request based on a provided signed parameter. Specifically, we'll expect requests to provide an <code>Authorization</code> header in the following form:</p>
+
+{% highlight text %}
+-- $BODY is omitted for bodiless requests
+Authorization: SHA256 hex(sha256($SECRET + $URL + $BODY))
+{% endhighlight %}
+
+<p>The nginx configuration is similar to what we've already seen:</p>
+
+{% highlight lua %}
+upstream app {
+  server localhost:3001;
+  keepalive 16;
+}
+
+location / {
+  access_by_lua_block {
+    require('authentication')()
+  }
+  proxy_pass http://app;
+}
+{% endhighlight %}
+
+<p>And, in full, <code>src/authentication.lua</code> looks like:</p>
+
+{% highlight lua %}
+-- OpenResty ships with a number of useful built-in libraries
+local str = require('resty.string')
+local sha256 = require('resty.sha256')
+
+local secret = "it's over 9000!"
+
+-- a helper function, probably useful to have a 'response.lua' file
+-- and do something like:
+--   local response = requre('response')
+-- (inlined here though for completeness)
+local function notAuthorized()
+  ngx.status = 401
+  ngx.header.content_type = 'application/json'
+  ngx.print('{"error":"not authorized"}')
+  ngx.exit(401)
+end
+
+local function authenticate()
+  local auth = ngx.var.http_authorization
+  if auth == nil or auth:sub(0, 7) ~= 'SHA256 ' then
+    return notAuthorized()
+  end
+
+  -- force nginx to read the body, without this, get_body_data() will return nil
+  ngx.req.read_body()
+  local msg =  secret .. ngx.var.request_uri
+  local body = ngx.req.get_body_data()
+  if body ~= nil then
+     msg = msg .. body
+  end
+
+  local hasher = sha256:new()
+  hasher:update(msg)
+  if auth:sub(8) ~= str.to_hex(hasher:final()) then
+    return notAuthorized()
+  end
+end
+
+return authenticate
+{% endhighlight %}
+
+<p>The module exports the <code>authenticate</code> function, since that's what it returns. The first thing it does is check for the presence of the <code>Authorization</code> header as well as checking that it's a supported type (only SHA256 in our case). Next, we force the body to be read into memory by calling <code>ngx.read_body()</code>. This <em>must</em> be called before we try to access the body. It's safe to call this multiple times (without incurring a performance penalty) and it won't block the worker from serving another request while the body is being read.</p>
+
+<p>We then re-sign the request using the configured <code>secret</code>, <code>request_uri</code> variable and, optionally, the <code>body</code>. If the signature that we create doesn't equal to the provide signature, an error is returned and processing stops. Otherwise, processing passes to the content phases (in this case, the <code>proxy_pass</code> directive in our nginx configuration file).</p>
+
+<p>The biggest problem with the above code is that signatures are valid forever and for all users. However, improving the code isn't much work: we simply need the client to include more information (a date, an ip address) as part of the request and the signature.</p>
+
+<p>Admittedly, this functionality is already provided by the <a href="nginx.org/en/docs/http/ngx_http_secure_link_module.html">http secure link module</a>, but that's only because we've stuck with basic functionality. Just the ability to use something other than md5 is a useful (we use <a href="https://github.com/adobe-apiplatform/api-gateway-hmac/blob/master/src/lua/api-gateway/resty/hmac.lua">this Lua code from Adobe</a> for HMAC support via OpenSSL). But you could also load the secret from redis or postgres based on a provided client id, or implement finer access control. There's very little that you can't do.</p>
+
+<h2>Further Reading</h2>
+<p>My first recommendation is that you read <a href="http://www.lua.org/gems/sample.pdf">Lua Performance Tips</a>. It will give you good insight into the internals of Lua that you'll need whether or not performance is a top priority of yours.</p>
+
+<p>You might also want to <a href="http://moonscript.org/">checkout moonscript</a> which is to Lua what CoffeeScript is to JavaScript. We've switched to it, and while it has its own flaws, I consider it a win (conditional modifiers, array and table comprehensions, local by default and so on).</p>
+
+<p>Finally, <a href="https://github.com/openresty/lua-nginx-module#nginx-api-for-lua">nginx lua's readme</a> does a solid job of explaining all methods in the api.</p>

@@ -1,0 +1,25 @@
+This is METAFONT, Version 2.7182818 (TeX Live 2017/Debian) (preloaded base=mf 2019.8.15)  21 JAN 2020 19:26
+**Foundations_of_Programming.zip FoundationsOfProgramming.docx FoundationsOfPro
+gramming.pdf files/
+(Foundations_of_Programming.zip
+! Text line contains an invalid character.
+l.1 PK^^C
+         ^^D^^T^^@^^B^^@^^H^^@^^UX^^B;8\ÄžEN^^Q^^@Èc^^T^^@^^\^^@^^@^^@Founda...
+
+? 
+! Text line contains an invalid character.
+l.1 PK^^C^^D
+            ^^T^^@^^B^^@^^H^^@^^UX^^B;8\ÄžEN^^Q^^@Èc^^T^^@^^\^^@^^@^^@Founda...
+
+? ls -lah
+Type <return> to proceed, S to scroll future error messages,
+R to run without stopping, Q to run quietly,
+I to insert something, E to edit your file,
+H for help, X to quit.
+? ^^X
+Type <return> to proceed, S to scroll future error messages,
+R to run without stopping, Q to run quietly,
+I to insert something, E to edit your file,
+H for help, X to quit.
+? x
+

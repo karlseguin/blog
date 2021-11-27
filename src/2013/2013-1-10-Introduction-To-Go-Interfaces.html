@@ -1,0 +1,41 @@
+---
+layout: post
+date: 2013-01-10
+title: "Introduction To Golang: Interfaces"
+tags: [golang]
+---
+
+<p>Go interfaces define behavior that a type must implement (and expose). A simple example is the <code>io.Writer</code> interface:</p>
+
+{% highlight go %}
+type Writer interface {
+  Write(p []byte) (n int, err error)
+}
+{% endhighlight %}
+
+<p>There are two sides to this story. First, we can now write a function that expects a <code>io.Writer</code> argument and know that it'll expose a <code>Write</code> method which takes a <code>byte</code> array. You get nice compile-time checks and everything.</p>
+
+<p>On the other side, we can now create our own writers and pass them to whatever function is expecting a <code>Writer</code>. The way Go does this is quite clever. In languages like Java, implementing an interface is explicit. In Go, the implementation is automatically inferred, at compile-time, by the methods attached to our type. In other words, the following is all we need to do to implement the <code>Writer</code> interface:</p>
+
+{% highlight go %}
+type Unicorn struct {
+
+}
+func (u *Unicorn) Write(p []byte) (n int, err error) {
+  //do something
+  return
+}
+{% endhighlight %}
+
+<p>Now, an instance of <code>Unicorn</code> is welcomed wherever an <code>io.Writer</code> is expected. No verbosity about it at all.</p>
+
+<p>If we also want it to implement <code>io.Closer</code>, we simply attach a <code>Close</code> method:</p>
+
+{% highlight go %}
+func (u *Unicorn) Close() (err error) {
+//do something
+  return
+}
+{% endhighlight %}
+
+<p>It's worth noting that a number of interfaces in Go wrap a single method, which is actually quite convenient</p>

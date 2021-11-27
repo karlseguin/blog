@@ -1,0 +1,243 @@
+---
+layout: post
+date: 2013-12-09
+title: "Fast Large Offsets With An Indexed Skiplist"
+description: "Offsets are often implemented by linear iteration. For sufficiently large offsets, this can be a performance killer."
+tags: [data structures, golang, performance]
+---
+
+<p>A few days ago we explored and <a href=/Building-A-Skiplist>built part of a skiplist</a>. The benefit of trees or skiplists is that most operations are Log(N). For something like a database index, which not only has to find values, or range of values, but also insert, update and remove items, btrees are the go-to solution.</p>
+
+<p>One thing a basic implementation of a skiplist, such as the one we wrote, struggles with, is handling large offsets for paging. This is actually something I <a href=/Paging-And-Ranking-With-Large-Offsets-MongoDB-vs-Redis-vs-Postgresql/>ran into a while ago</a>. Why is it a problem? Let's implement it and see:</p>
+
+{% highlight go %}
+func (s *Skiplist) Skip(offset int) string {
+  current := s.head.next[0]
+  for ;current != nil && offset > 0; offset-- {
+    current = current.next[0]
+  }
+  return current.value
+}
+{% endhighlight %}
+
+<p>Given what we've already built, the above, which walks through the bottom linked list, is our only option. For a skiplist of 1 million items, an offset of 100 takes a few hundred nanoseconds. An offset of 500 000 takes 16 milliseconds and an offset of 950 000 takes 31 milliseconds. Linear.</p>
+
+<p>To solve the problem, we can store how many nodes each link skips over. Changing our visualization from the original post, we end up with:</p>
+
+{% highlight text %}
+  HEAD                                                        TAIL
+   |----------------------------->e (5) ------------------------|
+   |                              |                             |
+   |----------------->c (3) ----->e (2) ----->g (2) ------------|
+   |                  |           |           |                 |
+   |<---->a<--->b<--->c<--->d<--->e<--->f<--->g<--->h<--->i<--->|
+{% endhighlight %}
+
+<p>Every node has a width equal to the sum of the widths of the nodes one level beneath it. With this added data, we can skip to a specific offset in Log(N) time, rather than O(N). The way to do this isn't too different than the way we find or insert a value. Rather than going by an absolute value, we're going against a cumulative sum. But we're still going to follow the divide and conquer pattern of Next And Down.</p>
+
+<p>Here's the improved implementation:</p>
+
+{% highlight go %}
+func (s *Skiplist) Skip(offset int) *SkiplistNode {
+  // -1 since we're 0 based and skipping 0 means
+  // we we want the 1st item which has a width of 1
+  skipped := -1
+  current := s.head
+  for i := s.height; i >= 0; i-- {
+    next := current.next[i]
+
+    if next == nil {
+      / /we've reach the end of this level, go down to
+      // the next one
+      continue
+    }
+
+    width := next.width[i]
+    if skipped + width > offset {
+      // if we were to move forward, we'd end up skipping too much
+      // so it's time to go down to the next level
+      continue
+    }
+
+    // ok, we know for sure we can move forward and, at least the
+    // first node can be "consumed"
+    current = next
+    for ; current != nil; current = current.next[i] {
+      skipped += current.width[i]
+
+      // we've found our node
+      if skipped == offset {
+        return current
+      }
+
+      next := current.next[i]
+      if next == nil || next.width[i] + skipped > offset {
+        // the next element is either nil, or consuming it
+        // would skip too much, break and go to the next levle
+        break
+      }
+    }
+  }
+  return nil
+}{% endhighlight %}
+
+<p>It's a lot of code, but the general idea is that we keep peeking ahead to make sure we're either not at the end of the list, or that actually moving forward wouldn't skip too much.</p>
+
+<p>How does this perform? Whether your offset is 100, 500 000 or 950 000, it'll skip forward in less than 1 millisecond. We're talking nanoseconds vs milliseconds.</p>
+
+<p>Of course, that's not all there is to it. When we insert a node, we need to calculate its width at each level. Not only that, but we also need to increase the width of all the nodes above it by 1, and all of the node's next nodes also need their width adjusted (because they'll now have less nodes directly under them, the newly inserted node has taken over some of the child nodes).</p>
+
+<p>For example, what needs to happen if we want to insert 06 into in level 1?:</p>
+
+{% highlight text %}
+2: ----------------------03(3)-------------------------------08(4)
+1: -------------02(2)----03(1)-------------------------------08(4)
+0: ----01(1)----02(1)----03(1)----04(1)----05(1)----07(1)----08(1)
+{% endhighlight %}
+
+<p>On level 2, 08's width will increase to 5. However, on level 1 its width will decrease to 2:</p>
+
+{% highlight text %}
+2: ----------------------03(3)----------------------------------------08(5)
+1: -------------02(2)----03(1)----------------------06(3)-------------08(2)
+0: ----01(1)----02(1)----03(1)----04(1)----05(1)----06(1)----07(1)----08(1)
+{% endhighlight %}
+
+<p>The first thing we do is change our <code>SkiplistNode</code> to track the width of each level:</p>
+
+{% highlight go %}
+  type SkiplistNode struct {
+    value string
+    next []*SkiplistNode
+    width []int
+    prev *SkiplistNode
+  }
+{% endhighlight %}
+
+<p>We'll have as many <code>width</code> values as we have <code>next</code> values (one per level).</p>
+
+<p>First I'll put the revised <code>Set</code> method in its entirety. We'll then look at it in chunks</p>
+
+{% highlight go %}
+func (s *Skiplist) Set(value string) {
+  // calculate this new node's level
+  var level int
+  for ; rand.Int31n(2) == 1; level++ {
+    if level > s.height {
+      s.height = level
+      break
+    }
+  }
+  node := &SkiplistNode {
+    value: value,
+    next: make([]*SkiplistNode, level+1),
+    width: make([]int, level+1),
+  }
+
+  current := s.head
+  // Next & Down
+  for i := s.height; i >= 0; i-- {
+    for ; current.next[i] != nil; current = current.next[i] {
+      next := current.next[i]
+      if next.value > value { break }
+    }
+
+    // CHANGE 1 - Increase all the above node's width by 1
+    if i > level {
+      if current.next[i] != nil {
+        current.next[i].width[i]++
+      }
+      continue
+    }
+
+    if i == 0 {
+      // CHANGE 2 - Nodes at level 0 always have a width of 1
+      node.width[0] = 1
+    } else {
+      // CHANGE 3 - Calculate the level of the node
+      width := getWidth(current.next[i-1], i-1, value)
+      for j := i; j <= level; j++ {
+        node.width[j] += width
+      }
+      node.width[i] += 1
+    }
+    node.next[i] = current.next[i]
+    current.next[i] = node
+    node.prev = current
+  }
+
+  // CHANGE 4 - Adjust the width of all next nodes
+  for i := 1; i <= level; i++ {
+    next := node.next[i]
+    if next != nil {
+      next.width[i] -= node.width[i] - 1
+    }
+  }
+}
+
+// Used in CHANGE 3
+func getWidth(node *SkiplistNode, level int, value string) int {
+  width := 0
+  for ; node != nil; node = node.next[level] {
+    if node.value > value { break }
+    width += node.width[level]
+  }
+  return width
+}
+
+{% endhighlight %}
+
+<p>The simplest part is increasing the width of all nodes above the new node. When we were setting values, we had this pretty important line:</p>
+
+{% highlight go %}
+  if i > level { continue }
+{% endhighlight %}
+
+<p>It's important because even though we might be inserting our node at level 2 (and 1, and 0), we scan for the right position from the top-most level. The above line is there because we've found the correct position at this level, but we don't need to insert anything (which is ok, because that's given us the point where we go down to the next level from). Anyways, all we need to do to is increase the next node's width:
+
+{% highlight go %}
+  if i > level {
+    // we're here either because the next node is larger or nil
+    if current.next[i] != nil {
+      current.next[i].width[i]++
+    }
+    continue
+  }
+{% endhighlight %}
+
+
+<p>When it comes time to actually add the node to the structure, we have to figure out its width. First, when we're at level 0, the width is 1, so:</p>
+
+{% highlight go %}
+  if i == 0 {
+    node.width[0] = 1
+  } else {
+    ...
+  }
+{% endhighlight %}
+
+<p>What about the other levels? This is trickiest piece of the puzzle. The fundamental difficulty is that we only have a <code>prev</code> pointer for the lowest level. Furthermore, since we're building this top-down, we don't yet know what the lower level looks like. We could simplify things by keeping all previous nodes around (just locally to the method). The approach that I've taken though is to incrementally build our width. Given:</p>
+
+{% highlight text %}
+2: ---00(1)-----------------------------------06(5)
+1: ---00(1)---01(1)---------------------------06(4)
+0: ---00(1)---01(1)---02(1)---03(1)---04(1)---06(1)
+{% endhighlight %}
+
+<p>If we want to insert 5 at level 2, our final output will be:</p>
+
+{% highlight text %}
+2: ---00(1)-----------------------------------05(5)---06(1)
+1: ---00(1)---01(1)---------------------------05(4)---06(1)
+0: ---00(1)---01(1)---02(1)---03(1)---04(1)---05(1)---06(1)
+{% endhighlight %}
+
+<p>But when we're doing the insert at level 2, we don't know what our width is, unless we go to the lower level and count backwards. But we know that it'll be at least 2 (itself and 01 from level 1). When we get to level 1, we know its width is 4 (itself 02, 03 and 04). We can go back to level 2 and add 3 (not 4, since we don't count ourself more than once) to the total width. Oddly, I find it harder to visualize with such a shallow tree.</p>
+
+<p>Finally, the last step is that we need to adjust all of the next nodes. This is pretty easy. If our next node's width is 4, and the new node's width is 2 the we know we've taken over 1 lower level node, thus the next node's width becomes 3. The next node's width always decreases by the new node's width (minus 1, since it doesn't include the actual new node).</p>
+
+<p>There's a lot of 1 and -1 here. This has to do with the width of the node itself, which is 1. Because we're building the width incrementally, from top down, we don't want to count the current node more than once. Furthermore, when we're manipulating the next node, the current node doesn't count.</p>
+
+<p>Deleting is a lot simpler. We take our width, minus (1, for ourself) and add it to the next node. We also decrement all higher level nodes by 1.</p>
+
+<p>Admittedly, it isn't straightforward (and I didn't do a great job explaining it). But if this is of interest to you, either for its own sake, or because you're dealing with large offsets, play with it to get a better feel for it. I put up a version on <a href="http://play.golang.org/p/uVjS_YcLw0">Go's Playground</a>.</p>

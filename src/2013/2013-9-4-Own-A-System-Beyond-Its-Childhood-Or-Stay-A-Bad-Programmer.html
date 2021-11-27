@@ -1,0 +1,34 @@
+---
+layout: post
+date: 2013-09-04
+title: "Own A System Beyond Its Childhood, Or Stay A Bad Programmer"
+description: "Knowing how your design survives the test of time is the only way to really grow as a programmer"
+tags: [learning]
+---
+
+<p>Years ago, while working for the government, I came up with a theory: systems built by contractors are bad because they don't stick around to deal with their past decisions. Today, I'm more sure than ever that you're your own best teacher. Depending on the growth of your system (measured across load and features) it might take some time for the worst consequences to surface.</p>
+
+<p>For anything but trivial systems, the real worth of a system (and a developer, for that matter) is how it stands up to the test of time. Time is as corrosive to software as it is to hardware. Over time, load will hopefully increase. Yet software performance rarely scales linearly to load. Over time, it's common to have features added which make you look back and realize you should have had more foresight.</p>
+
+<p>I'm currently in the midst of the biggest change to Viki's platform since our March launch. I'm making it so that any service can return a list of ids, and our top router/cache will hydrate these with the actual data. For example, the recommendation service can return:</p>
+
+{% highlight javascript %}
+  ["5840c", "1933c", "323c", "485c"]
+{% endhighlight %}
+
+<p>Which the router, using its already cached content, will convert to:</p>
+
+{% highlight javascript %}
+  [
+    {"id": "5840c", "title": "Astro Boy", ....},
+    {"id": "1933c", ....},
+    {"id": "323c", ....},
+    {"id": "485c", ....}
+  ]
+{% endhighlight %}
+
+<p>It's a pretty big change. But it's such a great fit for our architecture. It's a great fit for many of the upcoming features we're planning, but it was also a great fit from day one...I just didn't see it (Albert did, but much too late for us to seriously consider it before launch). Now, when "5840c" gets updated, all the lists will immediately reflect whatever change was made. Furthermore, any system can now return ids without having to worry about anything else (like what the data should look like).</p>
+
+<p>The point is, this feature fundamentally changed my perspective on design. I'm not saying I'll always use this approach, but (a) I'll always consider it and (b) I fundamentally see data and services from a different angle now. I'm pretty thankful that I have the opportunity to try it out, see how it works and iterate again.</p>
+
+<p>Grow with your system. Learn what works and what doesn't. Anything else and you'll spend every year writing the same dumb code and be oblivious to how bad it is.</p>

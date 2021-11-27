@@ -1,0 +1,72 @@
+---
+permalink: "/2012/4/20/Using-Map-Reduce-To-Measure-Funnels/"
+layout: post
+date: 2012-04-20
+title: "Using MapReduce to Measure Funnels"
+tags: [modeling, mongodb]
+---
+
+<p>A while ago I blogged about <a href="http://openmymind.net/2011/1/20/Understanding-Map-Reduce/">using MapReduce for basic analytics</a>. The example that I used was the <em>hello world</em> of map reduce: counting how often an event (like a page hit) happened.</p>
+
+<p>Today I want to look at another example. It's also quite simple, but it leverages a fundamental capability of MapReduce: emitting multiple times from the map phase. For those wondering, I'm using MongoDB, though this mostly transcends any specific storage engine.</p>
+
+<p>What we are after is building a simple funnel report. That is, given a multi-step activity, how many people reach each step. For example, if we have a 3 page survey, we want to know how many people start, how many people reach the 2nd page, and how many people reach the 3rd page.</p>
+
+<p>This is what our raw data looks like:</p>
+
+{% highlight javascript %}
+{_id: 1, steps: [{step: 1}]}
+{_id: 2, steps: [{step: 1}, {step: 2}]}
+{_id: 3, steps: [{step: 1}, {step: 2}]}
+{_id: 4, steps: [{step: 1}, {step: 2}, {step: 3}]}
+{% endhighlight %}
+
+<p>This could be simplified a little, but I plan on eventually expanding it. The <code>_id</code> in this case would identify a unique flow through the survey. It would probably make sense to make <code>_id</code> equal to the <code>survey_id</code> that gets stored somewhere else.</p>
+
+
+<p>I won't lie, it wasn't immediately obvious to me what I wanted to do, or how I wanted to do it. So I took a step back and decided to write down what I'd expect the output to look like. Given the above data, I'd expect:</p>
+
+{% highlight javascript %}
+{event: 'step1', count: 4}
+{event: 'step2', count: 3}
+{event: 'step3', count: 1}
+{% endhighlight %}
+
+<p>This helped me see the path. What we need is for our map function to emit for each step. In other words, we want the key of our emit to be the step, and the value just to be 1. With every emit we are saying <em>this happened once</em>:</p>
+
+{% highlight javascript %}
+function() {
+  this.steps.forEach(function(s) {
+    emit(s.step, 1)
+  });
+}
+{% endhighlight %}
+
+<p>Although you'll never see it, the output of this should be thought of as: </p>
+
+{% highlight javascript %}
+{1: [1, 1, 1, 1]}
+{2: [1, 1, 1]}
+{3: [1]}
+{% endhighlight %}
+
+<p>Given the above, our reduce method does the same basic summation we've seen before: </p>
+
+{% highlight javascript %}
+function(step, counts) {
+  var sum = 0;
+  counts.forEach(function(count) { sum += count; });
+  return sum
+}
+{% endhighlight %}
+
+
+<p>When we execute this, the output is exactly what we expected and hoped for:</p>
+
+{% highlight javascript %}
+{_id: 1, value: 4}
+{_id: 2, value: 3}
+{_id: 3, value: 1}
+{% endhighlight %}
+
+<p>The first thing all of this shows us is a non-convoluted reason for emitting multiple times. It also highlights two important mental activities. First, write down a simple set of data and then what the expected output should be. This helps us visualize the transformation we are seeking. Secondly, the imaginary output from the map phase is equally important to visualize, especially as we prepare ourselves to write our reduce logic.</p>

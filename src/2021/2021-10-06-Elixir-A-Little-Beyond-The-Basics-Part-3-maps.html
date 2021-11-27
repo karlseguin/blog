@@ -1,0 +1,100 @@
+---
+layout: post
+date: 2021-10-06
+title: "Elixir, A Little Beyond The Basics - Part 3: maps"
+description: "How are maps implemented and what implication does this have for every day use?"
+tags: [elixir]
+---
+
+<p>In <a href="/Elixir-A-Little-Beyond-The-Basics-Part-1-lists/">part 1</a> we saw how lists are implemented and how this dictates what we can do with them (e.g., because it's a linked list, we cannot access a random element in constant time). Maps, on the other hand, expose the all of the functionality you're likely to need, so it isn't quite as important to be mindful of how they're implemented.</p>
+
+<p>But just because Elixir maps do everything you expect of them (e.g., get, insert, update, delete, iterate), and do so efficiently, doesn't mean we shouldn't expand our understanding.</p>
+
+<p>Elixir maps with fewer than 32 keys are implemented using a sorted list. When this grows to 32 keys or beyond, it switches to a specialized tree structure called a <a href="https://en.wikipedia.org/wiki/Persistent_data_structure#Persistent_hash_array_mapped_trie">persisted hash array mapped trie</a>. Like linked lists, trees can often be immutable <strong>and</strong> efficient thanks to structural sharing. In the simplest case, you can imagine that inserting a new largest value in a tree (which goes to the right-most node) can result in a new tree which shares the same left-branch as the original.</p>
+
+<p>First, we need to talk about <code>terms</code>. <code>Terms</code> is a word that you'll run into when talking about Elixir or Erlang. It just means any value. A map is a term, an atom is a term, a list is a term, a integer is a term, a structure is a term, a tuple is a term, everything is a term. What's special about Elixir's <code>terms</code> is that they have well defined ordering. There's is no value that cannot be compared to another value:</p>
+
+{% highlight elixir %}
+> 1 > %{over: 9000}
+false
+
+> true < {:id, "leto"}
+true
+
+> [1, 2, 3] == 33.2
+false
+{% endhighlight %}
+
+
+<p>Specifically, the ordering rules are:</p>
+
+{% highlight elixir %}
+number < atom < reference < function < port < pid < tuple < map < list < bitstring
+{% endhighlight %}
+
+<p>This means, for example, that a number will always be less than an atom:</p>
+
+{% highlight elixir %}
+> 999999999999 < :zero
+true
+{% endhighlight %}
+
+<p>When we compare two lists, or two maps, or two tuples, then the ordering rules are applied on the contained values:</p>
+
+{% highlight elixir %}
+> [999999999999] < [:zero]
+true
+{% endhighlight %}
+
+<p>What does this have to do with maps? Well, unlike most languages, in Elixir, any term can be a key in a map. The following is a perfectly valid map with two, admittedly unusual, keys:</p>
+
+{% highlight elixir %}
+%{
+  %{over: 9000} => 1,
+  {:ok, [3.2, ["b"], nil]} => 2
+}
+{% endhighlight %}
+
+<p>One place where this is actually useful is when looking up something (say, in a cache) by type and id. In other languages, you'd probably have to create a string key from the type and id, e.g. <code>"#{type}:#{id}"</code>. But in Elixir, you can just use a tuple: <code>{type, id}</code>. There's no reason you can't even mix and match, have keys which are just the <code>id</code> and keys which are <code>{:summary, id}</code>.</p>
+
+<p>Officially, Elixir maps are unordered. However, knowing that they're implemented using as a sorted list or a tree, means that the order is actually predictable. We know from the term ordering rules that an atom is always less than a tuple, therefore, give the following code:</p>
+
+{% highlight elixir %}
+m = %{"over" => 9000, {:gt, 9000} => true}
+m |> Map.keys() |> IO.inspect()
+{% endhighlight %}
+
+<p>We know that it'll always print <code>{[{:gt, 9000}, "over"]</code> because a tuple is always less than a string.</p>
+
+<p>A lot of people will tell you that it's dangerous to rely on such internal details. Since, officially, maps are unordered, any assumption we make about ordering today might not be true tomorrow. And, because the ordering is based on term value (as opposed to, say, insertion order) it probably isn't that useful anyways. But just to highlight how dangerous it is to rely on such behavior, let's look at a map with integer keys:</p>
+
+{% highlight elixir %}
+m = %{2 => nil, 3 => nil, 5 => nil, 9 => nil}
+m |> Map.keys() |> IO.inspect()
+{% endhighlight %}
+
+<p>Can you guess the output? Since all the keys are integers, the output is the sorted integers: <code>[2, 3, 5, 9]</code>. Let's try another, can you guess the output?:</p>
+
+{% highlight elixir %}
+m = %{
+  1 => nil, 2 => nil, 3 => nil, 4 => nil,
+  5 => nil, 6 => nil, 7 => nil, 8 => nil,
+  9 => nil, 10 => nil, 11 => nil, 12 => nil,
+  13 => nil, 14 => nil, 15 => nil, 16 => nil,
+  17 => nil, 18 => nil, 19 => nil, 20 => nil,
+  21 => nil, 22 => nil, 23 => nil, 24 => nil,
+  25 => nil, 26 => nil, 27 => nil, 28 => nil,
+  29 => nil, 30 => nil, 31 => nil, 32 => nil,
+  33 => nil
+}
+m |> Map.keys() |> IO.inspect()
+{% endhighlight %}
+
+<p>I wouldn't blame you for thinking that the output would be 1 to 33. But it's actually <code>[33, 12, 23, 29, 30, 26, 31, 11, 9, 32, 25, 28, 6, 13, 20, 15, 14, 2, 7, 1, 8, 3, 17, 22, 21, 4, 24, 10, 27, 19, 5, 18, 16]</code>, why?</p>
+
+<p>Remember that maps with less than 32 keys are implemented differently than maps with 32 keys or more, and that's what we're seeing above. The ordering is still predictable: the same map with the same keys, no matter the order of the insertion, will result in the same output (at least within the same version of Elixir / Erlang). If having predictable ordering is something you need, consider the <a href="https://erlang.org/doc/man/gb_trees.html">gb_trees module</a> which I'll cover in a later part. Still, the fact that all terms have strict ordering implies that map ordering is predictable (else comparing the same two maps multiple times would yield different results, making it impossible to use maps as keys within maps).</p>
+
+<div id=pager>
+  <a class=prev href=/Elixir-A-Little-Beyond-The-Basics-Part-2-iolist/>iolist</a>
+  <a class=next href=/Elixir-A-Little-Beyond-The-Basics-Part-4-structures/>structures</a>
+</div>

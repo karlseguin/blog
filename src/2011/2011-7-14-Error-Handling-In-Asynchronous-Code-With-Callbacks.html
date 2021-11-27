@@ -1,0 +1,72 @@
+---
+permalink: "/2011/7/14/Error-Handling-In-Asynchronous-Code-With-Callbacks/"
+layout: post
+date: 2011-07-14
+title: "Error Handling In Asynchronous Code With Callbacks and Return Codes"
+tags: [c#]
+---
+<p>Traditional error handling (exceptions) doesn't work well with asynchronous code. The problem is that any exception raised within an asynchronous callback happen on a separate thread. The solution is to fallback to old-school response codes. For example, you might do something like:</p>
+
+{% highlight clike %}
+private void LoadClick(object sender, RoutedEventArgs e)
+{
+   _dataStore.Load(_username, r => UserLoaded(r));
+}
+
+private void UserLoaded(Response<User> response)
+{
+   if (!response.Success)
+   {
+      //Handle An Error
+   }
+   else
+   {
+      //Handle Success
+   }
+}
+{% endhighlight %}
+
+<p>This works well. Any error raised on the asynchronous side of <code>_dataStore.Load</code> are exposed as a failed response. What if we also want to protect against a failure in the success handling of <code>UserLoaded</code>? The simple solution is to wrap the code in a try/catch: </p>
+
+{% highlight clike %}
+private void UserLoaded(Response<User> response)
+{
+   if (!response.Success) { //Handle An Error }
+   else
+   {
+      try
+      {
+         //handle success
+      }
+      catch(...)
+      {
+         //Handle an error
+      }
+   }
+}
+{% endhighlight %}
+
+<p>That's the simple solution; however, there is a cleaner alternative available. Consider this implementation of the method in our datastore which executes the callback (and thus is part of the async processing):</p>
+
+{% highlight clike %}
+private void Loaded(User user, Action<Response<User>> callback)
+{
+   if (user == null)
+   {
+      callback(Response.Failure("user could not be found"));
+      return;
+   }
+   try
+   {
+      callback(Response.Success(user));
+   }
+   catch (Exception ex) //yup, kinda swallowing
+   {
+      callback(Response.Failure(ex));
+   }
+}
+{% endhighlight %}
+
+<p>The above code executes the callback (the <code>UserLoaded</code> method in our above example) within a try/catch. If it fails, it re-executes the callback with the exception. The benefit is that you get to reuse your main error handling logic (when <code>reponse.Success == false</code>) in the case of a failure during success handling. There's no need for additional try/catch statements in the calling/client code. The approach makes the callback handler more robust - which can be important if you are shipping it out on a bunch of mobile phones and updates aren't guaranteed to be downloaded.</p>
+
+<p>On the downside, it isn't immediately obvious that <code>response.Success</code> can be <code>false</code> and it wasn't caused by the <code>_dataStore</code> (although the stacktrace should clear up any confusion). Also, the callback does get called twice, so you need to make sure that won't have any nasty side effects. Overall though, I'm quite fond of this pattern for error handling within an asynchronous callback.</p>

@@ -1,0 +1,40 @@
+---
+permalink: "/2010/7/21/Using-PostMark-To-Send-Mail/"
+layout: post
+date: 2010-07-21
+title: "Using PostMark To Send Mail"
+tags: [tech]
+---
+<p>I think a lot of developers first reaction to having to send mail from an app would be to setup an stmp server and fire emails off (ok, well that might be the second reaction - the first reaction might be <em>ughhh</em>). That's certainly the approach I initially took to handle registration confirmation for our new <a href="http://www.noobgaming.com/">gaming website</a>.</p>
+
+<p>But a couple people, including my co-developer Aaron Pepper, insisted that making use of PostMark <a href="http://www.postmarkapp.com">to handle sending our email</a> would be a better solution. Now, let me tell you that my first reaction was <em>absolutely not</em>. I mean, why would you outsource and pay for something as basic as sending out email, right?</p>
+
+<p>Well it turns out that I've since seen the light and I think you should too. What we were doing, and what a lot of places do, is send out a confirmation email with an activation link. Its a pretty well-understood paradigm - even for non computer savvy users, but its still somewhat convoluted and unfriendly. Worse, for a young site like ours, desperate for new content, the disconnect is likely to turn some users off.</p>
+
+<p>This is where PostMark comes in. With their simple API we're able to send off email - so far so good. But their bounce API is where things get really interested. We chose to use their callback (or hook) capability. Essentially, whenever PostMark fails to deliver a message, they hit our server (address is specified by us in their web interface and uses basic authentication) and pass the relevant information. Here's what our rails code looks like to handle this callback:</p>
+
+{% highlight ruby %}
+def bounce
+   user = User.find_by_field(:email, params[:Email])
+   user.invalid_email unless user == nil
+   render :nothing => true
+end
+{% endhighlight %}
+
+<p>Pretty simple, right? The real shift though isn't with the code, its with how we handle user registration. Lets be honest, for a <a href="http://www.noobgaming.com"/>game tip website</a>, having valid email isn't the most crucial thing. So we let users register and start using the site right away. If we get a bounce, we update the user record. Exactly what you do at this point is up to you - you might politely ask them to update their information, or be more draconian and block them from doing anything until they provide a valid email.</p>
+
+<p>The end result is that our website flow is friendlier. Users can start using the site right away and our welcome email is just a welcome email - no special activation instructions, no huge deal if it get marked as spam. I'd say that for most websites, its the right model to use. PostMark costs $1.50 per 1000 emails (with bulk pricing available), has libraries for most major frameworks, and provides a rich API (you can query a webservice for bounces rather than have them callback).</p>
+
+<p>My only complaint is that they don't have a Rails 3 library yet. While Rails 3 might be in beta, it'd still be nice to have. So I wasn't able to hook into the <a href="http://openmymind.net/2010/6/24/Rails-does-Mail-Right-ASPNET-not-so-much">beautiful rails mailing api</a>. Instead I had to use PostMark's ruby (not rails) library directly. </p>
+
+
+<p>For the curious, since we are using nginx as our webserver, here's what our location confirguration looks like for this specific URL (to enable basic authentication):</p>
+{% highlight clike %}
+location /users/bounce {
+   auth_basic "auth";
+   auth_basic_user_file "htpasswd";
+   root   /www/noobgaming/current/public;
+   passenger_enabled on;
+}
+{% endhighlight %}
+<p>The htpasswd file is the typical apache format - you can use <a href="http://aspirine.org/htpasswd_en.html">this htpasswd tool</a> with the crypt algorithm</p>

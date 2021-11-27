@@ -1,0 +1,15 @@
+---
+permalink: "/2011/5/4/Fighting-the-Framework/"
+layout: post
+date: 2011-05-04
+title: "Fighting the Framework"
+tags: [tech]
+---
+<p>In some languages, when you try to get a substring using a length greater than the actual string, you get an exception. In others, you get the full string:</p>
+
+{% highlight clike %}
+   "i will not fear".Substring(0, 100);  //an exception
+   'fear is the mind killer'[0..99]   //fear is the mind killer
+{% endhighlight %}
+
+<p>For me, the second behavior is more pragmatic. It removes an additional check and ever so slightly streamlines code. It better fits with what I'm trying to do, and how I'm trying to do it. However, I am genuinely curious, can you guys think of a case in which the fist behavior is useful (and no, I don't consider relying on an exception to tell if a string is longer than X to be a good usage).</p>

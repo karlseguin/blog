@@ -1,0 +1,105 @@
+---
+layout: post
+date: 2013-01-14
+title: "Introduction To Golang: Arrays, Maps, Slices And Make"
+tags: [data structures, golang]
+---
+
+<p>In <a href=/Introduction-To-Go-Structures-Data-Instances>Part 1</a> we looked at various ways to create variables, mainly by using <code>new</code>. What does it mean though, to <code>new</code> an array? </p>
+
+{% highlight go %}
+  scores := new([]int)
+{% endhighlight %}
+
+<p>All this gives us is pointer to an uninitialized arary. To initialize an array or a map, you need to provide additional data. For this purpose, we use <code>make</code>:</p>
+
+{% highlight go %}
+  scores := make([]int, 50)
+  scores[0] = 9001  // yay, works
+{% endhighlight %}
+
+<p>We now have an initialized array value (not a pointer!) that can hold 50 integers. A wonderful thing about Go arrays (and strings) is the ability to create a slice around them. Slices point to an arbitrary start and end within the array/string. They are pointers and thus are efficient to pass around, and will change if the underlying array changes.</p>
+
+<p>One real example of using slices is copying a <code>io.Reader</code> to an <code>io.Writer</code>. Here's an example that would probably NOT work:</p>
+
+{% highlight go %}
+buffer = make([]byte, 4096)
+for {
+  read, _ := r.Read(buffer)
+  if read == 0 { break; }
+  w.Write(buffer)
+}
+{% endhighlight %}
+
+<p>Pretend our data is 10000 bytes, what will happen? Our first and second iterations will read and write 4096 bytes. Our third iteration will read 1808 bytes (10000-8192), but it will still write 4096 bytes since that's the length of our <code>buffer</code>. That last write will contain a mix of data from the current read as well as data from the previous read.</p>
+
+<p>The solution is to use slices (remember, they are efficient):</p>
+
+{% highlight go %}
+buffer = make([]byte, 4096)
+for {
+  read, _ := r.Read(buffer)
+  if read == 0 { break; }
+  w.Write(buffer[0:read])
+}
+{% endhighlight %}
+
+<p>Now we'll write 4096, 4096 and 1808 bytes.</p>
+
+<p>Note that arrays in Go are real array: their growth is bound to the initial size.</p>
+
+<p>Maps are quite similar and you initialize them, with make, specifying the type of the key and the type of the value. Maps will grow as needed:</p>
+
+{% highlight go %}
+sayans := make(map[string]int)
+sayans["goku"] = 9001
+{% endhighlight %}
+
+<p>Both maps and arrays can be initialized with values: </p>
+
+{% highlight go %}
+var scores = []int {1,2,3,4}
+var sayans = map[string] int {
+  "goku": 9001,
+}
+{% endhighlight %}
+
+<p>The last interesting point is how we retrieve a value from a map. We haven't gone over it yet (though we did just see an example of it), but Go functions can return multiple values. In our above example we assigned the second value to <code>_</code> which is a throwaway variable. The proper way do this would have been:</p>
+
+{% highlight go %}
+for {
+  read, err := r.Read(buffer)
+  if err != nil { do something }
+  ...
+}
+{% endhighlight %}
+
+<p>You'll see a lot of functions in Go that return 2 values: the actual value of interest and an error. That's how Go error handling works (dealwithit). But functions aren't limited to 2 return values nor must they necessarily return an error.</p>
+
+<p>Remember that <code>:=</code> can only be used to declare new variables. With multiple return values, the rule is that you can use <code>:=</code> so long as one of the variables is new. For example: </p>
+
+{% highlight go %}
+  //valid
+  width, err := parseValue("width")
+  height, err := parseValue("height")
+
+  //not valid, 2nd line won't compile as neither size nor err are new
+  size, err := parseValue("width")
+  size, err := parseValue("height")
+
+  //would need to do:
+  size, err := parseValue("width")
+  size, err = parseValue("height")
+{% endhighlight %}
+
+<p>So you really need to keep track of your variables, which I think promotes short functions.</p>
+
+<p>Back to retrieve a value from a map. Two values are returned: the requested value and whether or not the value existed. This lets you distinguish between a nil/0 value and one that was never set:</p>
+
+{% highlight go %}
+  level, ok := sayans["goku"]
+  if ok == false { return "invalid" }
+  ...
+{% endhighlight %}
+
+<p><code>make</code> is used for a third type: channels. In our next post, we'll jump off the deep end and explore channels and do more advanced Go programming</p>

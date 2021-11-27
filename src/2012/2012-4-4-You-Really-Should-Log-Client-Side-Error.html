@@ -1,0 +1,87 @@
+---
+permalink: "/2012/4/4/You-Really-Should-Log-Client-Side-Error/"
+layout: post
+date: 2012-04-04
+title: "You Really Should Log Client-Side Errors"
+tags: [devops, logging]
+---
+
+<p>Let's keep this short. Too few websites log JavaScript errors. Let's build a simple system to track client-side errors.</p>
+
+<p>First, we'll create a <code>logError</code> method in JavaScript:</p>
+
+{% highlight javascript %}
+function logError(details) {
+  $.ajax({
+    type: 'POST',
+    url: 'http://mydomain.com/api/1/errors',
+    data: JSON.stringify({context: navigator.userAgent, details: details}),
+    contentType: 'application/json; charset=utf-8'
+  });
+}
+{% endhighlight %}
+
+<p>This assumes jQuery is available, and if it isn't, you can change the ajax implementation.</p>
+
+<p>How do we use this function? At the very least, we want to hook into <code>window.onerror</code>:</p>
+
+{% highlight javascript %}
+window.onerror = function(message, file, line) {
+  logError(file + ':' + line + '\n\n' + message);
+};
+{% endhighlight %}
+
+<p>If you are using jQuery, then hooking into <code>ajaxError</code> isn't a bad idea either (as pointed out in <a href="https://news.ycombinator.com/item?id=3796970">a HN comment</a>, this probably <strong>is</strong> a bad idea, since <code>ajaxError</code> fires for server errors which server-based logging is a much better fit):</p>
+
+{% highlight javascript %}
+$(document).ajaxError(function(e, xhr, settings) {
+  logError(settings.url + ':' + xhr.status + '\n\n' + xhr.responseText);
+});
+{% endhighlight %}
+
+<p>With that bit of client-side code in place, we can write a little server. Here's my complete sinatra app to handle this:</p>
+
+{% highlight ruby %}
+require 'sinatra'
+require 'JSON'
+require 'redis'
+
+configure {  set :redis, Redis.new }
+
+post '/api/1/errors' do
+  id = save_error(extract_keys(JSON.parse(request.body.read), 'context', 'details'))
+  content_type :json
+  {:id => id}.to_json
+end
+
+private
+def extract_keys(hash, *keys)
+  hash.reject{|k| !keys.include?(k)}
+end
+
+def save_error(error)
+  id = Digest::MD5.hexdigest(error['details'])
+  error['time'] = Time.now.utc
+  settings.redis.zadd('errors', error['time'].to_i, id)
+  settings.redis.lpush(id, error)
+  id
+end
+{% endhighlight %}
+
+<p>This implementation is using Redis, but you could store the data in anything. The way that it works is by calculating the md5 value of error's <code>details</code> and store that md5 value in a sorted set ranked by time. We then store the error details into a list for that particular hash.</p>
+
+<p>The above code is only focused on storing the errors. If you want to build a web-based front-end to display them, or maybe even a socket.io page to display errors in real time, you can. You might even just write a script that runs every once and a while and generates an email report.</p>
+
+<p>Without looking at a specific display implementation, let's look at how we might get our data back out of Redis.</p>
+
+<p>First, to get the last X errors, we can use <code>zrevrange errors 0 X</code>. We want the reverse range because new errors have a higher rank (<code>Time.now.utc.to_i</code>). If you wanted errors that happened within a specific time frame, you could use:
+
+{% highlight ruby %}
+  to = Time.now.utc
+  from = to - 86400  # (3600 * 24, 1 day)
+  redis.zrevrangebyscore 'errors', from, to
+{% endhighlight %}
+
+<p>This returns all the hashes. We can then use <code>lindex HASH 0</code> on each hash to get the last instance of that particular error. We can also use <code>llen HASH</code> to get how often a specific error has happened</p>
+
+<p>That's pretty much it. It's as simple as it is useful.</p>

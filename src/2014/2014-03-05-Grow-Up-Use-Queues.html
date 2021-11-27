@@ -1,0 +1,59 @@
+---
+layout: post
+date: 2014-03-05
+title: "Grow Up. Use Queues."
+tags: [design, scalability, soa]
+---
+
+<p><em>Unit testing as a design tool</em>; That's the answer I'd have given you 5 years ago if asked what practice or tool has had the greatest positive impact on software development. Today I have a different answer: <em>queues</em>. In fact, I'm so enamored with queues that I sometimes wonder if it isn't as close to a silver-bullet as we'll ever get.</p>
+
+<p>So what do I mean by <em>queues</em>? It's dead simple. Any write to your database (whether it's an insert, update or delete) gets put into a queue. This message is so critical that the database write should fail if the queue write fails (you achieve this by wrapping the queue write inside the DB write's transaction).</p>
+
+<h3>Basics</h3>
+<p>What does the message look like? First, there'll be some basic meta data, such as when it was written and which system wrote it. Next you'll have your core message: the action (insert/update/delete), the resource type (user/order/comment) and the resource id. So the message might look something like:</p>
+
+{% highlight javascript %}
+// many queues will generate the timestamp for you
+{
+  "timestamp": "2014-03-05T13:56:37Z",
+  "creator": "cms",
+  "action": "update",
+  "resource": "user",
+  "id": 9001
+}
+{% endhighlight %}
+
+<h3>Why</h3>
+<p>Why do this and why is it so great? Queues provide an extreme level of decoupling. In this sense, they are similar to events, but at a broader infrastructure level. When you write into the queue, you don't know how, or even if, consumers will use it. From my experience though, you'll find yourself amazed at how useful the messages are and how cleanly it lets you build otherwise bloated and complex systems.</p>
+
+<p>A good example is for doing cache invalidation. Have a worker pick up update and delete events and purge (or update) those resources from your cache. Varnish, for example, has excellent purging capabilities which fit like a glove around a queue worker. You could also decouple your audit log system through the use of a queue. You can build notifications and alerts. You can use it to update partners of changes which their own internal system should reflect.</p>
+
+<p>All of these suggestions are things you can do without a queue. The queue lets you isolate the feature, making it more manageable</p>
+
+<h3>Advanced</h3>
+<p>Since I'm advocating for queues to become as critical to your system as the database, there are two slightly more advanced considerations that I'll talk about. First, your messages must be durable. As a result, you have to get the message from the queue, process it, and then remove it from the queue. You can't remove it upfront, else you risk losing the message should something bad happen (such as a crash) after you remove it but before you fully process it. Consequently, you might process the same message multiple time (if something bad happens after you've processed it but before you've removed it). You should build your systems so that replaying the same message (in the same order) doesn't cause any problems. In other words, your system has to be idempotent.</p>
+
+<p>Secondly, the message structure that I suggested above has all the basic building blocks you'll need. From it, you can hit a webservice (or the database directly) to get more information about the newly created or updated user. However, as a more pragmatic approach, you might also choose to include the resource's details within the message. Personally, I'm a fan of this approach, though I understand why many people aren't. If you go this route, your messages should be versioned and the queue message should be treated like any other public API (you shouldn't change it):</p>
+
+{% highlight javascript %}
+{
+  "timestamp": "2014-03-05T13:56:37Z",
+  "creator": "cms",
+  "action": "update",
+  "resource": "user",
+  "id": 9001,
+  "payload": {
+    "id": 9001,
+    "name": "Leto",
+    "type": "WormMan",
+    ...
+  }
+}
+{% endhighlight %}
+
+<p>Notice that I didn't put the version. Just like I like my version numbers in a web services URL, I also like the version number is a queue's route. The above message would be routed to something like: <code>models.v1.users.update</code>. The <code>models</code> is important because you'll soon find yourself writing other non-resource-specific events (so it acts as a useful namespace to isolate core model changes).</p>
+
+<h3>Conclusion</h3>
+<p>The most compelling thing about queues is that you can literally get up and running in a matter of hours. RabbitMQ is quick to set up, battle tested and can grow with you (availability, reliability, ...). If you're using Rails, you can use the ActiveRecord hooks to write changes to the queue with just a few lines of code.</p>
+
+<p>For me, trying to build anything but the simplest systems without a queue feels as backwards as trying to do it without a database.</p>

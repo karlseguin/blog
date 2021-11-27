@@ -1,0 +1,141 @@
+---
+layout: post
+date: 2013-10-31
+title: "Back To Basics: Hashtables"
+description: "A basic introduction to building hashtables"
+tags: [data structures, golang]
+---
+
+<p>I wanted to write a post answering the question <em>Why Does Reading From A Hashtable Require Synchronization</em> when I realized that a distinct introduction to hashtables would prove useful. So, here's the first of a few post dedicated to my favorite data structure.</p>
+
+<h3>Introduction</h3>
+<p>I like to think of Hashtables as flexible arrays. Where arrays rigidly require continuous integer based indexes, hashtables allow non-integer, and therefore non-continuous, based indexes. What's amazing about hashtables is that, despite this extra flexibility, typical performance characteristics is largely the same as arrays. Namely, getting and setting values is O(1). In other words, getting a value from a hashtable with 5 items should perform the same as a hashtable with 5 billion items - just like an array.</p>
+
+<p>This is possible because a hashtable <em>is</em> an array, with extra logic which converts the key into an integer. Consider this basic implementation:</p>
+
+{% highlight go %}
+//think of interface{} as "object" in many other languages
+
+type Hash struct {
+  size uint32
+  buckets []interface{}
+}
+
+func New(size int) *Hash{
+  return &Hash{
+    size: uint32(size),
+    buckets: make([]interface{}, size),
+  }
+}
+
+func (h *Hash) Set(key []byte, value interface{}) {
+  h.buckets[h.getIndex(key)] = value
+}
+
+func (h *Hash) getIndex(key []byte) uint32 {
+  hasher := fnv.New32a()
+  hasher.Write(key)
+  return hasher.Sum32() % h.size
+}
+{% endhighlight %}
+
+<p>The above code is just a thinly wrapped array. We don't set a value directly into our array at a specific position. Instead, we use a hashing algorithm on our key, and mod that to fit within the array.</p>
+
+<p>In order to get a value based on a key, we reuse the <code>getIndex</code> method:</p>
+
+{% highlight go %}
+func (h *Hash) Get(key []byte) interface{} {
+  return h.buckets[h.getIndex(key)]
+}
+{% endhighlight %}
+
+<h3>Hash Algorithm</h3>
+<p>For now, all the magic of our hashtable is in the hashing algorithm. Above, we use the popular <a href="http://en.wikipedia.org/wiki/Fowler_Noll_Vo_hash">Fowler Noll Vo (FNV) algorithm</a>. When you think of hash algorithms, you might think of MD5 or SHA1. However, hash algorithms exhibit a number of distinct properties; the properties you want for a hashtable aren't usually the same as the properties you want for cryptographic purposes. As a clear example, cryptographic hash algorithms benefit from being computationally expensive (to limit brute forcing), whereas hash algorithms for hashtable want to be as fast as possible.</p>
+
+<p>An even more relevant example is that cryptographic hash algorithms should be collision free, whereas hashtable algorithms aren't. The reason for this should be obvious. In <code>getIndex</code> we took the result of our hash, which could be a very large number, and did a modulus operation. Consider the following:</p>
+
+
+{% highlight go %}
+  hasher := fnv.New32a()
+  hasher.Write([]byte("over"))
+  first := hasher.Sum32() //838226447
+
+  hasher.Reset()
+  hasher.Write([]byte("9000"))
+  second := hasher.Sum32() //58738199
+
+  // second % 12 == first % 12
+{% endhighlight %}
+
+<p>In other words, since the result of the hashing algorithm gets reduced, you'll almost certainly have to deal with collisions anyways (reducing collision is still important, it just isn't as important as with cryptographic hashes).</p>
+
+<p>A lot of work has gone into various hashing algorithm. Some work specifically well with certain types of CPUs, or key types, or various other factors. While it's far from being the most exhaustive list, <a href="http://programmers.stackexchange.com/questions/49550/which-hashing-algorithm-is-best-for-uniqueness-and-speed/145633#145633">here's a nice comparison</a> of some of the more popular options.</p>
+
+<h3>Collision</h3>
+<p>Except for cases when you'll know all possible keys ahead of time, collisions will happen. You might be tempted to try using a huge array. Not only is that inefficient, it also <a href="https://en.wikipedia.org/wiki/Birthday_problem">won't work</a>.</p>
+
+<p>One strategy for dealing with collisions is to chain colliding values using another data structure - more often than not, a linked list. What this means is that we'll hash the key to get a specific bucket, but then store the key and value within a linked list: </p>
+
+{% highlight go %}
+type HashValue struct {
+  key []byte
+  value interface{}
+}
+
+type Hash struct {
+  size uint32
+  buckets []*list.List
+}
+
+func New(size int) *Hash{
+  h := &Hash{
+    size: uint32(size),
+    buckets: make([]*list.List, size),
+  }
+  for i := 0; i < size; i++ { h.buckets[i] = list.New() }
+  return h
+}
+
+func (h *Hash) Set(key []byte, value interface{}) {
+  h.buckets[h.getIndex(key)].PushBack(&HashValue{key, value})
+}
+{% endhighlight %}
+
+<p>It's important that we maintain the key since we'll need it to pull the correct value from the bucket. This is accomplished by <code>Get</code> which scans the list for the actual match:</p>
+
+{% highlight go %}
+func (h *Hash) Get(key []byte) interface{} {
+  list := h.buckets[h.getIndex(key)]
+  for element := list.Front(); element != nil; element = element.Next() {
+    wrapped := element.Value.(*HashValue)
+    if bytes.Equal(wrapped.key, key) {
+      return wrapped.value
+    }
+  }
+  return nil
+{% endhighlight %}
+
+<p>Your initial reaction to this might be dismay. Haven't we just gone from O(1), back to O(N)? Yes, but mostly no. It's true that, in the worst case, all values hash to the same bucket, and you end up with O(N) performance. However, with a hashing algorithm that provides good distribution and an properly sized hashtable, hashtable performance remains O(1).</p>
+
+<p><em>Why?</em>, you ask. It comes down to the fill factor. The fill factor is the number of items in the hashtable divided by the number of buckets. If we store 1 000 000 items in a hashtable with 1 000 buckets, our fill factor is 1 000. For a hashtable, this is high. However, if we can keep our fill factor closer to 5 (as an example), performance will probably end up being somewhere between O(1) and O(log n). To reduce the load factor, we must increase the number of buckets - which is something we'll talk about in the next post. For now, know that it isn't uncommon for load factors to be less than 1!</p>
+
+<p>Finally, the above implementation is the simplest possible solution. It really does work well when the chain isn't more than 5 or 10 items. However, there's all types of strategies we can use to improve this. For example, we could chain using a tree, or we could promote frequently used items at the start of the list. There are also completely different ways to deal with collisions that we won't cover.</p>
+
+<h3>Conclusion</h3>
+<p>I initially said that I like to think of hashtables as flexible arrays. This is a good way to look at it from a usage point of view. From an implementation point of view, it's rather naive since it doesn't consider collisions. At an implementation level, I think of them as a sharding layer that sits on top of another data structure. A hashtable turns a single array, linked list or tree of X items, into Y arrays, linked lists or trees of X / Y items. You can either have 1 list of 25 items, or 5 lists of 5 items:</p>
+
+{% highlight text %}
+[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t, u, v, w, x, y]
+{% endhighlight %}
+
+<p>We end up with:</p>
+
+{% highlight text %}
+0 => [a, b, c, d, e]
+1 => [f, g, h, i, j]
+2 => [k, l, m, n, o]
+3 => [p, q, r, s, t]
+4 => [u, v, w, x, y]
+{% endhighlight %}
+
+<p>The benefit, beyond being able to have non-integer keys, is speed. In the above, you don't have to search through 25 items. Instead, you have to search through 5 items (plus the initially bucket lookup).</p>

@@ -1,0 +1,22 @@
+---
+layout: post
+date: 2012-06-27
+title: "Three Must-Have Redis Configuration Options For Production"
+tags: [devops, redis]
+---
+
+<p>If you are using Redis, it's worth going over the <a href="https://raw.github.com/antirez/redis/2.2/redis.conf">sample configuration</a> to see what can and can't be done. However, there are 3 settings in particular almost every production deployment of Redis should use:</p>
+
+{% highlight text %}
+rename-command FLUSHDB ""
+rename-command FLUSHALL ""
+rename-command CONFIG ""
+{% endhighlight %}
+
+<p>The above disables three powerful and dangerous commands. You could take it a step further and disable other questionable commands, like <code>KEYS</code>, <code>DEBUG SEGFAULT</code> and <code>SAVE</code>.</p>
+
+<p>If for some reason you need access to these commands in production, you can rename them to reduce the chance of accidentally typing them:</p>
+
+{% highlight text %}
+rename-command FLUSHDB FLUSHDB_ASD830KLKSADA
+{% endhighlight %}

@@ -1,0 +1,145 @@
+---
+layout: post
+date: 2015-05-05
+title: "RESTful routing in Go"
+tags: [golang]
+description: "Creating reusable and RESTful route definitions in Go"
+---
+
+<p>A few days ago, I wrote about <a href="/Go-action-responses">wrapping Go HTTP handlers</a> so that they can return an abstract Response object rather than dealing with <code>http.ResponseWriter</code>. Today I want to focus on the other end of the request: routing.</p>
+
+<p>What I'm doing here should work with any of the many third party HTTP routers (aka multiplexers) that support URL parameters. I'll be <a href="https://github.com/karlseguin/router">using my own</a>, but adapting it to something else should only require a few small changes.</p>
+
+<p>An anti-pattern that I've seen from the Go community is defining specific routes as opposed to using general patterns. I'm by no means dogmatic when it comes to URL patterns, but I do think having consistent and human-readable URLs is beneficial.</p>
+
+{% highlight text %}
+# bad
+GET /users
+GET /users/:id
+
+# good
+GET /:resource
+GET /:resource/:id
+{% endhighlight %}
+
+<p>Ultimately, goal is to end up with a map of resources + action names (users show, users favorite list, sessions delete) to handler functions. As a first step, we can manually create this mapping:</p>
+
+{% highlight go %}
+type Action func(out http.ResponseWriter, req *router.Request)
+
+type Resource map[string]Action
+
+var resources = map[string]Resource{
+  "users": map[string]http.Handler {
+    "show": users.Show,
+    "list": users.List,
+    "listfavorites": users.ListFavorites,
+  }
+  "sessions": map[string]http.Handler {
+    "create": sessions.Create,
+    "delete": sessions.Delete,
+  }
+}
+{% endhighlight %}
+
+<p>Next, we define generic routes:</p>
+
+{% highlight go %}
+// the exact syntax will depend on which router library you're using
+r := router.New(router.Configure())
+r.Get("/:resource", ListAction)
+r.Get("/:resource/:id", ShowAction)
+r.Get("/:resource/:id/:child", ListChildAction)
+r.Delete("/:resource/:id", DeleteAction)
+{% endhighlight %}
+
+<p>With these two pieces, we can invoke the proper handler:</p>
+
+{% highlight go %}
+func ListAction(out http.ResponseWriter, req *router.Request) {
+  resource, exists := resources[req.Param("resource")]
+  if exists == false {
+    //todo: return not found
+    return
+  }
+  action, exists := resource["list"]
+  if exists == false {
+    //todo: return not found
+    return
+  }
+  action(out, req)
+}{% endhighlight %}
+
+<p>We can refactor the <code>XYZAction</code> functions and have a single <code>RestDispatch</code> handler:</p>
+
+{% highlight go %}
+func ListChildAction(out http.ResponseWriter, req *router.Request) {
+  // With the route registered as "/:resource/:id/:child"
+  // and a url of /users/48/favorites
+  // this will look for the action "listfavorites" of the "users" resource
+  RestDispatch(out, req, "list"+req.Param("child"))
+}
+
+func RestDispatch(out http.ResponseWriter, req *router.Request, actionName string) {
+  resource, exists := resources[req.Param("resource")]
+  if exists == false {
+    //todo: return not found
+    return
+  }
+  action, exists := resource[actionName]
+  if exists == false {
+    //todo: return not found
+    return
+  }
+  action(out, req)
+}
+{% endhighlight %}
+
+<p>This is probably good enough. However, we can use reflection to improve the manual mapping:
+
+{% highlight go %}
+type Action func(out http.ResponseWriter, req *router.Request)
+
+type Resource map[string]Action
+
+var resources = make(map[string]Resource)
+
+func Start() {
+  r := router.New(router.Configure())
+  r.Get("/:resource", ListAction)
+  r.Get("/:resource/:id", ShowAction)
+  r.Get("/:resource/:id/:child", ListChildAction)
+  r.Delete("/:resource/:id", DeleteAction)
+
+  registerActions(users.List, users.Show, users.ListFavorites)
+  registerActions(sessions.Create, sessions.Delete)
+}
+
+// Not thread safe and should be called on init
+// 1 - Takes a function
+// 2 - Get its full name (github.com/karlseguin/system/users.List)
+// 3 - Extract the users.List
+// 4 - Register the "list" action for the "users" resources
+func RegisterAction(actions ...Action) {
+  for _, action := range actions {
+    fullName := runtime.FuncForPC(reflect.ValueOf(action).Pointer()).Name()
+    relevant := strings.ToLower(fullName[strings.LastIndex(fullName, "/")+1:])
+    parts := strings.Split(relevant, ".")
+    if len(parts) != 2 {
+      panic("action " + fullName + " should be in the form of package.name")
+    }
+
+    resourceName, actionName := parts[0], parts[1]
+    resource, exists := Resources[resourceName]
+    if exists == false {
+      resource = make(Resource)
+      Resources[resourceName] = resource
+    }
+    resource[actionName] = action
+  }
+}
+{% endhighlight %}
+
+<p>It's small improvement that further enforces consistent naming and reduces some of the magic strings. Unfortunately, in Go, it isn't possible to scan a package for functions of a given signature. If it was, we'd be able to automatically detect and register actions.</p>
+
+<p>Finally, this approach doesn't exclude the possibility of having one-off routes for cases that don't fit the general patterns.</p>

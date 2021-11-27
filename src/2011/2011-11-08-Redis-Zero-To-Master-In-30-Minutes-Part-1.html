@@ -1,0 +1,117 @@
+---
+permalink: "/2011/11/8/Redis-Zero-To-Master-In-30-Minutes-Part-1/"
+layout: post
+date: 2011-11-08
+title: "Redis: Zero to Master in 30 minutes - Part 1"
+tags: [redis]
+---
+<style>
+h2{margin-bottom:0;font-size:20px;}
+</style>
+<p>More than once, I've said that learning Redis is the most efficient way a programmer can spend 30 minutes. This is a testament to both how useful Redis is and how easy it is to learn. But, is it true, can you really learn, and even master, Redis in 30 minutes?</p>
+
+<p>Let's try it. In this part we'll go over what Redis is. In the next, we'll look at a simple example. Whatever time we have left will be for you to set up and play with Redis.</p>
+
+<h2>Introduction To Redis</h2>
+<p>Redis is often described as a Key Value storage engine. This is accurate, but probably not how you want to think of it. Rather, I think seeing it as a data structure engine is more helpful. What does that mean? Redis supports five different data structures: strings, hashes, lists, sets and ordered sets. Each one has unique characteristics and supports unique commands. Regardless of the type, a value <strong>is</strong> accessed by a key. While the key is stored as a byte array and thus can be complex, you'll mostly use a string as a key.</p>
+
+<p>Let's look at each type.</p>
+
+<h3>Strings</h3>
+<p>Strings are the simplest of the five data structures. They are also the worst named. It, unfortunately, has nothing to do with what anyone thinks when you say "string". A better term would be a "single" or a "simple". When people think Redis, or they think Key Value, they are thinking about the String structure (but remember, that's only one of five structures). Just like the key, a string value can be any byte array. You can store an incrementing integer counter, an actual string, or a binary serialized object (blob). All of these are very common. The most common string methods are <code>GET</code> and <code>SET</code>:</p>
+
+{% highlight clike %}SET pages:about "about us"
+GET pages:about
+about us{% endhighlight %}
+
+<p>There's a lot more you can do with Strings, both because of the other available commands (like <code>INCR</code> or <code>GETRANGE</code>, to name a few) and because we can store more than just a number of a string. For example, we could use the String structure to store users. The key could be their email, and the value a serialized user object.</p>
+
+<h3>Hashes</h3>
+<p>The hash data structure is exactly what you are thinking it is (a hash/dictionary). Rather than manipulating a key directly (like with a String) you manipulate the fields of a key. So, we don't just get and set a hash value. Instead, we get and set the value of a field for a hash:</p>
+
+{% highlight clike %}HSET goku power 9001
+HGET goku power
+9001{% endhighlight %}
+
+<p>Like everything else in Redis, fields and values are ultimately byte arrays, so they can be anything. Fields though, like keys, tend to be strings. One question you might have is when would you use a Hash rather than a String? For example, what's the difference between the following two? (I'm using json to represent a complex value, which a driver or you would actually serialize into a byte array)</p>
+
+{% highlight clike %}SET users:goku {race: 'sayan', power: 9001}
+HSET users:goku race sayan
+HSET users:goku power 9001{% endhighlight %}
+
+<p>The difference comes down to how you're going to manipulate and query it. If you need control over individual fields, and you don't want to pull the whole object into your app, use a hash. Otherwise, a String is probably what you want.</p>
+
+<h3>Lists</h3>
+<p>Lists let you associate an array of values to a single key. In fact, you can (and should) think of them as dynamic arrays. You can insert, append, pop, push, trim and so on. Redis doesn't support secondary indexes. You can only access data by its key. Lists are often used to fill this void (though that certainly isn't their only use):</p>
+
+{% highlight ruby %}length = redis.lpush('users:newest', 'user:goku')
+if length > 100
+  #trim is to we only keep 100 "newest" users
+  redis.rpop('users:newest')
+end{% endhighlight %}
+
+<p>The above code keeps a reference to the newest registered users in a list. Here we maintain the lists length in real-time, though that could be moved to a background task. How would we use this?:</p>
+
+{% highlight ruby %}# get the 10 newest users
+keys = redis.lrange('users:newest', 0, 10)
+#multi get the actual 10 user objects
+redis.mget(*keys)
+{% endhighlight %}
+
+<p>Traditionally, developers have avoided this type of repeated trips to the database. With Redis, it's both common and fast (because everything's in memory, a little more on this shortly).</p>
+
+<h3>Sets</h3>
+<p>Sets are a lot like lists, except they provide set-semantics (no duplicate values in a given set). You can diff sets via <code>SDIFF</code>, union two sets via <code>SUNION</code> or <code>SUNIONSTORE</code> (if you want to store the result in another set rather than just return it) and so on. Sets are the kind of data structure you use to keep track of friends and tags:</p>
+
+{% highlight clike %}SADD friends:leto ghanima
+SADD friends:leto duncan
+SADD friends:paul duncan
+SADD friends:paul gurney
+SINTER friends:leto friends:paul
+1) "duncan"
+{% endhighlight %}
+
+<h3>Sorted Sets</h3>
+<p>It's wrong to call one structure more powerful than the others, since they all tend to serve fairly distinct needs, but sorted sets are pretty awesome. A sorted set is similar to a set, except each value is associated (and sorted by) a score field. In other words, when you add a value to a sorted set, you also specify the score as a number. This determines the order of the value within the set. Building on on previous example, we could add a weight to our data:</p>
+
+{% highlight clike %}ZADD friends:leto 1000 ghanima
+ZADD friends:leto 994 duncan
+ZADD friends:leto 2 farad'n
+ZRANGEBYSCORE friends:leto 500 1000
+1) "duncan"
+2) "ghanima"
+{% endhighlight %}
+
+<p>The above will get all of leto's friend with a score of 500-1000.</p>
+
+<p>Sorted sets are for more than just friends though. The score property can be used to track time series (using milliseconds since 1970 for example), or, as I use it, to actually rank players based on their game scores.</p>
+
+
+<h2>Redis Querying</h2>
+<p>In Redis, data can only be queried by its key. Even if we use a hash, we can't say <em>get me the keys wherever the field <code>race</code> is equal to <code>sayan</code></em>. When we looked at lists, we saw how we can build secondary indexes. Managing your own secondary indexes can be a pain, and sometimes it won't scale with respect to complexity. However, there's two things to keep in mind. First, you should play with it and try it before writing it off, for simple and even mildly complicated scenarios, it really isn't a big deal. Secondly, don't get hung up with hitting Redis multiple times.</p>
+
+<p>In addition to the above five data structures, Redis has commands that work across all keys (known as key-commands). Things like <code>DEL</code>, <code>EXISTS</code> and <code>RENAME</code>. Probably the most commonly used is the <code>KEYS</code> command, which takes a pattern and returns found keys. For example, <a href="http://mogade.com">mogade.com</a> stores all of the daily ranks using a keys that look like <code>ranks:daily:GAME_ID:20110830</code>. If I wanted to delete all the ranks in August, I could do:</p>
+
+{% highlight ruby %}keys = redis.keys("ranks:daily:*:201108*")
+redis.del(*keys){% endhighlight %}
+
+<p><strong>Note: They <code>keys</code> command linearly goes through all your keys finding matches. It's slow and the docs suggest you only use it for debugging and development purposes</strong></p>
+
+<h2>Other Things You Should Know</h2>
+<p>Redis is easy to setup and maintain. Data is persisted to disk in a single file, which can be backed up simply by copying. It's driven by a straightforward <a href="https://raw.github.com/antirez/redis/2.2/redis.conf">configuration file</a>.</p>
+
+<p>All of your data should fit in memory. There is support for virtual memory, but it's viewed (by the people who wrote it) as a failed experiment. Its use is largely deprecated, and I'd guess that we'll see the feature removed in the future.</p>
+
+<p>Redis supports master-slave replication. It doesn't do automatic failover nor any type of sharding. This is something you'll have to do yourself with something like HAProxy. Redis Cluster is a major upcoming release which should address this pain point. We should be seeing early releases of it soon. (If you are interested in learning more, you should read <a href="http://redis.io/presentation/Redis_Cluster.pdf">this document</a>).</p>
+
+<p>There's more to Redis than what we looked at. It supports transactions, way more commands, more management features, the ability to have keys automatically expire, and even has a publication and subscription api. As a harsh critic of technical documentation, I'm floored by how great Redis' <a href="http://redis.io/documentation">documentation</a> and <a href="http://redis.io/commands">reference documentation</a> is.</p>
+
+<h2>When To Use Redis</h2>
+<p>Redis is more specialized than a lot of other storage solutions. For complex systems, the right way to approach it is on a feature-by-feature basis, rather than the whole thing. It also requires that everything fit into memory, which might limit how much you can lean on it. However, when a feature has a data model which is a good fit for one or more of Redis' data structures, it's an absolute joy. It's blazing fast and the API is dead simple. I've transformed hundreds of lines of query code into little more than <code>zadd</code> and <code>zrevrange</code> method calls with a couple parameters each.</p>
+
+<p>Ultimately, Redis is easy enough to learn and understand that, given a problem, you should more or less know upfront whether or not Redis is a good fit. Sometimes it won't be. Sometimes it will.</p>
+
+<h2>Conclusion</h2>
+<p>It's wrong to think of Redis as a Key Value store. It's more than that. It also represents a pretty different way to think of and model your data. Sometimes it won't work, but when it does...much happiness.</p>
+
+<p>Maybe you should take a little break? Look at the <a href="http://redis.io">Redis</a> website? Or, maybe you should read <a href="/2011/11/8/Redis-Zero-To-Master-In-30-Minutes-Part-2/">Part 2</a>!</p>

@@ -1,0 +1,69 @@
+---
+layout: post
+date: 2013-02-10
+title: "Getting an Images Type and Size in Golang (or any other language)"
+tags: [golang]
+---
+
+<p>Go's image libraries aren't the most mature. They fail to work for a number of common encodings/formats/whatever. This means that if you want to get basic information about a file, you'll need to rely on something else. Well, incase all you need to know is an image's format or its dimensions, consider using this [probably very buggy] code:</p>
+
+
+{% highlight go %}
+func getFormat(file *os.File) (string) {
+  bytes := make([]byte, 4)
+  n, _ := file.ReadAt(bytes, 0)
+  if n < 4 { return "" }
+  if bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 { return "png" }
+  if bytes[0] == 0xFF && bytes[1] == 0xD8 { return "jpg" }
+  if bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38 { return "gif" }
+  if bytes[0] == 0x42 && bytes[1] == 0x4D { return "bmp" }
+  return ""
+}
+
+func getGifDimensions(file *os.File) (width int, height int) {
+  bytes := make([]byte, 4)
+  file.ReadAt(bytes, 6)
+  width = int(bytes[0]) + int(bytes[1]) * 256
+  height = int(bytes[2]) + int(bytes[3]) * 256
+  return
+}
+
+func getBmpDimensions(file *os.File) (width int, height int) {
+  bytes := make([]byte, 8)
+  file.ReadAt(bytes, 18)
+  width = int(bytes[3]) << 24 | int(bytes[2]) << 16 | int(bytes[1]) << 8 | int(bytes[0])
+  height = int(bytes[7]) << 24 | int(bytes[6]) << 16 | int(bytes[5]) << 8 | int(bytes[4])
+  return
+}
+
+func getPngDimensions(file *os.File) (width int, height int) {
+  bytes := make([]byte, 8)
+  file.ReadAt(bytes, 16)
+  width = int(bytes[0]) << 24 | int(bytes[1]) << 16 | int(bytes[2]) << 8 | int(bytes[3])
+  height = int(bytes[4]) << 24 | int(bytes[5]) << 16 | int(bytes[6]) << 8 | int(bytes[7])
+  return
+}
+
+func getJpgDimensions(file *os.File) (width int, height int) {
+  fi, _ := file.Stat()
+  fileSize := fi.Size()
+
+  position := int64(4)
+  bytes := make([]byte, 4)
+  file.ReadAt(bytes[:2], position)
+  length := int(bytes[0] << 8) + int(bytes[1])
+  for position < fileSize {
+    position += int64(length)
+    file.ReadAt(bytes, position)
+    length = int(bytes[2]) << 8 + int(bytes[3])
+    if (bytes[1] == 0xC0 || bytes[1] == 0xC2) && bytes[0] == 0xFF && length > 7 {
+      file.ReadAt(bytes, position+5)
+      width = int(bytes[2]) << 8 + int(bytes[3])
+      height = int(bytes[0]) << 8 + int(bytes[1])
+      return
+    }
+    position += 2
+  }
+  return 0, 0
+}
+{% endhighlight %}

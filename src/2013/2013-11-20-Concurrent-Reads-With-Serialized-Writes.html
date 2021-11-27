@@ -1,0 +1,89 @@
+---
+layout: post
+date: 2013-11-20
+title: "Concurrent Reads with Serialized Writes"
+description: "A pattern to safely support concurrent reads while synchronizing writes"
+tags: [concurrency]
+---
+
+<p>If anyone knows the name for this pattern, I'd very much like to know.</p>
+
+<p>Let's start with a simple example of using a read-write mutex:</p>
+
+{% highlight go %}
+func Get(key string) value string {
+  lock.RLock()
+  defer lock.RUnlock()
+  return lookup[key]
+}
+
+func Set(key, value string) {
+  lock.Lock()
+  defer lock.Unlock()
+  lookup[key] = value
+}
+{% endhighlight %}
+
+<p>This allows us to have concurrent reads and a single writer. It's simple and effective. The problem I was facing was that my write, while infrequent, could take a relatively long time. This resulted in blocked readers. What I realized though was that, while I needed to serialize writes, much of the writing code could, in fact, be done concurrently with reads. For example, what if we're dealing with an array which we want to append to:</p>
+
+{% highlight go %}
+func Len() int {
+  lock.RLock()
+  defer lock.RUnlock()
+  return len(values)
+}
+
+func Append(value string) {
+  lock.Lock()
+  defer lock.Unlock()
+  l := len(values)
+  newValues := make([]string, l+1)
+  copy(newValues, values)
+  newValues[l] = value
+  values = newValues
+}
+{% endhighlight %}
+
+<p>Even though the shared <code>values</code> is only briefly updated, <code>Append</code>'s write lock could be relatively long-lived. A naive solution might be to do:</p>
+
+{% highlight go %}
+func Append(value string) {
+  lock.RLock()
+  l := len(values)
+  newValues := make([]string, l+1)
+  copy(newValues, values)
+  lock.RUnlock()
+
+  newValues[l] = value
+
+  lock.Lock()
+  values = newValues
+  lock.Unlock()
+}
+{% endhighlight %}
+
+<p>This definitely performs better, but concurrent calls to <code>Append</code> could easily result in lost writes. Don't see how? Imagine we have have an array <code>["a", "b", "c"]</code> and two calls to <code>Append</code> happen at the same time: <code>Append("d")</code> and <code>Append("e")</code>. Both calls would create a new array with 4 slots, copy the original 3 values and append their respective value. Whichever call got the lock last, would win. However, the desired result would likely be an array with 5 values.</p>
+
+<p>The solution? A second lock, used only for writing:</p>
+
+{% highlight go %}
+func Append(value string) {
+  // these two lines are new
+  writeLock.Lock()
+  defer writeLock.Unlock()
+
+  l := len(values)
+  newValues := make([]string, l+1)
+  copy(newValues, values)
+
+  newValues[l] = value
+
+  lock.Lock()
+  values = newValues
+  lock.Unlock()
+}
+{% endhighlight %}
+
+<p>The new lock ensures that writes are serialized, so that one won't stomp another. With this new guardian in place, we can safely use our main lock more finely, allowing concurrent reads even during the slow part (in this case <code>copy</code>) of our write.</p>
+
+<p>This won't always work. It depends what your write is doing. But I'm rather fond of the approach. (Thanks to <a href="http://www.twitter.com/pchapuis">@pchapuis</a> for further <a href="https://github.com/karlseguin/karlseguin.github.com/commit/7e667be825f4b99355a428dfd333b80e46dac0f2">reducing the amount of locking</a> required.)</p>

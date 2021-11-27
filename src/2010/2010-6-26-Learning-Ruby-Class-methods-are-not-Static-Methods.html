@@ -1,0 +1,16 @@
+---
+permalink: "/2010/6/26/Learning-Ruby-Class-methods-are-not-Static-Methods/"
+layout: post
+date: 2010-06-26
+title: "Learning Ruby : Class methods != Static Methods"
+tags: [ruby]
+---
+<p>Yesterday <a href="http://www.openmymind.net/2010/6/25/Learning-Ruby-class-self">I blogged about the general differences</a> between classes in ruby vs classes in c#/java. I later found a quote I had been looking for from <a href="http://blog.scottbellware.com/">Scott Bellware</a> which I think does a good job explaining the difference:</p>
+
+<blockquote>In an object-oriented language, objects are defined by defining objects rather than classes, although classes can provide some useful templates for specific, cookie-cutter definitions of a given abstraction. In a class-oriented language, like C# for example, objects must be defined by classes, and these templates are usually canned and packaged and made immutable before runtime. This arbitrary constraint that objects must be defined before runtime and that the definitions of objects are immutable is not an object-oriented concept; it's class oriented.</blockquote>
+
+<p>Changing how we see and think of classes isn't easy, but it is essential to mastering ruby.</p>
+
+<p>I also wanted to bring up something else Scott shared with me with respect to static classes. In my previous post I said that what we call static methods in C#/Java are known as class methods in ruby. At best, this is an over simplification. Its true that class methods in ruby are the closest thing to static methods, but there's more to them than just that. Since class methods are actually defined on an object, it is important to think of them as instance method (belonging a metaclass) - because thats what they are.</p>
+
+<p>The point? Don't think of class methods in ruby as static methods. Class methods ARE instance method (to prove it, they can be overwritten).</p>

@@ -1,0 +1,21 @@
+---
+layout: post
+date: 2015-02-12
+title: "I'm Not Sold On High Availability"
+description: "Build systems that tolerate failures, not systems that avoid them"
+tags: [design]
+---
+
+<p>It sounds absurd, but I'm not sold on <em>high availability</em>. To be clear, I see two distinct layers of high availability. The one that your CXO talks about, users being able to use the system, is both reasonable and a fun challenge.</p>
+
+<p>It's the lower layer of high availability that I've become skeptical about: components, like high available databases and queues. We use these components to achieve the high-level goal of availability, but it's much simpler and safer to make systems tolerant of failures rather than trying to prevent them.</p>
+
+<p>There are many legitimate cases where master-master replication, elections, automated failover, and the rest of these complex protocols and algorithms are necessary; but there are a lot more systems that should be designed to tolerate failure.</p>
+
+<p>Importantly, the difference between the two isn't about scale or size. This isn't an issue of you not being Facebook and thus not having the same challenges or the capacity to face those challenges. Rather, it's about understanding how your data is being used and, who's using it.</p>
+
+<p>Perhaps I'm being embarrassingly ignorant, but consider Wikipedia or Google. Both are examples that have different availability requirement depending on the part of the system we're talking about. It's more important that people be able to read wiki or search google, than it is for people to be able to update wiki or for a bot to update the index. The availability requirement for reads is much higher than for writes (which is still being highly available, but focused).</p>
+
+<p>Read vs write workloads are the obvious example, but not the only ones. If we look at Amazon, I would identify the core as anything that lets people shop: browsing all the way to ordering. That core should continue to be usable even if recommendations fail to load. The recommendation service itself ought to be tolerant of failure, able to serve potentially stale or less accurate data in the face of failed jobs or syncs.</p>
+
+<p>Writing this out, I see that my point is: granularly identifying availability requirements can save you a bunch of time and complexity. Your internal-facing CMS can probably tolerant downtime better than your user-facing website. Knowing this, you can pick a more focused solution which might be simpler than trying to cover everything.</p>

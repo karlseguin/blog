@@ -1,0 +1,51 @@
+---
+permalink: "/2010/11/12/How-to-Test-Against-an-External-HTTP-Dependency/"
+layout: post
+date: 2010-11-12
+title: "How to Test Against an External HTTP Dependency"
+tags: [c#, testing]
+---
+<p>In previous posts I've been advocating the benefits of testing against real implementations (as opposed to mocks) whenever possible. However, I was quick to concede that this isn't always possible. While writing the open sourced <a href="https://github.com/mogade/mogade-csharp/">.NET driver</a> for mogade.com (a free service for game developers <a href="http://www.mogade.com">to add leaderboard/achievements to their games</a>), I ran into such a situation.</p>
+
+<p>I thought about a few possible solutions, but quickly settled on <a href="https://github.com/mogade/mogade-csharp/blob/master/Mogade.Tests.Core/FakeServer.cs">this FakeServer class</a>. I think some examples on how we use it might be the best place to start:</p>
+
+{% highlight clike %}
+private FakeServer Server;
+
+[SetUp]
+public void SetUp()
+{
+   Server = new FakeServer();
+}
+
+[TearDown]
+public void TearDown()
+{
+   Server.Dispose();
+}
+
+[Test]
+public void SendsRequestToTheServer()
+{
+   Server.Stub(new ApiExpectation { Method = "PUT", Url = "/achievements", Request = @"{""achievement_id"":""hasafirstname"",""username"":""Scytale"",""unique"":""10039"",""key"":""thekey"",""v"":1,""sig"":""64c32fca72deb24aa93f24f756403506""}" });
+   new Driver("thekey", "sssshh").GrantAchievement("hasafirstname", "Scytale", "10039", r => { });
+}
+
+[Test]
+public void GetsThePointsEarned()
+{
+   Server.Stub(new ApiExpectation { Response = "{points:293}" });
+   new Driver("thekey", "sssshh").GrantAchievement("hasafirstname", "Scytale", "10039", r =>
+   {
+      Assert.AreEqual(293, r);
+   });
+}
+{% endhighlight %}
+
+<p>In order to work, you need to be able to point your code to your fake server (which, by default, runs on localhost:9948). But once you get past that requirement, things really fly. You essentially <code>Stub</code> calls to your server by specifying expectations on request parameters. You can also specify a response (body and status). You can specify multiple Stubs - as a request is received, it'll look for the first match.</p>
+
+<p>What happens when FakeServer gets a call it didn't expect? It returns a 500 server error. Depending on how you handle 500 codes already, this may need adjusting (in our case, an exception gets raised, so our test fails).</p>
+
+<p><strong>Perhaps the most important thing to understand is that what makes <code>FakeServer</code> useful is how it behaves when you omit some of the expectations. In fact, all parts of the expectations are optional. This makes testing the response, as in our second test, simple and extremely resilient when the output changes. Similarly, the responses are completely optional, making testing inputs simple and resilient to change. In fact, the default response is actually the request - which can be quite useful.</strong></p>
+
+<p>This approach of very loosely defined stubs is one I started playing with in <a href="https://github.com/karlseguin/jstub">jstub</a>, a lightweight stub framework for javascript. Jstub though relies on a lot of Javascript magic. FakeServer is just dead simple - which, for its narrow focus, seems to make it much more powerful.</p>

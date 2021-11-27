@@ -1,0 +1,58 @@
+---
+layout: post
+date: 2012-07-12
+title: "No Shit Stylesheets"
+tags: [ui]
+---
+
+<p>Some people believe in a semantic markup style, and some don't. At a high level it comes down to how you name your classes. Should the name of the class be <code>btn-small</code> or should it be <code>apply</code>. In the first case you've coupled your HTML and CSS and, to some degree, violated the separation of markup and style. In the second case, your HTML has no concept of how the button is styled and leaves that up to the stylesheet.</p>
+
+<p>CSS frameworks, like bootstrap, can't be semantic because they provide a generic solution - they don't know the language of your site. However, with the help of tools like less and sass you can have your cake and eat it too: </p>
+
+{% highlight clike %}
+.apply { @extend .btn-small }
+{% endhighlight %}
+
+<p>Lately though I've been finding myself using a different way to make my CSS and HTML cohabitate. Consider this markup:</p>
+
+{% highlight html %}
+<div id="header">
+  <a href="/" id="logo"><img src="..." /></a>
+  <ul class="nav">
+    <li><a href="...">log in</a>
+    <li><a href="...">register</a>
+    <li><a href="...">help</a>
+  </ul>
+</div>
+{% endhighlight %}
+
+<p>When I see the <code>ul</code> with a class of <code>nav</code> inside the <code>header</code>, my immediate reaction is <em>no shit!</em>. We can rewrite the above as: </p>
+
+{% highlight html %}
+<div id="header">
+  <a href="/"><img src="..." /></a>
+  <ul>
+    <li><a href="...">log in</a>
+    <li><a href="...">register</a>
+    <li><a href="...">help</a>
+  </ul>
+</div>
+{% endhighlight %}
+
+<p>The logo can be targeted with <code>#header > a</code> and the navigation with <code>#header ul</code>. Essentially, rather than coupling CSS and HTML by putting style information inside HTML, I'm coupling it by putting structure inside the stylesheet.</p>
+
+<p>The downsides of this approach are obvious. By tightly coupling the two, changes in HTML will require changes in our stylesheet. Looking at the above code, if we wrap our logo in a div, <code>#header > a</code> will no longer work. Or, if we add a second list, things will break.</p>
+
+<p>There are real benefits though. First of all, it results in leaner and cleaner markup. This isn't just about having a few less class attributes. Using this approach I find myself thinking more about the simplest possible markup which will achieve what I'm after. Also, instead of only focusing on re-using css classes, it also motivates you to reuse structure.</p>
+
+<p>This approach also works really well with less/sass. Mixins and inheritance are great, but so too is their support for nested declarations:</p>
+
+{% highlight text %}
+#header {
+  ....
+  > a { ... }
+  ul { ... }
+}
+{% endhighlight %}
+
+<p>Also, while this <em>is</em> more coupled, don't pretend that existing approaches don't already suffer from the same problem. Developers often make use of tag names as part of their css selectors.  Furthermore, I'm not saying you should never use class names. There are many cases where it'll be more explicit and necessary. However, whenever the structure of the markup makes you think the class name is redundant, don't use a class!</p>

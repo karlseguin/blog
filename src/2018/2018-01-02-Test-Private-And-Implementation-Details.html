@@ -1,0 +1,43 @@
+---
+layout: post
+date: 2018-01-02
+title: "Test Private Functions and Implementation Details"
+description: "Testing private functions and implementation details is, according to many, something you should never do. I disagree."
+tags: [testing]
+---
+
+<p>I often hear people say that you shouldn't test private functions or implementation details. At best, I think this advice is overstated. At worst, I think it's counter productive.</p>
+
+<p>With respect to tests, there are three things I work hard to avoid: slowness, flakiness and brittleness.</p>
+
+<p>Slowness is easy to understand. In order to have a flow between coding and testing, you need the switch to be seamless.</p>
+
+<p>Flaky tests are those that randomly fail. They are insidious and often difficult to fix. Next to having production servers on fire, fixing flaky tests is a priority. Don't tolerate them.</p>
+
+<p>Finally, we have brittle tests. These are common, subtle and probably the number one reason people avoid testing. A test is brittle when it breaks due to a change in largely unrelated code. Small changes to your code should result in a small number of breaking tests. Small changes breaking many tests is why people think they <em>spend more time maintaining tests than anything else.</em> Brittle tests are almost always a result of poorly written tests or poorly written code (aka, they're avoidable).</p>
+
+<p>What does this have to do with testing private functions and implementation details? If we're going to distill the art of writing tests, the generalization ought to be: add any tests you want as long as they aren't slow, flaky or brittle (and as long as they add some value).</p>
+
+<p>People say you should avoid these types of tests specifically to avoid brittleness. Tests that only cover the public behaviour leave you free to make implementation changes (i.e. refactor) without having to maintain tests.</p>
+
+<p>While that is generally true, it's not always the best tradeoff. Tests that focus only on public APIs can be harder to write, require more setup, can be less expressive and slower. While all of that might be indicative of a need to refactor, this isn't always the case. Complex behaviour can be well structured and cohesive yet only exposed behind a small public API (I'd even say this is common).</p>
+
+<p>Consider code that transforms news stories. Part of this transformation involves assigning a score to a story. The code to calculate the score might be well written, yet have many edge cases and interaction between various properties of the event. Testing this behaviour in isolation is going to be simpler and faster (to read, write and run). When these tests break, they'll be easier to fix. Most importantly, they'll be more expressive, which means that when you or your teammates revisit this behaviour tomorrow, next week, next month or next year, the original intent will be more obvious and changes easier to make.</p>
+
+<p>You should still have broader tests that cover the general behaviour, but these don't need to cover edge cases.</p>
+
+<p>Another example is caching, an implementation detail if ever there was one. It's absurd to me that you wouldn't take care to explicitly test both the cache hit and cache miss portions of your code. Your tests <strong>has</strong> to be aware of, and test, the details of the implementation. I do something like:</p>
+
+{% highlight elixir %}test "gets a user by id" do
+  Factory.insert(:user, id: 39, name: "Goku", power: 9001)
+  actual = User.by_id(39)
+  assert actual == %User{id: 39, name: "Goku", power: 9001}
+
+  Factory.truncate(:user) # delete from source so we know the next call comes from the cache
+  assert User.by_id(39) == actual
+end{% endhighlight %}
+
+<p>Understand that your intuition and judgment supersedes any generalization that you hear, no matter how often it's repeated or who's saying it. As long as you're willing to be vigilant, recognize when something isn't working out, own it and fix it,
+ the worst that happens is that you learn.</p>
+
+ <p>Focusing on public behaviour is a good place to start. Still, you shouldn't shy away from testing tricky and complex implementations for correctness, to explicitly express your intent, and to guard against future regressions. With respect to visibility, I think that has absolutely no bearing on testing. The reason you make something public or private is completely unrelated to the reasons and goals of testing.</p>

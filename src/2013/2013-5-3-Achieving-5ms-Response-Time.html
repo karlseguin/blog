@@ -1,0 +1,57 @@
+---
+layout: post
+date: 2013-05-03
+title: "Achieving 5ms Response Time"
+description: "Getting our 95th percentile uncached response time to 5ms involved modeling for speed, using the right tools and a bit of cheating."
+tags: [design, performance]
+---
+
+<p>When we set out to redesign our platform, we promised, to ourselves more than anyone else, that all requests would get served within 25ms. A month after going live, our numbers look solid:</p>
+
+{% highlight text %}
+route        hits      95th percentile all      95th percentile uncached
+videos       71731             2                          3
+search       9447              5                          6
+containers   28618             3                          4
+lists        5908              7                          16
+(more)...
+total        200000            4                          5
+{% endhighlight %}
+
+<p>In order of importance, this is what we focused on.</p>
+
+<h3>Modeling</h3>
+<p>By far the most important thing we did was model everything, from data to infrastructure, around speed. We spent a lot of time writing and rewriting as well as getting to know our data.</p>
+
+<p>A huge part of this effort was to identify the core part of our data and to model it around memory constraints and read performance. The vast majority of our reads go to Hyperion, our distributed system, which does everything in-memory. Initially this didn't seem possible. After a handful of attempts though, we were finally able to simplify and model what once seemed like a large dataset into little more than 3GB of memory.</p>
+
+<p>It's more than just leveraging memory though. One of our biggest gains came from pre-storing all sorting permutations into sorted sets and using them to achieve fast paging for large sets. We also relied on the fact that when intersecting sets, the size of the smallest set is the most important factor.</p>
+
+<p><a href="/scaling-viki">Scaling Viki</a> goes into detail about our data model and architecture. If you care about performance, stop using patterns and tools optimized around simplifying writes, and design for reads (assuming you're read-heavy).</p>
+
+<h3>Tools</h3>
+<p>Hyperion's stack is Go, Node, and Redis. For Redis we use both Lua and C and run 7-16 slaves per cluster. One thing which is easy to forget about is concurrency. Raw speed and CPU load don't give you full picture. Your load can be 0.1 and your requests handled within 50ms but that doesn't mean clients aren't waiting. You need to know how long you block for, how many concurrent requests you can handle and how many concurrent requests you're getting. For us, the main blocking code is Redis, which is why our largest cluster is running 16 slaves and why we turned to C.</p>
+
+<p>We also run on dedicated hardware, with 32-64GB of RAM, dedicated private 1gbps ports and, most importantly for us, fast modern processors. EC2 was ~4 times slower and inconsistent (and ~ 4 times more expensive).</p>
+
+<h3>Cheats</h3>
+<p>I used to think performance was a balancing act between memory and CPU. There's a third and equally important dimension: accuracy. There's a bunch of places where we can take shortcuts and show close-enough results. One clear example is when we show most viewed videos per country. By looking at our data we saw that a lot of countries have nearly identical viewing behaviour (US and Canada, for example). Why waste memory representing two nearly identical lists?</p>
+
+<p>We also cheat around paging. If someone goes to page 50 it means we're failing. After 1000  matches, we stop counting.</p>
+
+<h3>Tricks and Hacks</h3>
+<p>We do all types of stupid things. Some pay off. For example, our data is stored just like it needs to be served, which means once we've found, filtered and sorted it, we can serve it raw, as-is, without ever parsing/rendering it. The one, and soon to be two, time we need to alter the response, we do so in C and copy memory blocks around (so horrible, I know). This was the last big tweak we did that brought us down to single digits.</p>
+
+<p>Some are stupid...like a pool of HMAC hashing objects that helps us avoid creating hundreds of hashers per second and buys us....microseconds while costing a great amount of complexity.</p>
+
+<h3>Caching</h3>
+<p>Unlike some of our other systems, caching of Hyperion responses isn't a huge factor. Our caching layer does have a handful of nice features though.</p>
+
+<p>We happily serve up slightly stale objects while fetching a new copy in the background. We also make sure that our keys are thought-out. For example, we don't create a variant per session but rather per role.</p>
+
+<p>Our most useful feature is pro-actively purging whenever an object gets updated. This lets us cache some of our heaviest objects for days, distributed near our users, while at the same time ensuring they always get a fresh copy. These cached objects are gzipped and we use the new <code>gunzip</code> module in nginx 1.4.0 for the increasingly rare occasions when the client doesn't support gzip (Go's gzipping performance is quite bad).</p>
+
+<h3>3ms?</h3>
+<p>Can we get down to 3 milliseconds? I think so. We really need to understand our outliers, because, as is, we don't. We need to add additional logging and further break down our routes (<code>search</code> is both auto complete and our full search, which makes it hard to figure out where to focus). We need to see if the long TTL approach we've taken for other systems can be applied to Hyperion. We need to better understanding our hardware and OS.</p>
+
+<p>Does it matter? Maybe not to our consumers, but performance is just the vector that we've chosen to learn from. It isn't about 3ms processing time. It's about understand what's going on and becoming better programmers.</p>

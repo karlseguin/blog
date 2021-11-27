@@ -1,0 +1,170 @@
+---
+layout: post
+date: 2015-01-13
+title: "Nearest Neighbour Over Small Areas"
+description: "A high performance binning / grouping strategy for organizing geopoints within a relatively small area (a city)"
+tags: [concurrency, design, performance]
+---
+
+<style>
+#map{width 80%;height:600px;}
+</style>
+
+<p>I was recently trying to think of how to optimize a general problem, nearest neighbour search, based on specific, but probably common, conditions. Two requirements stand out. The first is that we're interested in a relatively small area, such as a city. The other is that our neighbours are constantly moving, so we have a relatively high update rate. Furthermore, while we want to be as accurate as possible, we have some leeway with respect to how perfect our results are.</p>
+
+<p>As an example, we could be interested in listing all of the delivery bots currently around us.</p>
+
+<p>My first thought was to use an R-Tree because that's something I'm familiar with and I know it could solve the problem. But R-Trees need to be balanced and we might struggle to achieve high concurrency under a write-heavy load. I was aware of QuadTrees, specifically with respect to handling writes, but my mind wandered.</p>
+
+<p>I felt that the best approach would be to partition the city into equal-length cells (aka, a grid). This is, I believe, similar to geohasing; but, with a city we could store our cells in a continuous array and very efficiently figure out the cell, as well as cells adjacent to it, for a given set of coordinates.</p>
+
+<p>Here's a little demo of a grid made up of 1000m<sup>2</sup> cells for Mexico City:</p>
+
+<div id="map"></div>
+
+<p>You should be be able to click on on a cell and see it turn black. Identifying the cell that a click belongs to is the core of what I'm after. Obviously, in JavaScript, there are much better ways to achieve this, but I'm only using JavaScript/HTML as a visualization tool. You have to imagine this grid residing in memory, on the server, and the input is a long/lat, not a click event. Here's the code that figures out the cell we're in:</p>
+
+{% highlight javascript %}
+function clicked(event) {
+  var lat = event.latLng.k;
+  var lng = event.latLng.D;
+
+  // if outside the bounding box, just return
+  if (lat > A[0] || lat < Z[0] || lng < A[1] || lng > Z[1]) {
+    return;
+  }
+
+  // figure out the cells index within the grid
+  var lngPosition = Math.abs(Math.ceil((A[1] - lng) / LNG_STEP));
+  var latPosition = Math.abs(Math.ceil(((A[0] - lat) / LAT_STEP)) - 1) * LNG_STEP_COUNT;
+  var index = lngPosition + latPosition;
+  var cell = grid[index];
+  //todo whatever we want with cell
+}
+{% endhighlight %}
+
+<p>(view source and look near the bottom to see the complete code)</p>
+
+<p>We do some bound checking to make sure the coordinates exist within our area of interest, and then it's just some basic math to figure out what index within our grid the cell is at.</p>
+
+<p>So, what's so nice about this approach? First of all, think of this as just a sharding / binning layer. A cell could be an abstract container. In low-density areas, it might directly contain an array of drones. In higher density areas, we might use an R-Tree, a QuadTree or nest more grids. The binning is nice for two reasons.</p>
+
+<p>First, it increases the granularity of our locks. The grid itself is completely static, and the cells can be stateless. There's no balancing, so only specific leaf cells need are changed by updates. The other benefit is that we can very quickly dismiss meaningless updates. For example, imagine that we're tracking a pedestrian walking in a straight line at 5KM/H from one edge of a cell to the other. It'll take 12 minutes and if we send an update every second, that's 720 data points....719 of which we can ignore:</p>
+
+{% highlight javascript %}
+function updatePosition(user, lat, lng) {
+  user.position.lat = lat;
+  user.position.lng = lng;
+  var cell = getCell(lat, lng);
+  if (cell == user.position.cell) {
+    return;
+  }
+  // Only now do we need to move the user
+  // from his or her current cell to the new cell
+}
+{% endhighlight %}
+
+<p>Although the cell is an abstract container, we can't just let the internal data structure handle the retrieval. Drones in adjacent cells might actually be closer than some (or even all) of the drones in the current cell. Similarly, our current cell might not have enough drones to find the K nearest drones. The simplest, and probably best, solution to this is to search adjacent cells. Getting the adjacent cells is simple integer math.</p>
+
+<p>The other solution is to store a drone in all adjacent cells as well as its current cells. This makes reads a lot faster, but writes become a pain. You no longer have to just write-lock 2 cells (the drones previous cell, to remove it, and the new cell to insert it) but all cells affected by the move (which will vary based on how wide your search radius is).</p>
+
+<p>I haven't tried it out with real code yet, but I think it has potential. The ability to cheaply determine a points parent cell, to skip updates to the grid which don't result in a change (without even needing a read-lock), and to have granular locks when we do need to read or write (with a level of granularity we can control), should all add up to a system that can handle considerable load.</p>
+
+<p>I think.</p>
+
+<script src="http://maps.googleapis.com/maps/api/js?v=3.exp&amp;sensor=false&amp;libraries=places"></script>
+<script>
+// top left corner of our bounding box
+var A = [19.54684919724742,  -99.29065704345703];
+
+// bottom right corner of our bounding box
+var Z = [19.32345512955359, -98.98990631103516];
+
+// length of one side of our cell, in meters
+var LENGTH = 1000;
+
+// I actually do not know if we want to closest or further (from the equator)
+// latitude, but for such a small area, I do not believe it actually matters
+var CLOSEST_LAT = Math.min(Math.abs(A[0]), Math.abs(Z[0]));
+
+// Approximations that, I believe, our fine for the scales we are dealing with
+var LAT_STEP = LENGTH / 110540;
+var LNG_STEP = LENGTH / (111320 * Math.cos(CLOSEST_LAT * Math.PI / 180));
+var LAT_STEP_COUNT = Math.ceil(Math.abs(A[0] - Z[0]) * 110540 / LENGTH);
+var LNG_STEP_COUNT = Math.ceil(Math.abs(A[1] - Z[1]) * (111320 * Math.cos(CLOSEST_LAT * Math.PI / 180)) / LENGTH);
+
+// the last cell we clicked on
+var activeCell = null;
+var grid = new Array();
+
+//fires when a cell (or anywhere else on the map) is clicked
+function clicked(event) {
+  var lat = event.latLng.H;
+  var lng = event.latLng.L;
+
+  // if outside the bounding box, just return
+  if (lat > A[0] || lat < Z[0] || lng < A[1] || lng > Z[1]) {
+    return;
+  }
+
+  // figure out the cells index within the grid
+  var lngPosition = Math.abs(Math.ceil((A[1] - lng) / LNG_STEP));
+  var latPosition = Math.abs(Math.ceil(((A[0] - lat) / LAT_STEP)) - 1) * LNG_STEP_COUNT;
+  var index = lngPosition + latPosition;
+  if (activeCell != null) {
+    activeCell.setOptions({fillColor: randomColor(), fillOpacity: 0.3});
+  }
+  activeCell = grid[index];
+  activeCell.setOptions({fillColor: '#000', fillOpacity: 1});
+}
+
+function initialize() {
+  var container = document.getElementById('map');
+  var options = {
+    zoom: 11,
+    scaleControl: true,
+    center: {lat: 19.42903902895618, lng: -99.14920806884766},
+  };
+  var map = new google.maps.Map(container, options);
+  google.maps.event.addListener(map, 'click', clicked);
+
+  // top left bounding box marker
+  new google.maps.Marker({position: new google.maps.LatLng(A[0], A[1]), map: map});
+
+  // bottom right bounding box marker
+  new google.maps.Marker({position: new google.maps.LatLng(Z[0], Z[1]), map: map});
+
+  // Draw the cells. Unless our LENGHT fits perfectly into our area, we will
+  // overshoot a little (which is ok).
+  for (var i = 0; i < LAT_STEP_COUNT; i++) {
+    var aLng = A[1];
+    var aLat = A[0] - LAT_STEP * i;
+    var zLat = aLat - LAT_STEP;
+    for (var j = 0; j < LNG_STEP_COUNT; j++) {
+      var zLng = aLng + LNG_STEP
+      var cell = new google.maps.Rectangle({
+        strokeWeight: 0,
+        fillColor: randomColor(),
+        fillOpacity: 0.3,
+        map: map,
+        bounds: new google.maps.LatLngBounds(
+          new google.maps.LatLng(aLat, aLng),
+          new google.maps.LatLng(zLat, zLng))
+      });
+      google.maps.event.addListener(cell, 'click', clicked);
+      grid.push(cell);
+      aLng = zLng;
+    }
+  }
+};
+google.maps.event.addDomListener(window, 'load', initialize);
+
+function randomColor() {
+  var letters = '0123456789ABCDEF'.split('');
+  var color = '#';
+  for (var i = 0; i < 6; i++ ) {
+    color += letters[Math.floor(Math.random() * 16)];
+  }
+  return color;
+}
+</script>

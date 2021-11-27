@@ -1,0 +1,49 @@
+---
+layout: mongly
+title: Does My Replica Set Need An Arbiter
+multi: false
+tags: [devops, mongodb]
+---
+<style>
+body{background:#E1E0DA;}
+#page{width:960px;margin:20px auto;}
+h1{margin-bottom:10px}
+h2{margin:25px 0 10px}
+p{line-height:36px;margin-bottom:20px;font-size:22px;}
+
+#tldr{padding:20px;margin:10px 0;border:solid #666;border-width:3px 0;position:relative;}
+#tldr span{font-size:38px;position:absolute;bottom:15px;right:15px;color:#333;}
+</style>
+<h1>{{ title }}?</h1>
+<p id="intro">MongoDB replica sets provide a number of features that most MongoDB users are going to want to leverage. Best of all they are relatively easy to setup. However, first timers often hesitate when it comes to the role of arbiters. Knowing whether or not you need an arbiter is dead simple. Understanding why is critical.</p>
+
+<p id="tldr"><span>TL;DR</span>You need an arbiter if you have an even number of votes. As an extension to this, at most you should only ever have 1 arbiter. If you aren't sure how many votes you have, it's probably the same as the number of servers in the set you have (including slaves, hidden, arbiters).</p>
+
+<h2>Elections and Majority</h2>
+<p>When the primary becomes unavailable, an election is held to pick a new primary server from those servers still available. One of the key points to understand is that a majority is required to elect a new primary. Not just a majority from available servers, but a majority from all of the servers in the set.</p>
+
+<p>For example if you have 3 servers, A(primary), B and C then it'll <strong>always</strong> take 2 servers to elect a new primary. If A(p) goes down, then B and C can and will elect a primary. However, if B also goes down, C will not elect itself as primary because it will only get 1/3 of the votes (as opposed to the necessary 2/3).</p>
+
+<p>In other words, a 3 server replica set can tolerate a single failure. A 5 server replica set can tolerate 2 failed servers (3/5 is a majority). A 7 server replica set can survive 3 failed servers (4/7).</p>
+
+<h2>Network Splits and Ties</h2>
+<p>To understand the other key point it helps if we change our perspective from thinking of servers going down, to thinking in terms of network splits. What?</p>
+
+<p>You see, when you think of servers crashing, it's reasonable to expect any remaining server to be elected - even without a majority. Instead of servers going down, consider what would happen if the servers all remain operational but can't see each other. Let's look at an example</p>
+
+<p>Pretend we have 4 servers - representing a [evil] even number of votes: A, B, C and D. AB are in one data center (or availability zone) while CD are in another. Now, the link between the two data-centers dies. What would happen? Each group thinks the other is down and could both elect their own primary. This would cause data conflicts (two servers would be accepting writes).</p>
+
+<p>So let's introduce an arbiter (E) and with it, an uneven number of votes. Now each servers knows that the set is made up of 5 votes, and thus 3 votes are required to elect a new primary. Whatever group E ends up with (either ABE or CDE) a primary will be elected, and, more importantly, whatever group E doesn't end up with won't be able to elect a primary.</p>
+
+<p>What happens if AB, CD and E do a three way split? Then there is no majority and thus no primary and the set will go down (but that's much better than having 2 primaries).</p>
+
+<h2>Separate Servers?</h2>
+<p>People often wonder whether an arbiter can run on the same box as one of the main <code>mongod</code> processes? Ideally, no. Imagine we have AB and C where B is arbiter running on the same server as A. If that server goes down you've lost your majority. In other words, in this set up, if the wrong server goes down you have no redundancy. However, if C goes down, AB can and will remain a primary (and if you think you can just stick a 2nd arbiter on C, then this article has failed you miserably, and I'm very sorry for having wasted your time).</p>
+
+<p>Arbiters don't store any of the data and is a lightweight process. An EC2 micro instance is more than powerful enough.</p>
+
+
+<h2>Conclusion</h2>
+<p>The most important thing is to have an uneven number of votes. Knowing this, it should be obvious that you either want 0 arbiters or 1...but never, ever more.</p>
+
+<p>It's also important to understand that election doesn't rely on the majority of available servers, but of all servers in the set. A 3-server replica set will not tolerate 2 servers failing. Thinking in terms of network splits in the context of separate data centers helps me visualize this.</p>

@@ -1,0 +1,46 @@
+---
+layout: post
+date: 2013-10-03
+title: Growth Planning
+description: "Scaling a system is all about turning the unpredictable into manageable chunks and simply building in a buffer to be able to keep up."
+tags: [design, scalability]
+---
+
+<p>Since the beginning of our rebuild, the message that we've gotten from management is "it has to support 100 million users." While our answer to this has always been "no problem", our actions have been quite different. This is what I've learned growth planning Viki, along with some mistakes we made.</p>
+
+<p>There are two fundamental reasons you can't build today for tomorrow's traffic. First, what your system does today is subset of what it will do next year. You aren't being asked to scale the current system, you're being asked to scale the future system, without knowing what that is.</p>
+
+<p>Secondly, performance isn't linear. You can (and should) spend a lot of time load testing, but it's impossible to predict how a living system is going to scale. Even if you have a good idea of what will break first, there are a lot of variables which are hard to account for. Gargabe collection or lock contentions can get vicious, caches can fill up or you can hit network limits. You just can't tell.</p>
+
+<p>So, what can you do?</p>
+
+<h3>Breathing Room</h3>
+<p>Focus on building a system that'll give you time to react. Assume aggresive growth then double it and make sure that the system can survive that for two or three months. Ultimately, that's what we built at Viki. We didn't build a system that could handle 100 million users or 100 times more videos. Rather, we built a system that lets us stay ahead of the curve. We've broken down managements end goal into iterations, meaning our load testing and intuition are more likely to be right.</p>
+
+<h3>Monitor</h3>
+<p>Having time to do things right is only useful if you're aware that you need to be doing something. Despite our best intentions, we haven't done a great job here. We're happy with ScoutApp for basic system monitoring, and we can definitely use it to see some high level patterns. But the truly insightful data that we have is lacking and what we do have is awfully manual.</p>
+
+<p>At some point we had statsd with graphite set up. I think graphite's amazing, but it isn't the friendliest thing to setup or manage.</p>
+
+<h3>Rewrite It</h3>
+<p>At Viki, this has been our biggest hurdle. Rewrites are seen as some type of failure, even by some engineers. Once upon a time, spending two weeks on something was cause for concern and rewriting was a big deal. But scaling is about learning and experimenting. We're constantly making tweaks, both small and large. We'll never be done. Ever.</p>
+
+<p>When developers are tweaking and rewriting their own code, that's a good thing. They are moving forward as developers and taking the product along for the ride. When they are rewriting other people's code, that's more of a warning sign.</p>
+
+<h3>Forget The Cloud</h3>
+<p>I'm not saying that you shouldn't use AWS. But I will say two things. First, despite what PaaS vendors want you (or more likely, your manager) to believe, scaling is much more of a software concern than an infrastructure concern. Maybe something is better than nothing, but the cloud won't address your biggest issues because those issues are specific to your system.</p>
+
+<p>Secondly, the value of raw speed cannot be overstated. It doesn't just help you scale, it also improves the experience for all your users. In this respect, the cloud is like a horse and buggy with unlimited carrots. I want a car, especially when I can get three for the same price.</p>
+
+<h3>Background Workers</h3>
+<p>Do as much in background processes as possible. It isn't about making the app more responsive (although that is nice), but rather it helps you decouple components/systems. Our queue is as fundamental to our architecture as our database. Frankly, I'm sure we're not even close to using it to its full potential.</p>
+
+<p>If you aren't using a queue, do yourself a favor. Set one up (we use RabbitMQ), and duplicate every write onto your queue. The message can be as simple as <code>{"action": "create", "type": "video", "id": "545v"}</code>. Once that's available, you're going to see uses for it.</p>
+
+<p>(We've found it useful to enqueue two different messages for every DB write. One is similar to the above, while the other includes the full payload, such as the entire video detail. This reduced the load on our systems from internal calls.)</p>
+
+<h3>Use The RAM</h3>
+<p>Actively use memory. It's fast and it's plentiful. This goes beyond simple caching; although mastering Varnish is a great place to start. Store data in your application's process and update it in a background thread. Yes, Redis is great. Use it. But Redis involves TCP, parsing and unmarshalling which all leads to GC. Store what you can, when you can, in-process.
+
+<h3>Conclusion</h3>
+<p>Growth planning is about having the right monitoring in place, focusing on performance and treating it as a never ending feature. It's about taking the unpredictable and breaking it into smaller chunks. Like any other feature; the further out you plan, the less accurate you get. Best of all, it never stops giving: you'll constantly be learning and growing.</p>

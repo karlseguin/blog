@@ -1,0 +1,59 @@
+---
+permalink: "/2011/5/17/Factories-Make-Testing-Easier/"
+layout: post
+date: 2011-05-17
+title: "Factories Make Testing Easier"
+tags: [testing]
+---
+<p>Last month I posted the following gist, asking people which they preferred. The choice comes down to using mocks or hitting the database. Almost everyone who answered via twitter preferred the 2nd approach. If you ever read this blog,  you'll know that I agree.</p>
+
+<script src="https://gist.github.com/927798.js"> </script>
+
+<p><a href="http://wekeroad.com/">Rob Conery</a> suggested that I use <a href="https://github.com/thoughtbot/factory_girl">Factory_Girl</a> (FG) to make example #2 even better. Rob and <a href="http://twitter.com/#!/davetheninja">Dave</a> had talked to me about FG in the past, but I just wasn't really grasping how useful it would really be.</p>
+
+<p>Fast forward to <a href="https://github.com/mogade/mogade-server">my latest project</a>, and I figured I'd give it a try. <strong>I'm an idiot for having waited so long.</strong></p>
+
+<p>The general idea behind FG (or any similar framework) is that you define a factory for each of your object, setting reasonable defaults as needed. This has three significant implications when writing tests. First, your tests require less setup, and are thus cleaner and easier to maintain. Second, factories tend to make your tests more explicit by really focusing on data which is important (versus data which is simply necessary). Finally, when your model changes and a new required field is added, you don't have to go update a bunch of seemingly unrelated tests and add irrelevant data.</p>
+
+<p>As a simple example, we might create a factory for our <code>game</code> object like so:</p>
+
+{% highlight ruby %}
+Factory.define :game do |g|
+  g.secret "it's over 9000"
+  g.name "power level?"
+end
+{% endhighlight %}
+
+<p>We can now create a new instance within our tests by using <code>game = Factory.build(:game)</code>. Alternatively, we can create and persist the same object by using <code>create</code> instead of <code>build</code>. We can also pass either method an additional parameter which are the values to use instead of the defaults: <code>Factory.create(:game, {:secret =&gt; 'what?!'})</code>. Factories support more advanced logic. For example, sequences let us ensure a unique value for each built/created instance:</p>
+
+{% highlight ruby %}
+Factory.sequence :name do |n|
+  "duncan-#{n}"
+end
+
+Factory.sequence :email do |n|
+  "duncan#{n}@dune.gov"
+end
+
+Factory.define :developer do |d|
+  d.name 'duncan'
+  d.email {Factory.next(:email)}
+  d.status DeveloperStatus::Enabled
+end
+{% endhighlight %}
+
+<p>I mentioned that a benefit of this approach is that it makes our tests more explicit. Let me give you a real example of what I mean. We have a method which lets us <em>activate</em> a developer. This essentially switches his or her status from <code>Pending</code> to <code>Enabled</code> and saves the object. Here's the test:</p>
+
+{% highlight ruby %}it "enables the developer" do
+  developer = Factory.create(:developer, {:status => DeveloperStatus::Pending})
+  developer.activate!
+  developer.status.should == DeveloperStatus::Enabled
+  Developer.count({:_id => developer.id, :status => DeveloperStatus::Enabled}).should == 1
+end
+{% endhighlight %}
+
+<p>Since I'm not having to create a developer with a bunch of extra fields, the test is very clear about what data it cares/behaves on (the <code>status</code>). In fact, even if the default status was <code>Pending</code>, I still think it's worth explicitly setting it in the test - both so that a change to the factory doesn't break this test and also to make the test well documented.</p>
+
+<p>The whole thing is full of win. It makes tests easier to write, maintain, read and makes them less brittle to unrelated changes. <em>ObjectMother SmobjectMother</em>.
+
+<p>C# developers will likely want to look at either <a href="https://github.com/jbrechtel/plant">Plant</a> or <a href="http://nbuilder.org/">nbuilder</a>. While these provide decent build capabilities, the persistence story isn't quite as clean/simple as what you'll get from Ruby/Rails. In fact, for this specific project we are using our own thin mapper and FG just dynamically invoked our <code>save</code> method - 'cuz that just makes sense. NBuilder can invoke a callback, but that'll likely require some extra wiring for more complex and typical (DI-heavy, over-engineered (ya, I said it)) .NET scenarios.</p>

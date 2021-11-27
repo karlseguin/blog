@@ -1,0 +1,111 @@
+---
+permalink: "/2010/9/21/Javascript-Mocking-Damn-Thats-Easy/"
+layout: post
+date: 2010-09-21
+title: "Javascript Mocking - Damn, That's Easy."
+---
+<p>Its great to <a href="http://openmymind.net/2010/9/20/My-Programming-Sins-1-Not-Testing-Javascript">talk about unit test in the context of simple examples</a>, but sooner rather than later you'll run into a more complicated scenario that just can't be easily tested. Typically, these scenarios involve some type of dependency. How you resolve these dependencies depends on whether your language supports IoC or not. For languages that don't (like Java or .NET), the solution becomes an architectural one (the most common approach being dependency injection). Javascript though, with all its dynamic goodness, lets us do things more neatly.</p>
+
+<p>First though, I should point out that others have more mature solutions. You could use a <a href="http://code.google.com/p/jqmock/">generalized mocking framework like jqmock</a>, or something more specific (for ajax stuff in this case), like <a href="http://github.com/appendto/jquery-mockjax">jquery-mockjax</a>. I had started by using mockjax, but I ran into two problems (maybe I'm just being dense). First, if possible, I'd rather not have the call be asynchronous. I find the syntax around asynchronous QUnit tests to be...unfortunate. Also, the asynchronous nature of ajax is really irrelevant for most testing situation. Secondly, and more critically, I couldn't find a way to validate the data being submitted.</p>
+
+<p>Armed with a decent excuse to try and built my own, this is what I came up with:</p>
+
+{% highlight javascript %}
+$.qext = 
+{
+  reset: function()
+  {
+    $.qext.ajax.reset();
+  }
+};
+
+$.qext.ajax =
+{ 
+  recorded: new Array(),
+  stub: function(type, url, data, responseType, response)
+  {
+    $.qext.ajax.recorded.push({type: type, url: url, data: data, responseType: responseType, response: response});
+  },
+  post: function(url, data, callback, responseType)
+  {
+    for(var i = 0; i < $.qext.ajax.recorded.length; ++i)
+    {
+      var stub = $.qext.ajax.recorded[i];
+      if (stub.type == 'POST' && $.qext.compare(stub.data, data) && stub.url == url && stub.responseType == responseType)
+      {
+        callback(stub.response);
+        return;
+      }
+    }
+    ok(false, "unexpected call to $.post: " + url  + JSON.stringify(data) + "\n\tresponseType: " + responseType);
+  },
+  reset: function()
+  {
+    $.qext.ajax.recorded = new Array();
+  }
+};	
+
+//largely taken from:
+//http://www.yoxigen.com/blog/index.php/2010/04/javascript-function-to-deep-compare-json-objects/
+$.qext.compare = function(first, second)
+{
+ function size(o)
+ {
+  var size = 0;
+  for (var keyName in o)
+  {
+    if (keyName != null) { size++; }
+  }
+  return size;
+ }
+
+ if (size(first) != size(second)) { return false; }
+
+ for(var keyName in first)
+ {
+  var value1 = first[keyName];
+	var value2 = second[keyName];
+
+	if (typeof value1 != typeof value2) { return false; }
+	// For jQuery objects:
+	if (value1 && value1.length && (value1[0] !== undefined && value1[0].tagName))
+	{
+		if(!value2 || value2.length != value1.length || !value2[0].tagName || value2[0].tagName != value1[0].tagName) { return false; }
+	}
+	else if (typeof value1 == 'function' || typeof value1 == 'object') 
+	{
+	  if (!compare(value1, value2)) { return false; }
+	}
+	else if (value1 != value2) { return false; }
+ }
+ return true;
+};
+
+$.post = $.qext.ajax.post;
+{% endhighlight %}
+
+<p>We essentially redirect the <code>$.post</code> method to our stub <code>$.qext.ajax.post</code> method. We could obviously do the same for the <code>$.get</code> or <code>$.ajax</code> methods. Our stub looks through the recorded expected calls, and if found executes the callback with the specified response. You would setup the whole thing like:</p>
+
+{% highlight javascript %}
+QUnit.testStart = function (name) 
+{
+  $.qext.reset();
+};
+ 
+test("deletes a row", function()
+{
+  //I'd probably inline these, but just being explicit for demonstration purposes
+  var type = 'POST';
+  var url = '/url/to_delete';
+  var submitData = {id: '1234'};
+  var responseType = 'json';
+  var returnValue = {deleted: true};
+ 
+  var $list = $('#template').fancyList({deleteUrl: url});
+  $.qext.ajax.stub('POST', url, submitData, responseType, returnValue);
+  $list.children('tr:first .delete').trigger('click'); //click the delete column
+  ok($list.find('tr[rel=1234]').length == 0, "deleted row is removed from our list");
+});
+{% endhighlight %}
+
+<p>I'm going to play with the code some more and see if I can extract a useful library. But for now the approach appeals to me because of its simplicity. I probably wouldn't implement more advanced mocking semantics, though. As the years have passed, I find that I generally prefer very loose mocking constraints (Dynamic &gt; Stricts in RhinoMocks, or allowing &gt; oneOf in qMock).</p>

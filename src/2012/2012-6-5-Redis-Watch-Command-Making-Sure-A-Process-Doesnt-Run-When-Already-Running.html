@@ -1,0 +1,64 @@
+---
+layout: post
+date: 2012-06-05
+title: "Redis' Watch Command: Making Sure A Process Doesn't Run When Already Running"
+tags: [redis]
+---
+
+<p>I want to run a script only if it isn't already running. There are a lot of ways to solve this problem. Since the script already makes use of Redis, I figured I could use it to track if the process is running.</p>
+
+<p>The first incorrect implementation is to use the <code>setnx</code> command, which only sets the value if it doesn't exist. Can you spot the problem?</p>
+
+{% highlight ruby %}redis = Redis.new
+if redis.setnx("running") == false
+  puts "already running"
+  exit
+end
+
+begin
+  # do stuff
+ensure
+  redis.del("running")
+end{% endhighlight %}
+
+<p>What happens if the computer or program crashes right after <code>setnx</code> sets our value? The key will be set but never deleted, and thus the process will never run again.</p>
+
+<p>Instead, what if we used Redis' key expiration to make sure a key never lasted forever? Here's one flawed solution. Again, can you spot the problem?</p>
+
+{% highlight ruby %}redis = Redis.new
+if redis.exists("running") == true
+  puts "already running"
+  exit
+end
+redis.setex("running", 300, true)
+
+begin
+  # do stuff
+ensure
+  redis.del("running")
+end{% endhighlight %}
+
+<p>If two instances execute at the same time, it's possible that they both check for the existence of the key before either has set the key. In this case, both will execute.</p>
+
+<p>What we need to do is run the above in a transaction. However, the 2nd command in our transaction is dependent on the result from the first. Redis transactions execute all commands at once. We can't conditionally set our key. Not within a normal transaction anyways.</p>
+
+<p>This is where Redis' <code>watch</code> command comes into play. First the code:</p>
+
+{% highlight ruby %}redis.watch("running")
+if redis.exists("running") == true
+  puts "already running"
+  exit
+end
+redis.multi do
+  redis.setex("running", 300, true)
+end
+
+begin
+  # do stuff
+ensure
+  redis.del("running")
+end{% endhighlight %}
+
+<p><code>watch</code> and <code>multi</code> work together. If the key that we are watching is modified by a different connection <code>multi</code> will fail. If two programs come in at the exact same time, they'll both <code>watch</code> the key <em>running</em>.  In both cases, it won't exist.  Since Redis is single threaded, only one will begin the transaction and set the key with an expiration. Once the first process completes its transaction, the 2nd process will begin its transaction and fail, since the watched key has been modified.</p>
+
+<p>Essentially, if you ever need to run commands in a transaction where the output of one command impacts the other commands, you use <code>watch</code> (which can also be used to <code>watch</code> multiple keys).</p>

@@ -1,0 +1,100 @@
+---
+permalink: "/2012/2/3/Node-Require-and-Exports/"
+layout: post
+date: 2012-02-03
+title: "Node.js, Require and Exports"
+description: "Learn exactly what module.exports does and how to use it"
+tags: [node.js]
+---
+
+<p>Back when I first started playing with node.js, there was one thing that always made me uncomfortable. Embarrassingly, I'm talking about <code>module.exports</code>. I say <em>embarrassingly</em> because it's such a fundamental part of node.js and it's quite simple. In fact, looking back, I have no idea what my hang up was...I just remember being fuzzy on it. Assuming I'm not the only one who's had to take a second, and third, look at it before it finally started sinking in, I thought I could do a little write up.</p>
+
+<p>In Node, things are only visible to other things in the same file. By <em>things</em>, I mean variables, functions, classes and class members. So, given a file <code>misc.js</code> with the following contents:</p>
+
+{% highlight javascript %}
+var x = 5;
+var addX = function(value) {
+  return value + x;
+};
+{% endhighlight %}
+
+<p>Another file cannot access the <code>x</code> variable or <code>addX</code> function. This has nothing to do with the use of the <code>var</code> keyword. Rather, the fundamental Node building block is called a <em>module</em> which maps directly to a file. So we could say that the above file corresponds to a module named <code>file1</code> and everything within that module (or any module) is private.</p>
+
+
+<p>Now, before we look at how to expose things out of a module, let's look at loading a module. This is where <code>require</code> comes in. <code>require</code> is used to load a module, which is why its return value is typically assigned to a variable:</p>
+
+{% highlight javascript %}
+var misc = require('./misc');
+{% endhighlight %}
+
+<p>Of course, as long as our module doesn't expose anything, the above isn't very useful. To expose things we use <code>module.exports</code> and export everything we want: </p>
+
+{% highlight javascript %}
+var x = 5;
+var addX = function(value) {
+  return value + x;
+};
+module.exports.x = x;
+module.exports.addX = addX;
+{% endhighlight %}
+
+<p>Now we can use our loaded module:</p>
+
+{% highlight javascript %}
+var misc = require('./misc');
+console.log("Adding %d to 10 gives us %d", misc.x, misc.addX(10));
+{% endhighlight %}
+
+<p>There's another way to expose things in a module:</p>
+
+{% highlight javascript %}
+var User = function(name, email) {
+  this.name = name;
+  this.email = email;
+};
+module.exports = User;
+{% endhighlight %}
+
+<p>The difference is subtle but important. See it? We are exporting <code>user</code> directly, without any indirection. The difference between: </p>
+
+{% highlight javascript %}
+module.exports.User = User;
+//vs
+module.exports = User;
+{% endhighlight %}
+
+<p>is all about how it's used:</p>
+
+{% highlight javascript %}
+var user = require('./user');
+
+var u = new user.User();
+//vs
+var u = new user();
+{% endhighlight %}
+
+<p>It's pretty much a matter of whether your module is a container of exported values or not. You can actually mix the two within the same module, but I think that leads to a pretty ugly API.</p>
+
+<p>Finally, the last thing to consider is what happens when you directly export a function:</p>
+
+{% highlight javascript %}
+var powerLevel = function(level) {
+  return level > 9000 ? "it's over 9000!!!" : level;
+};
+module.exports = powerLevel;
+{% endhighlight %}
+
+<p>When you require the above file, the returned value is the actual function. This means that you can do:</p>
+
+{% highlight javascript %}
+require('./powerlevel')(9050);
+{% endhighlight %}
+
+<p>Which is really just a condensed version of:</p>
+
+{% highlight javascript %}
+var powerLevel = require('./powerlevel')
+powerLevel(9050);
+{% endhighlight %}
+
+<p>Hope that helps!</p>

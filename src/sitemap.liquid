@@ -1,0 +1,10 @@
+{%- assign posts = collections.all | public | reverse -%}
+{%- assign dateFormat = "%Y-%m-%dT%H:%M:%S+00:00" -%}
+{%- assign latest = collections.all | public | reverse | last_updated -%}
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+	<url><loc>https://www.openmymind.net/</loc><lastmod>{{ latest | date: dateFormat }}</lastmod></url>
+	<url><loc>https://www.openmymind.net/atom.rss</loc><lastmod>{{ latest | date: dateFormat }}</lastmod></url>
+	{% for post in posts %}<url><loc>https://www.openmymind.net{{ post.url }}</loc><lastmod>{{ post.date | date: dateFormat}}</lastmod></url>
+	{% endfor %}
+</urlset>

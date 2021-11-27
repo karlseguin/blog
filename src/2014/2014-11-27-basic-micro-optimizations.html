@@ -1,0 +1,79 @@
+---
+layout: post
+date: 2014-11-27
+title: "Basic Micro-Optimizations"
+tags: [performance]
+description: "Some basic micro-optimizations and what they say about how code runs."
+---
+
+<p>I've always been an advocate of pre-mature optimizations. For one thing, I feel that the term has been subverted to excuse bad code. More importantly, optimizing code is a great way to learn how it actually runs, how it interacts with the operating system and the hardware. Let's look at some simple examples of what I mean.</p>
+
+<p>First, a general disclaimer. While the principles here should agnostic, clever compilers and runtimes can have a significant impact. Also, one of the biggest mistakes developers make when looking at the performance of small pieces of code is to only look at running time and ignore allocations. Allocation and related activities (compaction and garbage collection) play a significant role in the performance of a system under load, but their true cost isn't normally obvious when run in a development environment.</p>
+
+<h3>Dynamic Arrays, StringBuilders, ...</h3>
+
+<p>Arrays that grow dynamically are wonderful. But you should always keep in mind how they work. A dynamic array wraps a fixed-length array and grows when you add more items than the fixed-length array can handle. Normally they'll grow by a factor of 2, and, past a certain point (say, 1000 items), might slow to a factor of 1.5.</p>
+
+<p>By "grow", I mean a new fixed-length array is created with twice the capacity and the items are copied over. You might think the copying step is something to worry about (and certainly it's something to consider), but the real problem is the impact on your memory. First, it fragments your memory, leaving a bunch of holes. Second, it can end up consuming a lot more memory than you think.</p>
+
+<p>Consider the case where we'll be adding 11000 items to an array and the array starts off with a size of 20. How will this array grow?:</p>
+
+{% highlight text %}
+20
+40
+80
+160
+320
+640
+1280
+2560
+5120
+10240
+20480
+{% endhighlight %}
+
+<p>We need to make 10 allocations, totaling 40940 slots to hold 11000 items. We're also using 47% more memory than we actually need to (20480 slots to hold 11000 items). This can significantly reduce available memory if you have many such long-lived object.</p>
+
+<p>The solution? Many frameworks let you define an initial capacity. A ballpark estimate can help. Even if you over-estimate by 20%, you'll end up with faster code that uses less memory. Beyond that, for long lived objects, you can always do 1 final allocation + copy manually for the exact size.</p>
+
+<p>I've also ran into the case where I had millions of long lived array with few items (~10). The solution that I used was to grow the array myself, 1 slot at a time. It significantly slowed the insert, but this was a read-heavy component under memory pressure and it saved 10% of memory.</p>
+
+
+<h3>String Split</h3>
+<p>One of the most common things that I see is needless use of the string split method. I like this example a lot because it comes in two forms: one which is an excessive optimization (in most cases) and one which is simply bad code.</p>
+
+<p>The bad code version is when you're only after the first or last part. For example:</p>
+
+{% highlight ruby %}
+input = SecureRandom.uuid
+parts = input.split('-')
+parts[-1]
+{% endhighlight %}
+
+can be re-written as:
+
+{% highlight ruby %}
+input = SecureRandom.uuid
+input[input.rindex('-')+1..-1]
+{% endhighlight %}
+
+<p>For me, the 2nd version runs ~10% faster (I would have expected it to be more, something to dig into an learn about!) and also allocates 25% less objects. Also, I must say that I find the intent of the 2nd version clearer. The <code>+1..-1</code> arithmetic isn't great, but whenever I see a <code>split</code> I expect multiple parts to be used and I'm left wondering if I'm missing something.</p>
+
+<p>When I think of <code>Split</code>, I think of three separate performance factors. First, the performance is impacted by both the length of the input and also by the number of parts. Secondly, it has to allocate an array with an unknown upfront size. So we get back to the problem of array growth. Lastly, depending on your language, each part is probably a copy of the string, which increases memory usage even more.</p>
+
+<p>Recently, I ran into a situation where I needed all the parts, but was concerned about the extra allocation. The input was very long and this had to happen thousands of time per second. I was already using a pool of re-usable string arrays, but there was no way to get the stdlib to use my pool rather than create its own. So I ended up <a href="https://github.com/karlseguin/scratch/blob/master/strings.go#L82">writing my own</a>. The performance over 10 million iterations is only a little better, but it only allocates 210K instead of 480M.</p>
+
+<h3>String Format</h3>
+<p>String formatters are hard to argue against because they greatly help making code more readable. Nevertheless, consider that the first line is about 2x slower and allocates 25% more memory than the second:</p>
+
+{% highlight go %}
+  a := fmt.Sprintf("it's over %d!", 9000)
+  b := "it's over " + strconv.Itoa(9000) + "!"
+{% endhighlight %}
+
+<p>Both versions have to append strings together and do a conversion. The first line also has to examine the input one character at a time and be prepared to handle a much broader number of cases.<p>
+
+<p>Frustratingly, the more complicated your string is, the worse the performance of the formatter, but the more you benefit from the improved readability.</p>
+
+<h3>Conclusion, for now..</h3>
+<p>Above are three common cases that, I think, show how important it is to think about the how instead of always thinking about the what. <em>How</em> does Split work, not just <em>what</em> does it do.</p>

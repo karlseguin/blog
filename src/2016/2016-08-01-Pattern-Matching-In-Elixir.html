@@ -1,0 +1,111 @@
+---
+layout: post
+date: 2016-08-01
+title: "Pattern Matching in Elixir"
+description: "Saying elixir doesn't have assignments is confusing"
+tags: [design, elixir, learning]
+---
+
+<p>Not long after you start learning Elixir, you'll run into odd statements claiming that Elixir doesn't have an assignment operator. Odd, I say, because such statements follow and are followed by code examples that look and behave like assignment operators (or impractical examples trying to "match" 1 to 2: <code>1 = 2</code>).</p>
+
+<p>The way that I'd encourage you to approach Elixir's match operator is to realize that it behaves differently based on the types involved. And, in the case of a variable on the left side, that behaviour <strong>is</strong> an assignment. Beyond that, understanding the match operator's full potential requires the right examples.</p>
+
+<p>First, consider a login page which, through some web framework, calls a method with a map hopefully containing an <code>"email"</code> and <code>"password"</code> field:</p>
+
+{% highlight elixir %}
+def create(%{"email" => e, "password" => p}) do
+  ...
+end
+{% endhighlight %}
+
+<p>The above will only match when three conditions are met. First, the argument has to be a map. Second, it has to have an <code>"email"</code> key. Third, it has to have a <code>"password"</code> key. Put differently, when the left side of the match operator is a map, then it will only match another map that has at least the same keys. The behaviour on such a match is to deconstruct the map (into the <code>e</code> and <code>p</code> variables, for the above case).</p>
+
+<p>If we try to call <code>create</code> with something other than a map, or with a map that doesn't have both a <code>"email"</code> and <code>"password"</code> key, Elixir will raise an exception. Since we probably want something a little less dramatic for a web application, we'll add another method:</p>
+
+{% highlight ruby %}
+# underscore means we don't care about the parameter
+# though it's better to use something like _params to improve understandability
+def create(_) do
+  # display a nice error message
+end
+{% endhighlight %}
+
+<p>It's important that we place this method last, else it'll match everything. If you're thinking that it would be nice if Elixir could properly prioritize these, consider that it's pretty trivial to get into ambiguous situations.</p>
+
+<p>As another example, we have users which need to be handled differently based on their <code>version</code>:</p>
+
+{% highlight ruby %}
+def load(id) do
+ load(Repo.get(User, id))
+end
+
+# defp for private
+
+defp load(%User{version: 1} = user) do
+ # handle version 1 users...
+end
+
+defp load(%User{version: 2} = user) do
+ # handle version 2 users...
+end
+
+defp load(nil) do
+ # the user wasn't found
+end
+{% endhighlight %}
+
+<p>The <code>%{...} = user</code> syntax matches a map or structure and assigns the parameter to <code>user</code>.</p>
+
+<p>Matching also works with arrays, tuples and literals and it isn't restricted to method arguments. This final example demonstrates these capabilities. First, we have an array that can be empty, contain a user id, or contain a user id and a user name. We want to either do nothing, assign the user id to a map, or assign both the user id and user name to a map:</p>
+
+{% highlight ruby %}
+# entrypoint, we get a "header", which can be one of three things
+def load_context(header) do
+  load_context(%{}, header)
+end
+
+# header was an empty array, return the context as-is (an empty map)
+defp load_context(context, []) do
+  context
+end
+
+# header has both values
+# put the name and call the DRY method to put the id
+defp load_context(context, [id, name]) do
+  context = Map.put(context, :name, name) #remember every thing's immutable
+  load_cotext(context, id)
+
+  # ALTERNATIVE:
+  # Map.put(context, :name, name) |> load_context(id)
+end
+
+# header only has an id
+# call the DRY method to put the id
+defp load_context(context, [id]), do
+  load_context(context id)
+end
+
+# can be called by either of the two above load_context methods
+defp load_context(context, id) do
+  Map.put(context, :user_id, id)
+end
+{% endhighlight %}
+
+<p>It turns out that the "id" comes in as a string, but we want it as an integer. We'll rewrite that last method:</p>
+
+{% highlight ruby %}
+defp load_context(context, id) do
+  case Integer.parse(id) do
+    {id, _remainder} -> Map.put(context, :user_id, id)
+    :error -> context  # could also use _ on the left side
+  end
+end
+{% endhighlight %}
+
+<p>Here we see matching with a tuple and an atom (aka, symbol / intern). What if we expected all our user ids to be suffixed with the letter "u"? We could rewrite that one case condition to be:
+
+{% highlight ruby %}
+  {id, "u"} -> Map.put(context, :user_id, id)
+{% endhighlight %}
+
+<p>Matching is a powerful and it changes how you write and organize your code. The result tends to be very small and focused functions. This certainly isn't without its downsides, but overall I think it's a clear win.</p>

@@ -1,0 +1,79 @@
+---
+permalink: "/2012/1/17/Refactoring-Common-API-Functionaly-Into-A-Node-Proxy/"
+layout: post
+date: 2012-01-17
+title: "Refactoring Common API Functionality Into A Node.js Proxy"
+tags: [node.js]
+---
+
+<p>The handful of web services that I maintain all share common functionality. For example, at the start of each request, they load an account based on some key (in the query string or the message body). They also ensure that a request is valid by validating the provided sha1 signature. They handle versioning and do logging. It's almost the exact same thing from project to project, but not all of these projects are written in the same language so traditional re-use (dll, gem, package) isn't the best solution.</p>
+
+<p>This weekend I wrote <a href="https://github.com/karlseguin/aproxi">aproxi</a> which is a simple node.js proxy built on <a href="https://github.com/senchalabs/connect/">connect</a>. Connect is a middleware layer like ruby's rack or .NET's OWIN. The idea behind this project is to have it sit between a webserver, say nginx, and the application (which could be written in anything) and provide all of this common functionality.</p>
+
+<p>There are a couple hosted services that do this, like apigee and mashery. I think those are wonderful services, but I also think having something more custom for your applications can be beneficial (for example, I don't think either of them support method signing).<p>
+
+<p>Let's look at the most basic example, ensure that they API key we received truly belongs to a valid account:</p>
+
+{% highlight ruby %}
+store = require('./../store')
+appLoader =  ->
+  appLoader = (request, response, next) ->
+    return next() if request._appLoader
+    request._appLoader = true
+
+    key = if request.method == 'GET' || request.method == 'DELETE' then request.query['key'] else request.body['key']
+    return invalid(response) unless key?
+
+    store.findOne 'apps', {_id: key}, {fields: {secret: true}}, (err, app) =>
+      return invalid(response) if err? || !app?
+      request._app = app
+      return next()
+
+invalid = (response) ->
+  response.writeHead(400, {'Content-Type': 'application/json'});
+  response.end(JSON.stringify({error: 'the key is not valid'}))
+
+module.exports = appLoader
+{% endhighlight %}
+
+<p>There's some connect-specific code in here (like the nested functions and checking to see if this middleware already ran (which I'm not sure why I need, but all the built-in ones do that)), but it's overall quite simple. We load the key from the query or body and if it's either invalid or doesn't correspond to a an actually application, we respond with an error. Otherwise we move to the next middleware.</p>
+
+<p>Notice that we are only retrieving the app's secret value. This will be used in a following method to verify the signature. For more complex APIs, we might retrieve an account level (small, medium, large) which other middlewares might use to limit what can and can't happen.</p>
+
+<p>Once all middlewares have passed we use node's http package to proxy our request to the application server. This is our final middleware:</p>
+
+{% highlight clike %}
+http = require('http')
+
+proxy = (config) ->
+  proxy = (request, response, next) ->
+    return next() if request._proxy
+    request._proxy = true
+
+    options =
+      port: config.port
+      host: config.host
+      method: request.method
+      path: request.url
+      headers: request.headers
+
+    prequest = http.request options, (presponse) ->
+      presponse.on 'data', (chunk) -> response.write(chunk, 'binary')
+      presponse.on 'end', -> response.end()
+      response.writeHead(presponse.statusCode, presponse.headers);
+
+    prequest.on 'error', (err) ->
+      response.statusCode = 503
+      response.end('connection to application server refused')
+
+    prequest.write(request.bodyRaw, 'binary') if request.bodyRaw?
+    prequest.end()
+
+module.exports = proxy
+{% endhighlight %}
+
+<p>The node.js documentation describes the <a href="http://nodejs.org/docs/latest/api/http.html">http object</a>, but the code is fairly simple. We open a request to the application server, write out the body, and any data we receive we stream back out to the requesting client (which in our case would be nginx).</p>
+
+<p>One question you might have is why do we still need nginx? Well nginx provides a ton of reliable and fast modules. In theory we could get rid of it, but then we'd have to handle ssl, caching, blacklisting, throttling and so on. Conversely we could write all of this as nxing modules (or using varnish VCL) but the ease and power of node.js is unsurpassed. It would be ideal if nginx would embed V8 so that modules could be written in JavaScript, but that <a href="http://translate.google.com/translate?js=n&prev=_t&hl=en&ie=UTF-8&layout=2&eotf=1&sl=ru&tl=en&u=http://sysoev.ru/prog/v8.html">doesn't seem like it'll happen</a> any day soon.</p>
+
+<p>I'm actually quite excited by this project. It is somewhat configurable, but the goal isn't really for  other people to use it. It's so that I can use it. But, if you build APIs and you find yourself writing similar code over and over again, hopefully this project will give you some ideas and possibly act as a launching pad for your own custom proxy.</p>

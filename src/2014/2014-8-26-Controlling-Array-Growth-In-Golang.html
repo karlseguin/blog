@@ -1,0 +1,130 @@
+---
+layout: post
+date: 2014-08-26
+title: "Controlling Array Growth in Golang"
+tags: [golang]
+description: "Golang's builtin append function is useful, but you'll sometimes want more control over the growth behavior."
+---
+
+<p>If you're new to Golang and its arrays/slices, you might want to start with <a href="/The-Minimum-You-Need-To-Know-About-Arrays-And-Slices-In-Go/">this introduction</a>.</p>
+
+<p>Nowadays, when talking about arrays, developers can be talking about one of two behaviors: one which is static (or fixed) and the other dynamic. Static arrays have a fixed-length which is defined at initialization. Dynamic arrays [typically] wrap a static array but are able to grow the underlying fixed-length array as needed. How? When you add an item to a dynamic array, if the underlying fixed-size array is full, it creates a new larger array and copies the values over.</p>
+
+<p>This growth and copying might seem terribly slow, but dynamic arrays usually use a growth algorithm that allocates spare space. The simplest algorithm is to grow by a factor of 2. So when we try to insert an 11th item into an array with a capacity of 10, we'll end up with 11 values in a new array with a capacity of 20.</p>
+
+<p>While this helps avoid excessive copying, it can be harsh on memory. Imagine inserting 750 000 items into an array which started off with a capacity of 10. First of all, you'll have to make 18 allocations (10, 20, 40, 80 ....). Each one having to be garbage collected and causing fragmentation. Furthermore, you'll end up with an array that can hold 560 720 extra values (.... 327 680, 655 360, 1 310 720). For these reasons, whenever possible, it's best to initialize your dynamic arrays with a reasonable size. In fact, when you only have a rough idea of the final size, it's probably better to overshoot a little (it'll definitely require less allocations and will probably end up taking less memory).</p>
+
+<p>Go arrays are fixed in size, but thanks to the builtin <code>append</code> method, we get dynamic behavior. The fact that <code>append</code> returns an object, really highlights the fact that a new array will be created if necessary. The growth algorithm that <code>append</code> uses is to double the existing capacity.</p>
+
+<p>What if we want a different behavior? For example, what if we want to grow by a fixed sized? Or, what if we want dynamic-like behavior for inserting a value at an arbitrary position within the array? The naive solution to inserting at any position is to crate a new array:</p>
+
+{% highlight go %}
+func insert(original []int, position int, value int) []int {
+  //we'll grow by 1
+  target := make([]int, len(original)+1)
+
+  //copy everything up to the position
+  copy(target, original[:position])
+
+  //set the new value at the desired position
+  target[position] = value
+
+  //copy everything left over
+  copy(target[position+1:], original[position:])
+
+  return target
+}
+{% endhighlight %}
+
+<p>This of course means that we no longer get the performance benefits of having spare space (every insert requires a new array to be created).</p>
+
+<p>To solve this, we need to understand slices, capacities and lengths and how they relate to arrays. What's the output from the following code?</p>
+
+{% highlight go %}
+x := make([]int, 4)
+x = append(x, 5)
+fmt.Println(x)
+{% endhighlight %}
+
+<p>It can be tempting to look at the above code and think that we'd write into index 0, thus getting <code>[5, 0, 0, 0]</code>. But the above code creates an underlying array with a capacity of 4 and a slice with a length of 4. When we append, we <strong>always</strong> increase the length of the slice (and, if necessary, increase the capacity of the array (by creating a new one)). The above results in: <code>[0, 0, 0, 0, 5]</code>. Consider a more obvious example:</p>
+
+{% highlight go %}
+x := []int{1, 2, 3, 4}
+x = append(x, 5)
+fmt.Println(x)
+{% endhighlight %}
+
+<p>We'd definitely expect this to be <code>[1, 2, 3, 4, 5]</code>. To create an "empty" slice with a pre-allocate underlying array, we specify both the length (of the array) and the capacity (of the slice):</p>
+
+{% highlight go %}
+x := make([]int, 0, 4)
+x = append(x, 5)
+fmt.Println(x)
+//prints [5]
+{% endhighlight %}
+
+<p>One interesting thing about these snippets is what gets returned from <code>append</code>. In the first case, where we write when <code>len(x) == cap(x)</code>, a new array is created and we get a reference to a new slice. In the second case, where <code>len(x) == 4</code> but <code>cap(x) == 0</code> we get the same slice and no new array is created. Clear? Let's have another test. What's the output from:</p>
+
+{% highlight go %}
+original := []int{1,2,3,4} //a slice with a len and cap of 4
+other := original
+other[2] = 8
+fmt.Println(original)
+fmt.Println(other)
+
+other = append(original, 5)
+other[2] = 9
+fmt.Println(original)
+fmt.Println(other)
+{% endhighlight %}
+
+<p>The first pair of outputs will both be <code>[1, 2, 8, 4]</code>. The second pair, however, will be <code>[1, 2, 8, 4]</code> and <code>[1, 2, 9, 4, 5]</code>. Because our <code>append</code> required the underlying array to grow, <code>other</code> went from pointing to the same location as <code>original</code> to a new location, and thus changes to one are no longer reflected in the other.</p>
+
+<p>Armed with this understanding, we can write our own insert function with leverages slices and arrays but gives us greater control. Like <code>append</code>, our function will deal with two cases: when we're at capacity (and have to grow to underlying array) and when we aren't. First, let's look at the case when we're at capacity:</p>
+
+{% highlight go %}
+func insert(original []int, position int, value int) []int {
+  l := len(original)
+  var target []int
+  if cap(original) == l {
+    target = make([]int, l+1, l+10)
+    copy(target, original[:position])
+    target[position] = value
+    copy(target[position+1:], original[position:])
+  } else {
+    // todo
+  }
+  return target
+}{% endhighlight %}
+
+<p>This is similar to the naive copy implementation we saw before. The main difference is that we grow by 10 (or any other growth algorithm you want) instead of 1. This comes in handy for the second case, which happens when we aren't at capacity:</p>
+
+{% highlight go %}
+  if cap(original) == l {
+    //see above
+  } else {
+    target = append(original, -1)
+    copy(target[position+1:], original[position:])
+    target[position] = value
+  }
+  return target
+{% endhighlight %}
+
+<p>The key to the above is that we append a temporary value into our slice. We know this isn't going to cause a new array allocation (because of the if statement). We then shift every to the right our our insert position, and finally insert the new value.</p>
+
+<p>Finally, we can refactor the function quite a bit:</p>
+
+{% highlight go %}
+func insert(original []int, position int, value int) []int {
+  l := len(original)
+  target := original
+  if cap(original) == l {
+    target = make([]int, l+1, l+10)
+    copy(target, original[:position])
+  } else {
+    target = append(target, -1)
+  }
+  copy(target[position+1:], original[position:])
+  target[position] = value
+  return target
+}{% endhighlight %}

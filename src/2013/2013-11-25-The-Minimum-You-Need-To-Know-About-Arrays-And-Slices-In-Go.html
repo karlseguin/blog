@@ -1,0 +1,95 @@
+---
+layout: post
+date: 2013-11-25
+title: "The Minimum You Need To Know About Arrays and Slices in Golang"
+description: "Devolopers new to Golang typically have a good understanding of Arrays and Slices, but there always seems to be a small piece missing which leads to much confusion."
+tags: [golang]
+---
+
+<p>Most people who start to learn Go understand the concept of a slice. It's a lightweight wrapper around an array which can, but doesn't necessarily have to, represent a subset (or slice) of that underlying array. Despite this understanding, developers continue to get tripped up when putting that knowledge to practice. Why?</p>
+
+<p>The problem arises when you want to pass an array to a function. Go's documentation makes it clear that arrays are passed by copy. Useful perhaps, if you want the array to be immutable. In most cases though, it's simply an inefficiency. Initially, you might be tempted to do something like:</p>
+
+{% highlight go %}
+names := []string{"leto", "paul", "teg"}
+process(&names)
+
+func process(names *[]string) {
+  ...
+}
+{% endhighlight %}
+
+<p>That might set off your spidey sense. So you head off to the golang-nuts user group, read relevant posts, or maybe ask a question, and the answer you inevitably get back is: <em>don't pass arrays, pass slices</em>.</p>
+
+<p>That kinda fits with what you know, since slices are thin wrappers around arrays. But still, this only feels marginally better:</p>
+
+{% highlight go %}
+names := []string{"leto", "paul", "teg"}
+process(names[0:])
+
+func process(names []string) {
+  ...
+}
+{% endhighlight %}
+
+<p>You think to yourself, <em>Who are these people who only ever deal with slices of arrays? 95% of the time, I need all the data in the array, not just part of it!</em></p>
+
+<p>And here, we get to the two fundamental misconceptions people have when they think about arrays and slices.</p>
+
+<p>First, think of a slices ability to represent part of the underlying array as a secondary benefit. First and foremost, a slice is a reference to an array. A slice which represents the entire array is extremely common. The second point makes this much more absolute.</p>
+
+<p>Second, you are almost certainly already dealing with a slice. <code>names</code> above, is already a slice (which covers the entire underlying array). The only time you're dealing with an array is when you create it with a size:</p>
+
+{% highlight go %}
+  names := [3]string{"leto", "paul", "teg"}
+  //or
+  names := [3]string{}
+{% endhighlight %}
+
+
+<p>Everything else, is a slice:</p>
+
+{% highlight go %}
+  names := []string{"leto", "paul", "teg"}
+  //or
+  names := make([]string, 3)
+  //or
+  var names []string
+{% endhighlight %}
+
+<p>So, the solution to the above code ends up being the most intuitive:</p>
+
+{% highlight go %}
+names := []string{"leto", "paul", "teg"}
+process(names)
+
+func process(names []string) {
+  ...
+}
+{% endhighlight %}
+
+<p>Let's take this a step further and use this knowledge to clarify another common issue. Should you create an array of pointers. For example, which is better?</p>
+
+{% highlight go %}
+  sayans := []*Sayan{
+    &Sayan{Name: "Goku", Power: 9001,}
+  }
+  //or
+  sayans := []Sayan{
+    Sayan{Name: "Goku", Power: 9001,}
+  }
+{% endhighlight %}
+
+<p>In both cases, <code>sayans</code> is a slice. Therefore, when it comes to passing this to a function (or returning it), they are the same. Whether or not the extra indirection provided by the first example is useful depends on the situation, but if you aren't sure, it probably isn't, and you should be using the 2nd version.</p>
+
+<p>The two important points are:</p>
+
+<ol>
+  <li>Slices are references to arrays which happen to have to ability to represent a subset, and
+  <li>Almost everything is already a slice
+</ol>
+
+<br />
+<p>I will repeat an old complaint I have about arrays and slices. The power of slices comes from their absolute transparency. As a side effect you don't know what you're actually dealing with. This could be a problem if you're using a library by someone who hasn't read this blog post ;) Still, what I've come to accept is to treat "arrays" that you get from functions as slices, because, in an overwhelming number of cases, that's exactly what they are.</p>
+
+<p>Hopefully that helps.</p>

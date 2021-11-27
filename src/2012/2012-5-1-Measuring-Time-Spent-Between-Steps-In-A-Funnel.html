@@ -1,0 +1,128 @@
+---
+permalink: "/2012/5/1/Measuring-Time-Spent-Between-Steps-In-A-Funnel/"
+layout: post
+date: 2012-05-01
+title: "Measuring Time Spent Between Steps In A Funnel"
+tags: [modeling, mongodb]
+---
+
+<p><a href="http://openmymind.net/2012/4/20/Using-Map-Reduce-To-Measure-Funnels/">Last time we talked about Map Reduce</a> we were looking at building basic reports around funnels. Given a series of steps (like pages in a survey), how many people start and subsequently reach each page. Although simplistic, it showcases a real-world example of having the map phase emit multiple times.</p>
+
+<p>What if we also wanted to show the average amount of time people spend on each step? First, our map phase gets more complicated. It goes from:
+
+{% highlight javascript %}
+function() {
+  this.steps.forEach(function(s) {
+    emit(s.step, 1)
+  });
+}
+{% endhighlight %}
+
+<p>To: </p>
+
+{% highlight javascript %}
+function() {
+  var length = this.steps.length;
+  for(var i = 0; i < length; ++i) {
+    var step = this.steps[i];
+    var next = this.steps[i+1];
+    var time = next ? (next.at - step.at) / 1000 : 0
+    emit(step.step, {count: 1,  time: time})
+  }
+}
+{% endhighlight %}
+
+<p>Since we care to track more than just an incrementing count, we now emit a more complex value, which includes the our <code>count</code> (1) and the time elapsed (in seconds, hence the <code>/ 1000</code>) until the next step. The last step will have a time of 0</p>.
+
+<p>Given the following data:</p>
+
+{% highlight javascript %}
+[{step: 1, at: 'Jan 1 2014 8:10:00'},
+ {step: 2, at: 'Jan 1 2014 8:12:00'},
+ {step: 3, at: 'Jan 1 2014 8:13:00'}]
+{% endhighlight %}
+
+<p>We'd expect the following emits (key is the step): </p>
+
+{% highlight javascript %}
+  {key: 1, value: {count: 1, time: 120}}
+  {key: 2, value: {count: 1, time: 90}}
+  {key: 3, value: {count: 1, time: 0}}
+{% endhighlight %}
+
+<p>Before we can write our reduce function, there's something we absolutely have to understand about reduce: values associated with a key can be broken into chunks. In fact, this is how reduce is able to scale so well. What exactly does this mean? Well, if we go back to a simple count example where 'about.html' had 4 hits, you might expect reduce to be called with the following values parameter:</p>
+
+{% highlight javascript %}
+  [{count: 1}, {count: 1}, {count: 1}, {count: 1}]
+{% endhighlight %}
+
+<p>And it might, but it might also be called with (or some other variant): </p>
+
+{% highlight javascript %}
+  //1st call
+  [{count: 1}, {count: 1}]
+  //2nd call
+  [{count: 1}, {count: 1}]
+  //3rd call
+  [{count: 2}, {count: 2}]
+{% endhighlight %}
+
+<p>There are a couple implications to this. First, whatever structure you emit as a value should be the same structure you return from reduce. If you <code>emit('about.html', {count: 1})</code>, then you should <code>return {count: X}</code> from reduce. It also means that the array of values you get as a parameter into reduce probably don't represent all values for that key. Finally, it means that reduce must be written in a way that it can be called multiple times without any side effects.</p>
+
+<p>Why is all this so important for measuring the average time spent on each step? Well, to calculate the average we need to take the total time spent on a step and divide it by the number of people who reached that step. But, as is hopefully clear, we don't necessarily have all the values in a given iteration of reduce.</p>
+
+<p>Consider these are all the values for the key representing the 3rd step of our survey:</p>
+
+{% highlight javascript %}
+[{time: 100},
+ {time: 113},
+ {time: 120}]
+{% endhighlight %}
+
+<p>Now, if we knew for sure that we'd get all values at once (which we don't, but let's pretend), we could write a simple reduce function: </p>
+
+{% highlight javascript %}
+function(step, values) {
+  if (values.length == 0) { return 0; }
+
+  var total = 0;
+  values.forEach(function(value) { total += value.time; });
+  return total / values.length;
+}
+{% endhighlight %}
+
+<p>However, what if our engine decided to split this workload? Well, our first call to reduce, which received 100 and 113 would return 106.5 (213/2). Our 2nd call to reduce would get 106.5 and 120 returning a final (and incorrect) value of 113.25.</p>
+
+<p>There are a couple ways to solve this, but the best, by far, is to only care about the total time spent and hits to a specific step. Staying with our above example, we'll emit the following:</p>
+
+{% highlight javascript %}
+[{count: 1, time: 100},
+ {count: 1, time: 113},
+ {count: 1, time: 120}]
+{% endhighlight %}
+
+<p>And our final reduce will return: <code>{count:3, time: 333}</code>. Here's the actual code:</p>
+
+{% highlight javascript %}
+function(step, values) {
+  var value = {count: 0, time: 0}
+  values.forEach(function(v) {
+    value.count += v.count;
+    value.time += v.time
+  });
+  return value;
+}
+{% endhighlight %}
+
+<p>Finally, to get our average, we need to run a final step. In MongoDB we could use the <code>finalize</code> option, but we could just as easily do it in calling code:</p>
+
+{% highlight javascript %}
+function(key, value) {
+  var average = value.count > 0 ? value.time / value.count : 0;
+  return {count: value.count, time: average};
+}
+{% endhighlight %}
+
+<p>There you have it. The number of people and the average time spent on each step.</p>
+
+<p>Normally I'd like to think that I make explanations easy to follow. In this case, things might seem more complicated than they actually are. The takeaway though is that while it's useful to think of the output from map as <code>key => [value1, value2, value3, ....]</code>, the values can be broken into chunks and thus reduce can be called multiple times for a given key. This does have serious implication for how you write your reduce function.</p>

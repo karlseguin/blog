@@ -1,0 +1,53 @@
+---
+layout: post
+date: 2012-06-11
+title: "Azure's Website Lacks Organization and Details"
+tags: [other]
+---
+
+<p>Windows Azure is seeing a number of changes and enhancements lately. Unlike other lagging Microsoft products, I don't think Azure is hopeless; which isn't to say it's a sure thing either. Despite Azure's potential, its website is just too superficial.</p>
+
+<h3>Design</h3>
+<p>I like the website's design. In fact, it seems like one of the few Microsoft properties which has largely escaped ridiculous branding requirements (like having a big ugly Bing search box at the top). The only such silliness is the Live Login that opens in a pop up - which I can forgive.</p>
+
+<p>Hell, even as a micro-optimizer, I gotta say a 217KB homepage with 19 requests is ok (it's great compared to other MS sites). Although, I can't help but point out that they could do better (YSlow gives them a C).</p>
+
+<p>I only have two complaints about the design. First, if you can't give me a fluid design, at least make it wider. Second, and much more seriously, the top navigation is bad. There's no separation between the main menu and the sub-menu, and little separation between sub-menu items. The different font size between the two menus is just confusing.</p>
+
+<p>Still, aside from those two subjective complaints, I like how it looks.</p>
+
+<h3>Content</h3>
+<p>Sadly, despite superficial wins, the website is uninformative and difficult to navigate.</p>
+
+<p>You have to click on every single link to hopefully find useful information. For example, over the course of two days, I failed to find <a href="https://www.windowsazure.com/en-us/pricing/details/">this page containing detailed pricing information</a>. It wasn't until someone happened to tweet it that I learned about it. I was then able to work my way backwards to finding 1 place, at the bottom of a page that links to it. This page is exactly what should show up when you click on the main "Pricing" link. Instead, they give you a calculator. The calculator is useful, but only as an addition to a main and detailed pricing sheet.</p>
+
+<p>They also make you hunt for information rather than putting it where it's most needed. Consider the <a href="https://www.windowsazure.com/en-us/home/scenarios/virtual-machines/">VM landing page</a> and compare it to <a href="http://aws.amazon.com/ec2">Amazon's EC2's</a>. Amazon answers all of your questions in a single page. Pricing? Check. Hardware? Check. Location? Check. Networking Options? Check. On and on. Azure's VM page provides no information. In fact, I remember seeing a place that mentioned multiple data centers, but still haven't seen a list of locations.</p>
+
+<p>Does Azure provide firewalls and load balancers? I honestly can't find any information. In fact, doing a search for Firewall brings up useless results. The first two result for <a href="https://www.windowsazure.com/en-us/searchresults/?query=load%20balancer">load balancer query</a> are 404s!. Think about this for a second. How can your own search engine return 404 results, why aren't these logs being actively monitored and errors fixed? This isn't a trivial query either, I can't be the only one looking for information on load balancing.</p>
+
+<p>I'm not suggesting that AWS' site is perfect. But I do believe that Amazon's website plays to its strength, while Azure's plays to its weaknesses. What do I mean by that? When you go to any AWS site, you are overwhelmed with technical information. The message that Amazon is sending is clear:
+
+  <blockquote>AWS is serious about helping you solve a complicated technical problem. We understand that you have many concerns, including security and reliability. You likely have unique needs, and we feel our experience and engineering expertise will benefit you.</blockquote>
+
+<p>Azure's website says:</p>
+
+  <blockquote>Look at the pretty colors.</blockquote>
+
+<p>It doesn't make it clear what Azure is, which is a common complaint. Worse, it makes hosting look like a blackbox where technical details don't matter. Even if you are targeting CIOs instead of geeks (which is a huge mistake), it just won't work. People go there looking for answers, and don't find any. It's a frustrating experience, and it either makes it look like Azure isn't serious, or that MS thinks you are too dumb to understand any of the details.</p>
+
+<p>The solution is simple. What information is available needs to be better organized. Less links and things spread all over, and more vertical scrolling. If on your main VM page, I don't know what the price of 1 VM is, how powerful it is, how its networking works (including firewalls, load balancing, ip allocations and private networks) and how storage works, you have failed. Missing information obviously has to be added.</p>
+
+<h3>Videos</h3>
+<p>Whenever you put information in a video, rather than in text, you pay a steep price in terms of usability, accessibility and discoverability. There are times when videos are the correct format. But for a site like Azure, with their target audience, the answer to "should we put this in a video?" should almost always be "no".</p>
+
+<p>This is certainly true of their <a href="https://www.windowsazure.com/en-us/develop/overview/">Developer Center</a>. Microsoft non-reference documentation has always leaned heavily on screenshots and videos. Developers have always made fun of the approach, and it'd be nice to see Azure's website break the trend.</p>
+
+<p>Beyond developer-documentation, I bring you back to the bottom of the <a href="https://www.windowsazure.com/en-us/home/scenarios/virtual-machines/">VM page</a>. I was there, looking for more information on networking (can you set up something like Amazon's Private Cloud?), and I find a video, hosted on youtube, for "Networking". I can't search the video. I can't copy and paste information inside of it into an email, and I can't easily compare what little information it shows with text information provided by everyone else. Information needs to be as accessible as possible. Don't place the burden on users to find out more about your product.</p>
+
+
+<h3>Conclusion</h3>
+<p>There's too much focus on looking pretty, and not enough on being useful. It's a stark contrast to Amazon's approach. Arguably, Amazon goes too far in the other direction. However, given their audience, and the technical nature of their services, Amazon makes it clear that they not only get it, but also that they live it.</p>
+
+<p>This isn't just about Azure vs Amazon. It's about Microsoft failing to provide the information customer's need. It's also about them failing to organize what information they do have in a meaningful and discoverable way or to recognize that their customers are sophisticated engineers, trying to solve difficult problems, and in many cases, possessing far more experience and knowledge that Microsoft.</p>
+
+<p>Way more details. Less links and more vertical scrolling. Say no to videos.</p>

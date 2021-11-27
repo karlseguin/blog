@@ -1,0 +1,214 @@
+---
+layout: post
+date: 2012-06-26
+title: "Node.js, Module.Exports and Organizing Express.js Routes"
+tags: [node.js]
+---
+
+<p>A while ago I wrote a post explaining <a href="/2012/2/3/Node-Require-and-Exports/">how require and module.exports work</a>. Today I wanted to show a practical example of how we can use that knowledge to organize routes in an express.js project.</p>
+
+<p>To recap the original post, <code>module.exports</code> is how we make something within our file publicly accessible to anything outside our file. We can export anything: a class, a hash, a function or a variable. When you <code>require</code> something you get whatever it exported. That means that the return value from <code>require</code> can be a class, a hash, a function or a variable. The end result is that how the value returned from <code>require</code> is used can vary quite a bit:</p>
+
+{% highlight ruby %}
+# the user file exported a class
+User = require('./models/user')
+leto = new User()
+
+# the initialize file exported a function
+initliaze = require('./store/inialize')
+initialize(config)
+
+# the models file exported as hash (which has a User key which was an object)
+Models = require('./models')
+user = new Models.User()
+{% endhighlight %}
+
+<p>With that in mind, I happen to be building a website that'll have two distinct sections: an API and a user-facing portal. I'd like to organize my routes/controllers as cleanly as possible. The structure that I'd like is:</p>
+
+{% highlight text %}
+/routes
+/routes/api/
+/routes/api/stats.coffee
+/routes/api/scores.coffee
+
+/routes/portal/
+/routes/portal/users.coffee
+/routes/portal/stats.coffee
+{% endhighlight %}
+
+<p>This is very Rails-esque with controller namespaces and resources. Ideally, I'd like controllers under API (stats and scores) to have access to common API-based methods. How can we cleanly achieve this?</p>
+
+<p>Before we can dive any further we need to understand how express loads routes. You basically attach the route to the express object. The simplest example might look something like:</p>
+
+{% highlight ruby %}
+express = require('express')
+app = express.createServer()
+app.configure ->
+  app.use(app.router)
+
+app.get '/', (req, res) ->
+  res.send('hello world')
+{% endhighlight %}
+
+<p>On line 4 we tell express to enable its routing, and then use the <code>get</code> and <code>post</code> methods (to name a few) to define our routes.</p>
+
+<p>Taking a baby step, if we wanted to extract our route into its own file, we could do:</p>
+
+{% highlight ruby %}
+# routes.coffee
+module.exports = (app) ->
+  app.get '/', (req, res) ->
+    res.send('hello world')
+
+# and use it like so:
+express = require('express')
+app = express.createServer()
+app.configure ->
+  app.use(app.router)
+require('./routes')(app)
+{% endhighlight %}
+
+<p>The syntax might be strange, but there's nothing new here. First, our <code>exports</code> isn't doing anything other than exporting a function that takes a single parameter. Secondly, our require is loading that function and executing it. We could have rewritten the relevant parts more verbosely as:</p>
+
+
+{% highlight ruby %}
+# routes.coffee
+routes: (app) ->
+  ....
+module.exports = routes
+
+# and use it like so:
+routes = require('./routes')
+routes(app)
+{% endhighlight %}
+
+<p>So how do we take this to the next level? Well, we don't want to have to import a bunch of different routes at the base level. We want to use <code>require('./routes')(app)</code> and let that load all the necessary routes. So, the first thing we'll do is put an <code>index</code> file in a routes folder:</p>
+
+{% highlight ruby %}
+# routes/index.coffee
+module.exports = (app) ->
+  require('./api')(app)
+  require('./portal')(app)
+{% endhighlight %}
+
+<p>When you tell node.js to require a folder, it automatically loads its index file. With the above, our initial route loading remains untouched: <code>require('./routes')(app)</code>. Now, this loading code doesn't just include <code>routes/index.coffe</code> it actually executes it (it's calling the function and passing in the <code>app</code> as an argument). All our routes function does is load and execute more functions.</p>
+
+<p>For both our API and portal, we can do the same thing we did for routes:</p>
+
+{% highlight ruby %}
+# routes/api/index.coffee
+module.exports = (app) ->
+  require('./stats')
+  require('./scores')
+{% endhighlight %}
+
+<p>Stats and scores can contain actual routes:</p>
+
+{% highlight ruby %}
+# routes/api/scores.coffee
+module.exports = (app) ->
+  app.post '/api/scores', (req, res) ->
+    # save as score
+
+  app.get '/api/scores', (req, res) ->
+    # get scores
+
+# routes/api/stats.coffee
+module.exports = (app) ->
+  app.post '/api/stats', (req, res) ->
+    # save a stat
+{% endhighlight %}
+
+
+<p>This is a good solution to help us organize our code, but what about sharing behavior? For example, many API functions will want to make sure requests are authenticate (say, using an SHA1 hash of the parameters and signature).</p>
+
+
+<p>Our first attempt will be to add some utility methods to the <code>api/index.coffee</code> file:</p>
+
+{% highlight ruby %}
+# routes/api/index.coffee
+
+routes = (app) ->
+  require('./stats')
+  require('./scores')
+
+signed = (req, res, next) ->
+  if is_signed(req)
+    next()
+  else
+    res.send('invalid signature', 400)
+
+is_signed = (req) ->
+  #how to sign a request isn't the point of this port
+
+module.exports =
+  routes: routes
+  signed: signed
+{% endhighlight %}
+
+<p>Since we are now exporting a hash rather than a function, our <code>routes/index.coffee</code> file also needs to change:
+
+{% highlight ruby %}
+# OLD routes/index.coffee
+module.exports = (app) ->
+  require('./api')(app)
+  require('./portal')(app)
+
+# NEW routes/index.coffee
+module.exports = (app) ->
+  require('./api').routes(app)
+  require('./portal').routes(app) #assuming we do the same to portal
+{% endhighlight %}
+
+<p>Now, we can use our signed method from our scores route:</p>
+
+{% highlight ruby %}
+# routes/api/scores.coffee
+api = require('./index')
+
+module.exports = (app) ->
+  app.post '/api/scores', api.signed, (req, res) ->
+    # save as score
+{% endhighlight %}
+
+<p>For those who don't know, when an express route is given 3 parameters, the 2nd one is treated as something of a before-filter (you can pass in an array of them and they'll be processed in order).</p>
+
+<p>This solution is pretty good, but we can take it a step further and create some inheritance. The main benefit is not having to specify <code>api.</code> all over the place. So, we change our <code>api/index.coffee</code> one last time:</p>
+
+
+{% highlight ruby %}
+# routes/api/index.coffee
+
+routes = (app) ->
+  require('./stats')
+  require('./scores')
+
+class Api
+  @signed = (req, res, next) =>
+    if @is_signed(req)
+      next()
+    else
+      res.send('invalid signature', 400)
+
+  @is_signed = (req) ->
+    #how to sign a request isn't the point of this port
+
+module.exports =
+  routes: routes
+  Api: Api
+{% endhighlight %}
+
+<p>Since the routes are still exposed the same way, we don't have to change the main <code>routes/index.coffee</code> file. However, we can change our scores files like so:</p>
+
+{% highlight ruby %}
+class Scores extends require('./index').Api
+  @routes: (app) =>
+    app.post '/api/scores', @signed, (req, res) ->
+      # save as score
+
+module.exports = Scores.routes
+{% endhighlight %}
+
+<p>And that, is that. There's a lot going on in all of this, but the key takeaway is that you can export anything and that flexibility can lead to some fairly well organized code. You can also leverage the fact that the <code>index</code> file is automatically loaded when its folder is required to keep things nice and clean.</p>
+
+<p>I know this jumped all over the place, but hopefully you'll find it helpful!</p>

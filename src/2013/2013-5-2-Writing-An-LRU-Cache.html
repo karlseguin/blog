@@ -1,0 +1,128 @@
+---
+layout: post
+date: 2013-05-02
+title: "Writing an LRU Cache"
+description: "A skeleton least-recently used (LRU) cache implemented in Go"
+tags: [data structures, golang, performance]
+---
+
+<p>When talking and thinking about data structures, we often limit our imagination to a single structure at a time. This is one reason I like talking about LRU caches, it's a simple example that helps breakdown that artificial barrier. (Something about it reminds me of Picard discovering the paradox).</p>
+
+<p>What's an LRU cache? It's a cache that, when low on memory, evicts least recently used items. LRU is an eviction policy that makes a lot of sense for the typical kind of cache we all deal with on a daily basis.</p>
+
+<h2>Building It</h2>
+<p>How would you build one? First, let's be clear: <code>get</code> and <code>set</code> should be O(1).While building an LRU cache requires that you think in terms of 2 data structures, the reality is that these two data structures actually work more or less separately from each other.</p>
+
+<p>First, we'll need a hashtable. This'll be the structure we use to quickly get and set objects. Next, we'll need a doubly linked list. Whenever we get or set an item from the cache, we'll put (or promote) that same object to the front of our list. When we need to free memory, we'll trim the tail of our list and remove it from our hashtable.</p>
+
+<p>As always, through code comes clarity:</p>
+
+{% highlight go %}
+package LRUCache
+
+import (
+  "container/list"
+)
+
+type Cacheable interface {
+  Key() string
+  Size() int
+}
+
+type LRUCache struct {
+  capacity int
+  items map[string]*LRUCacheItem
+  list *list.List
+}
+
+type LRUCacheItem struct {
+  cacheable Cacheable
+  listElement *list.Element
+}
+
+func New(capacity int) *LRUCache {
+  return &LRUCache{
+    capacity: capacity,
+    items: make(map[string]*LRUCacheItem, 10000),
+    list: list.New(),
+  }
+}
+{% endhighlight %}
+
+<p><code>Cacheable</code> is the interface that a type must satisfy in order for it to work with our cache. <code>LRUCacheItem</code> is the object that we'll be dealing with internally. It holds a reference to both the actual item to cache as well as the linked list element. The reason for this should become more obvious when we look at Get/Promote. Besides that, everything is as we've already described. Namely, we have a hashtable (the items map) and a linked list (the list). The cache's capacity along with the <code>Cacheable</code>'s <code>Size</code> are used together to track available memory (we'll see this soon when we look at <code>Set</code>).</p>
+
+<h3>Get</h3>
+<p>To get an item from a cache, we do:
+
+{% highlight go %}
+func (c *LRUCache) Get(key string) Cacheable {
+  item, exists := c.items[key]
+  if exists == false { return nil }
+  c.promote(item)
+  return item.cacheable
+}
+{% endhighlight %}
+
+<p>The <code>promote</code> method is what keeps items at the front of our list (far away from the pruning that'll happen if we ever run low on memory):</p>
+
+{% highlight go %}
+func (c *LRUCache) promote(item *LRUCacheItem) {
+  c.list.MoveToFront(item.listElement)
+}
+{% endhighlight %}
+
+<p>Between <code>Get</code> and <code>promote</code> we can clearly see the need for <code>LRUCacheItem</code> as a wrapper to both the actual cached object (what <code>Get</code> returns) and the list element (what <code>promote</code> promotes). As you can see, the overhead for an LRU cache isn't high: 3 pointers (the <code>LRUCacheItem</code>'s pointer to the list element, and the standard 2-pointer charge of a doubly linked list).</p>
+
+<p>The above implementation of <code>promote</code> is pretty lazy. I had hoped to do the linked list dance myself, but Go's built-in implementation doesn't expose the head pointer, so we'd just end up relying on <code>MoveToFront</code> anyways.</p>
+
+<h3>Set</h3>
+<p>Set's implementation isn't too difficult either:
+
+{% highlight go %}
+func (c *LRUCache) Set(cacheable Cacheable) bool {
+  if c.capacity < cacheable.Size() { c.prune() }
+
+  //stil not enough room, fail
+  if c.capacity < cacheable.Size() { return false }
+
+  item, exists := c.items[cacheable.Key()]
+  if exists {
+    item.cacheable = cacheable
+    c.promote(item)
+  } else {
+    item = &LRUCacheItem{cacheable: cacheable,}
+    item.listElement = c.list.PushFront(item)
+    c.items[cacheable.Key()] = item
+    c.capacity -= cacheable.Size()
+  }
+  return true
+}
+{% endhighlight %}
+
+<p>The first thing we do is make sure we have enough space in our cache for the new object. If not, we need to free up some memory. Once we know we have enough memory, we can either update the existing entry or create a new one. Either way, we make sure that the item is promoted or pushed to the front of our list. There's a small bug in the above implementation. When we're replacing an item, we really should take its original size into consideration when figuring out if we have enough capacity (for example, if we are replacing a 10MB item with a 2MB item, we're sure to have enough space). Implementing that would just make <code>Set</code> unnecessarily complex for this example though.</p>
+
+<p>The final piece of the puzzle is the <code>prune</code> method:</p>
+
+{% highlight go %}
+func (c *LRUCache) prune() {
+  for i := 0; i < 50; i++ {
+    tail := c.list.Back()
+    if tail == nil { return }
+    item := c.list.Remove(tail).(*LRUCacheItem)
+    delete(c.items, item.cacheable.Key())
+    c.capacity += item.cacheable.Size()
+  }
+}
+{% endhighlight %}
+
+<p>Exactly what you decide to prune is really going to be app-specific. Here we decided to just prune the oldest 50 items. Crude, but it works. Pruning involves removing the tail item from our list, removing that item form our hashtable, and finally recording the freed capacity. The <code>.(*LRUCacheItem)</code> syntax is how you cast in Go.</p>
+
+<h2>Next Steps</h2>
+<p>To be of any use, our cache is missing one fundamental part: concurrency control. As a bad start, you could control access to Get and Set through a mutex. However, more fine-grained locking through a read-write mutex is a more suitable solution. Our own cache has 2 layers (more or less a hashtable of hashtables), which means that the few write lock on the main cache are short lived.</p>
+
+<p>Depending on your specific needs, there are a lot of customizations you can make. In our case, we know that our system has spare memory, so we can take a number of shortcuts. For example, we don't promote an item that's been recently promoted. This means that, in a lot of cases, we've replaced a write-lock with a read-lock.</p>
+
+<h2>Single Data Structure Approach</h2>
+<p>I'm aware of one production system that implements an LRU using a single data structure: Redis. Redis takes the mother of all shortcuts when it comes to evicting least recently used items. It randomly picks three values and evicts the oldest of the three. That means that, in the worst case, Redis' LRU policy will actually evict your third most popular item. The sample size can be tweaked. It's a neat approach.</p>
+
+<p>A year ago I would have told you a big part of programming is about trading CPU for memory. I've since realized there's a third dimension: accuracy. Playing with all three is fun.</p>

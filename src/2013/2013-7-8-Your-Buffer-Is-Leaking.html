@@ -1,0 +1,38 @@
+---
+layout: post
+date: 2013-07-08
+title: "Your Buffer Is Leaking"
+description: "Buffer-based data structures, like dynamic arrays and string builders, are easy to use at the cost of poor memory characteristics"
+tags: [data structures, golang]
+---
+
+<p>All modern languages and framework expose a set of buffer-backed data structures. Things like dynamic arrays (aka [Array]Lists) and StringBuilder. They are a useful convinience that comes with a steep price: poor memory characteristics.</p>
+
+<p>The way these work is simple: a fixed-length structure (typically an array) which copies itself into a larger fixed-length structure as needed. A dynamic array, for example, might start life as a fixed-array capable of holding 20 items. Inserting a 21st item causes a new array, with a capacity of 40 to get allocated. The values within the old array are copied to the new array along with the new item, thus leaving 19 free slots.</p>
+
+<p>The performance characterstics of such structures is the same as the underlying structure for read operations. While a write operation isn't guarnateed to be the same as the underlying structure, more often than not, it is.</p>
+
+<p>The real problem with these structures is the impact they have on memory. Consider Go's useful <code>ioutil.ReadAll</code> which uses a dynamically growing <code>bytes.Buffer</code> to read data from various sources into a byte array. It starts off with a an array of 512 bytes and grows by 2 as needed. To read a 1 megabyte file, we'll need to allocate 11 distinct byte arrays. All but the last of these will serve any real purpose (the rest will eventually get garbage collected).</p>
+
+<p>Things get much worse from here. First, buffers have a tendency to fragment memory. Those 10 extraneous allocations turn our heap into swiss cheese. There's 1 meg of free space, but it isn't continous, and thus not necessarily usable. Now our GC needs to do compaction. If memory is pinned, which happens when managed languages interop with unmaged code (at least in .NET, but I assume others as well), compaction suddenly becomes difficult. Before long, you're running out of memory despite only using a fraction of what appears to be available.</p>
+
+<p>But wait, there's more. What happens if we want to read a file that's a few bytes more than 1MB? We'll need to make a 12th allocation, which will consume 2MB. That's almost 50% wasted space.</p>
+
+<p>What can we do? First, if you know the size upfront, don't use a dynamic structure. Here's how you can read a file in Go without the use of a dynamic buffer:</p>
+
+{% highlight go %}
+  file, err := os.Open("itsover.9000")
+  if err != nil { ..handle .. }
+  defer file.Close()
+  stat, _ := file.Stat()
+  bytes := make([]byte, stat.Size())
+  file.Read(bytes)
+{% endhighlight %}
+
+<p>If you don't know the exact size but have a vague idea, start there. Many buffer-based data structures let you specify an initial size, which is good because they tend to start small. Java's <code>StringBuilder</code> has a constructor which takes an initial <code>capacity</code>. Use it.</p>
+
+<p>As a more advanced, but certainly not uncommon approach, many people use a pool to avoid having to dynamically allocate memory. In the above Go example, rather than creating a byte array on the fly, I could possibly checkout a slice from a much larger pool which is initialized on startup. Once done with the byte array, I'd release it back into the pool. This essentially eliminates fragementation and any GC impact, since the memory will never be GC'd. It's a more advanced topic, but certainly worth considering in some cases (like reading and writing a lot and to sockets).</p>
+
+<p>The important thing though is that you understand how these dynamic structures work, and the impact they have on memory. Understand that they tend to start small and grow as needed (2x isn't a rule, but it's common and a safe way to think about it). Each time it grows, a hole is left in your memory which will need to be garbage collected.</p>
+
+<p>If your objects are long lived, consider that you might be holding on to a lot more memory than you realize. This can essentially be seen as a managed memory leak.</p>

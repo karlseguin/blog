@@ -1,0 +1,121 @@
+---
+layout: mongly
+title: "Speeding Up Queries: Understanding Query Plans"
+multi: false
+tags: [mongodb, performance]
+---
+<style>
+#page{width:800px;margin:0 auto;}
+h1{margin:20px auto;text-align:center;font-size:38px;}
+h2{margin-top:25px;}
+h3{margin-bottom:5px;}
+p{line-height:36px;margin-bottom:20px;}
+pre{margin-bottom:  50px;padding: 10px}
+
+@media screen and (max-width: 800px) {
+  #page{width: 100%; padding: 10px}
+  code[class*="language-"],
+  pre[class*="language-"], pre{margin-left: 0; white-space: pre-wrap; word-break: break-word}
+}
+</style>
+
+<h1>{{ title }}</h1>
+<p>Indexes are one of the most important things to master about MongoDB. Proper indexes can mean the difference between a query that takes minutes and one that takes a few seconds. Looking at a query's <code>explain</code> output is the first thing you should do when troubleshooting a slow query.</p>
+<p>A query that doesn't use an index can be identified by its <em>BasicCursor</em> cursor type. Such a query must scan every document in the collection. Or, put differently, the number of scanned documents (<em>nscannedObjects</em>) will always be equal to the collection's <code>count</code>. This should only be tolerated for small collection and possibly infrequently-ran background tasks.
+
+{% highlight javascript %}
+> db.unicorns.find({weight: {$gt: 500}}).explain()
+cursor: "BasicCursor",
+nscannedObjects: 12,
+n: 10 // matching documents
+{% endhighlight %}
+
+<p>A query that uses an index has a cursor of type <em>BtreeCursor</em> (or <em>GeoBrowse-XYZ</em> for a 2D index). The used index is part the cursor type (<em>_id_</em> in this case). MongoDB decides which query plan to use by occasionally executing them all, and using the first one to finish. You can see all potential plans for a query by passing <code>true</code> to <code>explain</code>.</p>
+
+{% highlight javascript %}
+> db.unicorns.find({_id: ObjectId("SOME_ID")}).explain()
+cursor: "BtreeCursor _id_",
+nscannedObjects: 1,
+n: 1
+{% endhighlight %}
+
+
+<p>As important as it is to have MongoDB use an index, it's as important that we make the correct indexes available. Selecting the correct fields to index isn't complicated, but it is important. Even a single field equality operation requires some consideration.</p>
+<p>Indexes should be selective. Imagine building an online bookstore, where 90% of your products are categories as <em>books</em>, and the remaining 10% is places in a variety of categories. An index on <code>cat</code> will do wonders when searching for <em>bookmark</em>, but won't be useful for when searching for <em>book</em>. Such low-selectivity indexes often end up wasting space.</p>
+<p>Compare the outputs from our two queries. When searching for a rare term, the index is highly effective. However, when we search for a common term, the query takes considerably longer. If 95% of searches happen to be for <em>bookmark</em> this inconsistency might be acceptable. In most cases, it isn't.</p>
+<p>Compound indexes, discussed next, can help improve the selectivity of such indexes.</p>
+
+{% highlight javascript %}
+> db.products.find({cat: 'bookmark'}).explain().explain()
+cursor: "BtreeCursor cat_1",
+nscannedObjects: 9908,
+n: 9908,
+millis: 34 // took 34 milliseconds
+
+> db.products.find({cat: 'book'}).explain()
+cursor: "BtreeCursor cat_1",
+nscannedObjects: 910056,
+n: 910056,
+millis: 2699
+{% endhighlight %}
+
+
+<h2>Compound Indexes</h2>
+<p>MongoDB cannot merge multiple indexes. For a given query, a single index will be used. Therefore, well thought-out compound indexes should be your goal. Identifying what group of fields should be indexed together is about understanding the queries that you are running. Beyond that, there are two things to know. First, index ordering matters. Second, and somewhat related, being smart about it so we have the fewest possible indexes.</p>
+
+<h3>Field Order</h3>
+<p>The order of the fields used to create your index is critical. The good news is that, if you get the order wrong, the index won't be used at all, so it'll be easy to spot with <code>explain</code>.</p>
+<p>The queries on the right are two different queries. What's important though is that the first query cannot use the index because <code>cat</code> is defined first in our index. You should think of compound indexes as having the field values concatenated together. So, an "index value" of "book405" (cat + qty) can only be used to find something by cat <strong>or</strong> cat and qty.</p>
+<p>The two queries return around the same number of documents, but the second, index-powered query, has to scan a significantly smaller number of objects. This is due to the logarithmic nature of B-trees, which Mongo indexes use.</p>
+
+{% highlight javascript %}
+> db.products.createIndex({cat: 1, qty: 1})
+> db.products.find({qty: {$gt: 400}}).explain()
+cursor: "BasicCursor",
+nscannedObjects: 990001,
+n: 196267,
+millis: 1342
+
+> db.products.find({qty: {$gt: 400}, cat: 'book'}).explain()
+cursor: "BtreeCursor cat_1_qty_1",
+nscannedObjects: 178442,
+n: 178442,
+millis: 635
+{% endhighlight %}
+
+<h3>Sorting</h3>
+<p>Sorting can be an expensive operation, so it's important to treat the fields that you are sorting on just like a field that you are querying. There is one important difference though, the field that you are sorting must be the last field in your index. The only exception to this rule is if the field is also part of your query, then the must-be-last-rule doesn't apply.</p>
+<p>The query on the right sorts on a third field which isn't part of our index. The same documents are returned, but it takes more than 6 times longer. The only solution is to add <code>price</code> as the last field of our index. If however, we wanted to sort on <code>qty</code> or <code>cat</code>, our index wouldn't need to change.</p>
+
+<p>What would happen if we kept our existing index and added a separate index to <code>price</code>? If you think it'll solve the issue, head back to the top and start reading again. A MongoDB query can only use one query. The correct answer is...You can't know unless you run <code>explain</code>. It's a pretty safe bet that MongoDB will use an index, but whether it uses the original index or the new index is up to its query plan (which is based on which one actually runs faster).
+
+{% highlight javascript %}
+> db.products.find({qty: {$gt: 400}, cat: 'book'})
+             .sort({price:1}).explain()
+
+cursor: "BtreeCursor cat_1_qty_1",
+nscannedObjects: 178442,
+n: 178442,
+millis: 4047,
+scanAndOrder: true, // an indexless sort was used (bad!)
+
+> db.products.createIndex({price:1})
+> db.products.find({qty: {$gt: 400}, cat: 'book'})
+             .sort({price:1}).explain()
+
+cursor: "BtreeCursor cat_1_qty_1", // for me it used the original
+{% endhighlight %}
+
+<h3>Being Smart About Indexes</h3>
+<p>Indexes aren't free. They take memory, and impose a performance penalty when doing inserts, updates and deletes. Normally the performance hit is negligible (especially compared to gains in read performance), but that doesn't mean that we can't be smart about creating our indexes.</p>
+
+<p>When we first looked at the importance of field order, we created a single index and looked at two queries. The first query, on <code>qty</code>, couldn't make use of the index due to field ordering. If we just reverse our indexes fields, from <code>{cat: 1, qty: 1}</code> to <code>{qty: 1, cat: 1}</code>, both queries will be able to use the index.</p>
+
+<p>There's no point at looking at other examples. The ability to reorder indexes to satisfy a greater number of queries is highly dependent on your particular scenario. However, I assure you that it happens often, and looking at your queries and indexes from this perspective is the key to fast code.</p>
+
+<h2>They Key Points Are...</h2>
+<p>Learning to use and love <code>explain</code> should be your first priority. If you aren't sure, try it and explain it. Then change it and explain it. And, if you are going to ask people for help with a query, make sure to include the output of <code>explain</code> (as well as <code>db.coll.getIndexes()</code>).</p>
+
+<p>After that, understand two key points. First, while an index is better than no index, the correct index is much better than either. Secondly, MongoDB will only use one index per query, making compound indexes with proper field ordering what you probably want to use.</p>
+
+<p>As the ultimate goal, the closer you can get <code>nscannedObjects</code> to <code>n</code> (scanned documents/indexes vs matching documents), the better things will run.</p>

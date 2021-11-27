@@ -1,0 +1,249 @@
+---
+permalink: "/2012/5/7/Lets-Increment-I-Logic-Gate-Style/"
+layout: post
+date: 2012-05-07
+title: "Let's Increment i, Logic Gate Style"
+tags: [tech]
+---
+<style>
+img{display:block;margin:auto;padding:30px;}
+#addition{position:relative;}
+.button{position:absolute;top:40px;left:175px;border:1px solid #ccc;padding:10px;background:#ddd;border-radius:4px;font-size:100%;cursor:pointer;text-shadow:1px 1px 1px #fff; background: #e6e6e6; background: -webkit-gradient(linear, left top, left bottom, from(#e6e6e6), to(#ccc)); background: -moz-linear-gradient(-90deg, #e6e6e6, #ccc);}
+.button:hover{background:#ccc; background: -webkit-gradient(linear, left top, left bottom, from(#ccc), to(#aaa));background: -moz-linear-gradient(-90deg, #ccc, #aaa);}
+#addition .inactive{color:#ddd;}
+#carry, #addition .active{color:#00f;}
+
+#truth{width:500px;margin:20px auto;border-collapse:collapse;}
+#truth th{background:#eee;}
+#truth th{border:1px solid #ddd;}
+#truth th, #truth td{padding:5px;text-align:center;}
+#truth tbody td{border:1px solid #eee;}
+#truth tbody tr:nth-child(even){background:#f6f6f6;}
+#truth tbody tr.highlight{background:#ffa;}
+
+#halfadder{background:url('/assets/forposts/logic_gate/halfadder.png') no-repeat 25px 25px;width:400px;height:175px;position:relative;margin:20px auto 0;}
+#halfadder input[name="a"]{position:absolute;top:32px;left:42px;}
+#halfadder input[name="b"]{position:absolute;top:52px;left:42px;}
+#halfadder input[name="s"]{position:absolute;top:41px;left:180px;}
+#halfadder input[name="c"]{position:absolute;top:96px;left:180px;}
+
+#fulladder{background:url('/assets/forposts/logic_gate/fulladder.png') no-repeat 25px 25px;width:400px;height:225px;position:relative;margin:20px auto 0;}
+#fulladder input[name="a"]{position:absolute;top:31px;left:52px;}
+#fulladder input[name="b"]{position:absolute;top:51px;left:52px;}
+#fulladder input[name="cin"]{position:absolute;top:70px;left:52px;}
+#fulladder input[name="s"]{position:absolute;top:59px;left:375px;}
+#fulladder input[name="cout"]{position:absolute;top:135px;left:375px;}
+</style>
+<script src="/assets/jquery.1.11.2.js"></script>
+
+<p>Last week we looked at the <a href="/2012/5/3/Lets-Increment-I-Assembly-Style/">assembly behind incrementing a value</a>. Today, we'll step out of the software world and step into the low-level hardware world: logic gates. Specifically, we want to add two numbers using electricity.</p>
+
+<p>The foundation for modern electronics is, of course, the transistor. Transistors work as a switch either allowing or blocking voltage from flowing through. By combining transistors and resistors in various configurations, you can build logic gates, which is what we'll be focusing on. There are three basic logic gates you are probably already familiar with: <code>and</code>, <code>or</code> and <code>not</code>.</p>
+
+<p>Remember, we are in a world of digital circuits and thus are dealing exclusively with 1s and 0s. A <code>not</code> gate takes a single input. When that input is 1, the output is 0. When the input is 0, the output is 1. Both <code>and</code> and <code>or</code> gates take 2 inputs and have 1 ouput. The output of an <code>and</code> gate will only be 1 if both inputs are 1. The output of an <code>or</code> gate however, will be 1 if either inputs are 1. This visualization of some possible inputs and the resulting outputs for <code>and</code> and <code>or</code> gates should help:</p>
+
+<img src="/assets/forposts/logic_gate/logic_1.png" alt="inputs and outputs for and and or gates" style="height:175px;width:452px;" />
+
+<p>There are a few other logic gates in addition to these three. The one which we are particularly interested in is the <code>xor</code> gate. The output of an <code>xor</code> gate will only be 1 if one, but not both, input is 1. This differs from an <code>or</code> gate which will have an output if either or both inputs are 1.</p>
+
+<p>Before we can start playing with our logic gates, we need to know how to add binary numbers. Hopefully you already know a bit of binary. 0000 is 0, 0001 is 1, 0010 is 2, 0011 is 3, 0100 is 4, 0101 is 5, 0110 is 6 and 0111 is 7. Let's look at some basic examples and see what we can learn: </p>
+
+<pre>
+  0000   (0)
++ 0001   (1)
+------------
+  0001   (1)
+
+
+  0001   (1)
++ 0001   (1)
+------------
+  0010   (2)
+
+
+  0010   (2)
++ 0001   (1)
+------------
+  0011   (3)
+
+
+  0011   (3)
++ 0001   (1)
+------------
+  0100   (4)
+</pre>
+
+<p>I'm not sure if you see it, but adding binary numbers is a lot like adding decimal numbers. When a column overflows beyond its maximum capacity, we carry over. In decimal, the maximum capacity of a column is 9. In binary, the maximum capacity is 1.</p>
+
+<p>Here's the step by step process for adding 3 to 3. Hit the <code>next</code> button to go through it</p>
+
+<pre id="addition">
+  <span id="carry"></span>  <input type="button" id="next" class="button" value="next" />
+  <span class="col4">0</span><span class="col3">0</span><span class="col2">1</span><span class="col1">1</span>   (3)
++ <span class="col4">0</span><span class="col3">0</span><span class="col2">1</span><span class="col1">1</span>   (3)
+------------
+  <span id="answer"></span>
+</pre>
+
+<p>You might not see the pattern, but look at the above closely and consider it with respect to what we've learned about logic gates. On a per-column basis, we have two inputs and a single output. Forget about the carryover for a second. When the two inputs are 0, the output is 0. When either input is 1, the output is 1. When both inputs are 1, the output is 0. Remind you of anything? That's exactly how an <code>xor</code> gate behaves. What about that carry bit? Well, the only time we carry 1 is when both inputs are 1. That's an <code>and</code> gate.</p>
+
+<p>Knowing this, to add two bits together, we need the following circuit (click on the checkboxes to verify the output!): </p>
+
+<div id="halfadder">
+  <input type="checkbox" name="a"><input type="checkbox" name="b" />
+  <input type="radio" name="s" disabled /><input type="radio" name="c" disabled />
+</div>
+
+<p>This is known as a half adder. Given two inputs, we get two outputs. The top gate, which is an <code>xor</code>, gives us the sum, while the bottom <code>and</code> gate gives us the carry value.</p>
+
+<p>There's an obvious reason this is known as a <strong>half</strong> adder. If you go back to our sample binary addition, you'll notice that in order to add binary numbers, we actually need to support 3 inputs: the two values being added plus the carry value from the previous operation. For this, we use a full adder, which is actually two half adders with an additional <code>or</code> gate:</p>
+
+<div id="fulladder">
+  <input type="checkbox" name="a"><input type="checkbox" name="b" /><input type="checkbox" name="cin" />
+  <input type="radio" name="s" disabled /><input type="radio" name="cout" disabled />
+</div>
+
+<table id="truth">
+  <thead>
+    <tr>
+      <th colspan="3">inputs</th>
+      <th colspan="2">outputs</th>
+    </tr>
+    <tr>
+      <th width="20%">A</th>
+      <th width="20%">B</th>
+      <th width="20%">C<sub>in</sub></th>
+      <th width="20%">S</th>
+      <th width="20%">C<sub>out</sub></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr data-id="000" class="highlight">
+      <td>0</td>
+      <td>0</td>
+      <td>0</td>
+      <td>0</td>
+      <td>0</td>
+    </tr>
+    <tr data-id="001">
+      <td>0</td>
+      <td>0</td>
+      <td>1</td>
+      <td>1</td>
+      <td>0</td>
+    </tr>
+    <tr data-id="010">
+      <td>0</td>
+      <td>1</td>
+      <td>0</td>
+      <td>1</td>
+      <td>0</td>
+    </tr>
+    <tr data-id="011">
+      <td>0</td>
+      <td>1</td>
+      <td>1</td>
+      <td>0</td>
+      <td>1</td>
+    </tr>
+    <tr data-id="100">
+      <td>1</td>
+      <td>0</td>
+      <td>0</td>
+      <td>1</td>
+      <td>0</td>
+    </tr>
+    <tr data-id="101">
+      <td>1</td>
+      <td>0</td>
+      <td>1</td>
+      <td>0</td>
+      <td>1</td>
+    </tr>
+    <tr data-id="110">
+      <td>1</td>
+      <td>1</td>
+      <td>0</td>
+      <td>0</td>
+      <td>1</td>
+    </tr>
+    <tr data-id="111">
+      <td>1</td>
+      <td>1</td>
+      <td>1</td>
+      <td>1</td>
+      <td>1</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>To add larger numbers, we just need to chain <code>C<sub>out</sub></code> into another adder's <code>C<sub>in</sub></code>.</p>
+
+<p>And that, my dedicated reader, is how computers add numbers! Worth mentioning is that logic gates are used for much more than just basic arithmetics. Much like transistors serve as the building block for logic gates, logic gates themselves serve as the foundation for everything else: registers, memory, multiplexers and so on. When you hear about CPUs containing billions of transistors, that means that they contain hundreds of millions of logic gates.</p>
+
+<p>Cool stuff?</p>
+
+<script>
+var step = 0;
+var $container = $('#addition');
+var $answr = $('#answer')
+var $carry = $('#carry');
+$('#next').on('click', function() {
+  runner['step_' + ++step]();
+});
+
+var runner = {
+  step_1: function() {
+    $container.find('.col1, .col2, .col3, .col4').addClass('inactive');
+    $container.find('.col1').addClass('active');
+  },
+  step_2: function() {
+    $answr.text('   0   (0)');
+    $carry.text('  1');
+    $container.find('.col1').removeClass('active');
+    $container.find('.col2').addClass('active');
+  },
+  step_3: function() {
+    $answr.text('  10   (2)');
+    $carry.text(' 1');
+    $container.find('.col2').removeClass('active');
+    $container.find('.col3').addClass('active');
+  },
+  step_4: function() {
+    $answr.text(' 110   (6)');
+    $carry.text('');
+    $container.find('.col3').removeClass('active');
+    $container.find('.col1, .col2, .col3, .col4').removeClass('inactive');
+    $answr.addClass('active');
+  },
+  step_5: function() {
+    $answr.removeClass('active').text('')
+    step = 0;
+  }
+}
+
+var $halfadder = $('#halfadder').on('change', ':checkbox', function() {
+  var a = $halfadder.find('[name=a]').is(':checked')
+  var b = $halfadder.find('[name=b]').is(':checked')
+  var sum = a ^ b ? true : false;
+  var carry = a && b;
+  $halfadder.find('[name=s]').attr({checked: sum, disabled: !sum});
+  $halfadder.find('[name=c]').attr({checked: carry, disabled: !carry});
+});
+
+
+var $fulladder = $('#fulladder').on('change', ':checkbox', function() {
+  var a = $fulladder.find('[name=a]').is(':checked')
+  var b = $fulladder.find('[name=b]').is(':checked')
+  var cin = $fulladder.find('[name=cin]').is(':checked')
+
+  var sum = (a ^ b) ^ cin ? true : false;
+  var carry = ((a ^ b) && cin) || (a && b)
+  $fulladder.find('[name=s]').attr({checked: sum, disabled: !sum});
+  $fulladder.find('[name=cout]').attr({checked: carry, disabled: !carry});
+
+  var id = (a ? '1' : '0') + (b ? '1' : '0') + (cin ? '1' : '0');
+  $('#truth tbody').children().removeClass('highlight').filter('[data-id=' + id + ']').addClass('highlight');
+});
+
+</script>

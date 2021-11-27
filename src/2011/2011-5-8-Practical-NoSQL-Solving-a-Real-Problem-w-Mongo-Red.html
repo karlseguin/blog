@@ -1,0 +1,100 @@
+---
+permalink: "/2011/5/8/Practical-NoSQL-Solving-a-Real-Problem-w-Mongo-Red/"
+layout: post
+date: 2011-05-08
+title: "Practical NoSQL - Solving a Real Problem with MongoDB and Redis"
+tags: [modeling, mongodb, performance, redis]
+---
+<p>When I wrote <a href="http://openmymind.net/2011/3/28/The-Little-MongoDB-Book">The Little MongoDB Book</a> (hey, it's free) I presented the point of view that, broadly speaking, NoSQL was about expanding our toolset with respect to data storage. In addition to new tools, NoSQL is also about viewing, and storing, data with an open mind and using new modeling techniques (if not new, than at least newly accepted).</p>
+
+<p>This weekend I spent time solving a problem using both a new tool and a new modeling approach. It's an experience I'd like to share. As I start to rewrite and open source mogade (<a href="http://github.com/mogade/mogade-server">on github</a>), one of the things I'm most anxious to fix is how we return a player's rank for a given leaderboard. I also took the opportunity to change how we retrieve actual leaderboard pages (since the two are related). Both of these changes required significant reworking of how we save scores. First I'd like to explain the version 1 approach, then look at how I approached it in version 2.</p>
+
+<p>All you really need to know about <a href="http://mogade.com">mogade</a> is that it provides leaderboards for game developers (also free!)</p>
+
+<h2>The Original Design</h2>
+<h3>Saving a score</h3>
+<p>Data in version 1 of mogade is modeled much like you'd expect to see using a traditional approach. Essentially, a player's score is stored in a <code>scores</code> collection. The collection contains the leaderboard's id, player's name, a unique identifier for the player (think device id + name), the date the score was achieved, and how many points the player got:</p>
+
+{% highlight clike %}
+|	lid	|	name	|	unique		|	date			|	points	|
+|	1	|	leto	|	device-1-leto	|	2011/04/11 10:32	|	100000	|
+|	1	|	paul	|	device-1-paul	|	2011/04/12 09:22	|	200000	|
+|	2	|	duke	|	device-3-duke	|	2011/04/12 18:34	|	200000	|
+|	1	|	jess	|	device-2-jess	|	2011/04/13 21:44	|	300000	|
+{% endhighlight %}
+
+<p>In truth, there are a couple added complexities. For example, we allow for various time scopes (daily, weekly and overall) also, developers can control when a leaderboard resets (a UTC offset) - which was, surprisingly to me, a highly requested feature. So the actual implementation is that we have three separate collections: <code>scores_daily</code>, <code>scores_weekly</code> and <code>scores_overall</code>. These could have all been put into a single collection, but it would have required another index, and, I think, resulted in more complicated code. We also allow a bit of arbitrary data to be stored with each score. Finally, we only keep a player's best score per scope.</p>
+
+<p>Saving a new score ends up being pretty straightforward. All we do is get the player's previous daily, weekly and overall scores and update them if the new score is better. We can even be smart about it because if a score is worse than the previous daily score, it'll have to be worse than the weekly and overall scores.</p>
+
+<p>If the new score is worse than all previous scores, then saving will take a single read. If the score is better than all scores, then it'll take three reads and three writes.</p>
+
+<p>Daily and weekly scores can actually be stale. That is, the score we get back might have been for the previous day/week. We don't rely on having data scrubbed at the precise moment a day/week turns over. That just means that when we compare to the previous top-daily score, we check both the points and the date...nothing complicated there.</p>
+
+<h3>Getting Leaderboards</h3>
+<p>The approach for getting a page out of the leaderboard is: based on the requested scope (daily, weekly or overall) we query the appropriate collection for scores, ordered by descending points, where the date is greater than a specific date. So, for the daily score we'd page where <code>lid = 'someid' && date >=' 2011/04/13 12:00:00am'</code>. Simple.
+
+
+<h3>Getting Ranks</h3>
+<p>When we want to retrieve a player's rank, we first find their top score for each scope (daily, weekly and overall), then count how many entries have better scores. Pretty simple, right? The problem is that as a game gets more popular, we are potentially counting over millions of rows. Also, since mogade is targeted at casual/mobile games, a lot of play session are very short lived (think of those vertical scrollers), which means we are getting ranks many times per second. The performance of getting ranks is linear to the number of scores stored. The approach simply isn't web-scale - even with proper indexing. (the temporary solution that we've come up with is to limit ranks to 5000, which freakin' sucks).</p>
+
+<h2>The New Design</h2>
+<p>The first change we made, which is small (but I want to cover anyways), is that we no longer store the date and time the score was created at. Instead, we store the start of the given leaderboard scope. So, if we are storing a daily score to a leaderboard with a UTC offset of 4, we'll actually store <code>2011/05/07 20:00</code> (assuming today is May 8th). Why? For two reasons. First, grabbing a leaderboard now turns into a <code>==</code> rather than a <code>&gt;=</code>. Also, we can move to a 32bit int field rather than a 64bit date field, resulting in less memory used by our index.</p>
+
+<p>Also, we introduced a new <code>high_scores</code> collection which, in a single collection, tracks a user's top scores for all scopes. This is an important change because in a lot of cases, it'll turn 3 reads (to three separate collection) into a single read. This data is completely duplicated from what we could easily get out of <code>scores_daily</code>, <code>scores_weekly</code> and <code>scores_overall</code>. Given that we'll be making significant changes to saving a score in order to solve our ranking problem, this is a good tradeoff to make (as you'll see).</p>
+
+<h3>New ranking, attempt 1</h3>
+<p>The truly interesting changes though were done to address our ranking problem. The goal is to make the performance less dependent on the number of scores in a leaderboard. The first approach I toyed with was to try to store denormalized ranks in their own collection. Forgetting the multiple scopes and leaderboards for the time being, I was thinking something like:</p>
+
+{% highlight clike %}
+|	points	|	rank	|	count	|
+|	100000	|	5233	|	2	|
+|	200000	|	2088	|	1	|
+|	300000	|	1002	|	4	|
+{% endhighlight %}
+
+<p>We could then get a player's score, and figure out his or her rank simply by looking up the corresponding row (keyed by points (and leaderboard id, and scope, and date...)).</p>
+
+<p>Of course, how do you keep the above <code>ranks</code> collection up to date? First, whenever you get a new score, you need to bump up the rank of all worse scores. Second, you somehow have to deal with removing/ignoring ranks that no longer belong to anyone (because we only keep 1 score per player, when he or she gets a better score, his or her old rank is no longer valid). At this point I decided to move on. This wasn't a complete waste of time though, it made my mind start to think about ranking as a non-linear operation, and highlight some of the difficulties I'm going to run into.</p>
+
+<h3>New ranking, attempt 2</h3>
+<p>I was a little bit down after the initial (and spectacular) failure above. I decided that I needed a solution outside of what I knew. This is when I turned to Redis. Thankfully I was familiar with earlier version of Redis (from writing an asynch driver in C# a year or so ago), so I knew some concepts.</p>
+
+<p>It turns out that sorted sets are a core Redis data structure. How do they work? You give Redis a key, a score and a value, and it provides all types of efficient and simple ranking methods. Our key would be the leaderboard id, the scope, and the scope+leaderboard start time. Something like <code>3234_daily_201105072000</code> (that's May 7th 2011, at 8PM).  Any daily scores we get for leaderboard id <code>3234</code> for the given timeframe can be added to this ordered set:</p>
+
+{% highlight ruby %}
+Redis.zadd("3234_daily_201105072000", 1000000, "device1-leto")
+Redis.zadd("3234_daily_201105072000", 200000, "device1-paul")
+Redis.zadd("3234_daily_201105072000", 300000, "device-2-jess")
+{% endhighlight %}
+
+<p>The last parameter is called the <code>member</code>, and it's extremely useful. When we add a value with an existing member, Redis updates the old value. This is exactly the behavior we want for our one-score-per-player behavior.</p>
+
+<p>Getting a rank is also done by member, so we don't have to go to our new <code>high_scores</code> collection to first get a player's top scores:</p>
+
+{% highlight ruby %}
+Redis.zrevrank("3234_daily_201105072000", "device1-paul")  # gives us 1 (it's 0 based)
+{% endhighlight %}
+
+<h3>Saving Scores</h3>
+<p>With this in place, what's the process for actually saving a score? It hasn't changed too much. First we get the player's top score for all scopes from our new <code>high_scores</code> collection. Next, when the score is higher than either our previous daily, weekly or overall scores, we the appropriate <code>scores_SCOPE</code> MongoDB collection, the appropriate Redis key and the <code>high_scores</code> collections.</p>
+
+<p>If you've been paying attention, that means that, at the best case (when the new score is worse than any previous scores for the player), we still have a single read. At the worse case we have 1 read, 4 writes to MongoDB and 3 writes to Redis (compared to 3 reads and 3 writes in the original approach). There's also in-between cases when it's a better daily/weekly score but not a better weekly/overall score (as there was in the original).</p>
+
+<h2>Some Thoughts</h2>
+<p>First of all, 8 operations to external stores isn't great. Also, we've introduced considerable complexity by adding a second type of store.</p>
+
+<p>With respect to the first point, there are two positive things to keep in mind. First, writes happen a lot less than reads. Optimizing for reads makes a lot of sense. Also, we didn't just shift when/where these operations were taking place. We've fundamentally changed what those operations were, specifically targeting hot spots. I did some preliminary benchmarking and the results were...mind blowing. Given a leaderboard with 5 million records, getting random ranks for 10000 scores using the original approach, took minutes (say, around 5..I got bored and stopped it). Using the new approach? 147 milliseconds. I spent more time making sure my test was actually legitimate than almost anything else - I couldn't believe it. So, the performance gains to the most intense feature (by far) is massive (both <code>zadd</code> and <code>zrevrank</code> are O(log(N))). Nevertheless, I wouldn't mind having less operations on save.</p>
+
+<p>I considered using Redis exclusively for our leaderboards, but given that a score can change by more than just points/rank (that arbitrary piece of data I briefly mentioned), you'd have to delete the old entry for the player and create a new one. MongoDB's upsert as well as its ability to filter from any field, is just too powerful.</p>
+
+<p>As for the complexity. Sure, I now have to manage a second data store. But, like MongoDB, Redis is proving easy to use and master. I have a lot of duplicate data, and things might get out of synch. The <code>high_scores</code> collection will be the authoritative source, from which I can always fix up the <code>scores_SCOPE</code> collections and the Redis keys. Also, I plan on running the Redis master on the MongoDB slave, and the MongoDB master on the Redis slave - so no extra hardware for now.</p>
+
+<p>Finally, now that Redis is available, I'm sure we'll make use of it when redesigning other features. For example maybe it'll finally allow us to provide some real time analytics.</p>
+
+<h2>Conclusion</h2>
+<p>I have a couple take aways from this. First of all, I had a hell of a lot of fun coding this weekend. More importantly though, it's imperative that you familiarize yourself with as many tools and concepts as possible. That way, when you run into problems, you have some inclination of where to go. If it had not been for my previous fooling around with Redis, I might not have thought to go to it right away. You don't have to master everything, but you should, for example, <a href="http://arin.me/blog/wtf-is-a-supercolumn-cassandra-data-model">know what a supercolumn is</a>.</p>
+
+<p>Also, this reinforces my opinion about NoSQL in general. MongoDB has a couple specializations that are truly awesome (geospatial, logging), but it's largely a general purpose data store with a number of advantages over RDBMS'. Many other NoSQL solutions are more specialized. Redis, while capable of more than what I'm using it for, is more specialized, and handles/looks at/views data differently. These solutions work well together and not only make it fun to work with data again, they make it easy and efficient.</p>
+
+<p>By the way, if you are interested in helping out, mogade could really benefit from an Android client. Contact me if you're able to help out (the v2 api is turning out to be cleaner/simpler than v1, but you can still get an idea by looking at the <a href="https://github.com/mogade/mogade-csharp/">C# v1 api on github</a>).

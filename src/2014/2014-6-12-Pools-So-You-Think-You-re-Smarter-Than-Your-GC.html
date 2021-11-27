@@ -1,0 +1,111 @@
+---
+layout: post
+date: 2014-06-12
+title: "Pools: So You Think You're Smarter Than Your GC"
+tags: [data structures, learning]
+description: "How a tool for better memory management, pools, can lead to memory leaks"
+---
+<p>While writing about <a href="/Understanding-Pools">pools in the past</a>, I've cautioned that taking over part of the garbage collector's job comes with responsibilities. A few days ago, while explaining some code to a colleague, I was reminded of this.</p>
+
+<p>To exagerate the problem, we'll switch away from a bytepool to something that holds large objects, say a pool of user results:</p>
+
+{% highlight go %}
+type Pool struct {
+  results chan *Result
+}
+
+func New(max, count int) *Pool {
+  p := &Pool{
+    results: make(chan *Result, count),
+  }
+  for i := 0; i < count; i++ {
+    pool.results <- NewResult(max, pool)
+  }
+  return p
+}
+
+func (p *Pool) Checkout() *Result {
+  //todo: use a select to handle timeout
+  return <- p.results;
+}
+{% endhighlight %}
+
+<p>This is just some boilerplate pool initialization. The important code is our <code>Result</code> structure. The point of this structure is to avoid having to create and destroy arrays of users. This is achieved by creating a single array that can hold up to <code>max</code> results and re-using it:
+
+{% highlight go %}
+type Result struct {
+  pool *Pool
+  position int
+  users []*User
+}
+
+func NewResult(max int, pool *Pool) *Result {
+  return &Result{
+    pool: pool,
+    position: 0,
+    users: make([]User, max),
+  }
+}
+
+func (r *Result) Add(user *User) {
+  //add bound checking?
+  r.users[r.position] = user
+  r.position++
+}
+
+func (r *Result) Users() []*User {
+  return r.users[:r.position]
+}
+
+func (r *Result) Close() error {
+  r.position = 0
+  r.pool <- r
+  return nil
+}
+{% endhighlight %}
+
+<p>The simple trick to re-using the same array is to keep a pointer, <code>position</code> of where we are, and resetting it once we're done.</p>
+
+<p>Simple, but do you see the problem with the above? Consider this code:</p>
+
+{% highlight go %}
+pool := New(100, 1)
+result := pool.Checkout()
+result.Add(User.Find(1), User.Find(2))
+result.Close()
+
+result := pool.Checkout()
+result.Add(User.Find(3))
+result.Close()
+{% endhighlight %}
+
+<p>See it? Think of what still exists in memory:</p>
+
+{% highlight text %}
+//after the 1st part
+root -> pool -> results[user1, user2]
+
+//after the 2nd part
+root -> pool -> results[user3, user2]
+{% endhighlight %}
+
+<p>The very goal of avoiding the destruction and creation of arrays means that references held by those fixed array exist until we overwrite them. Unless you have smooth usage, you'll end up with spikes which result in pinned objects.</p>
+
+<p>Is there a solution? <a href=https://twitter.com/viedma>Cristobal</a> suggests zero-ing out the array on <code>Close</code>:</p>
+
+{% highlight go %}
+func (r *Result) Close() error {
+  for i := 0; i < r.position; i++ {
+    r.users[i] = nil
+  }
+  r.position = 0
+  r.pool <- r
+  return nil
+}
+{% endhighlight %}
+
+<p>Compared to re-creating the array, a simplistic benchmark shows that the efficiency of this approach is tied to how big <code>position</code> is (obviously). At some point, re-creating the array might be better, but this is hard to measure, as it depends on memory pressure, fragmentation and so on (my simple test showed the magic number to be 130).</p>
+
+<p>For us, we're using objects already pinned in memory by other parts of the system (an in-memory database). So it isn't an issue - those objects will exist for the life of the the application anyways</p>
+
+<p>While there's a limit to how much you can lose this way (is isn't a true leak, even by managed-language standards), it's an important reminder that doing your own memory management requires diligence.</p>

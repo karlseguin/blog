@@ -1,0 +1,94 @@
+---
+permalink: "/2012/4/24/I-Rather-Have-Silly-Tests-Than-Silly-Code/"
+layout: post
+date: 2012-04-24
+title: "I Rather Have Silly Tests Than Silly Code"
+tags: [ruby, testing]
+---
+
+<p>Over the years I've written a lot about the evolution I've taken with testing. I've also written about the frustration of testing within the confines of static languages. More briefly, I've discussed testing in dynamic languages, and what benefits developers get from that. I think talking about how far dynamic languages can be taken, from a testing point of view, deserves more attention.</p>
+
+<p>None of these are real life examples...they are more about techniques than actual usage.</p>
+
+<p>The most obvious example is the ability to test class/static methods. I've talked about this a few times already, but briefly: </p>
+
+{% highlight ruby %}
+class Audit
+  def self.log(message)
+    DB.insert(:message => message, :at => Time.now.utc)
+  end
+end
+
+....
+
+it "saves the message with the current time" do
+  Time.stub!(:now).and_return(Time.utc(2013, 3, 4, 5, 8, 9))
+  DB.should_receive(:insert).with(:message => 'over 9000!', :at => Time.now.utc)
+  Audit.log('over 9000!')
+end
+{% endhighlight %}
+
+<p>There's no silly dependency injection, and we don't have to add any misdirection to properly handle current times or random values or guids.</p>
+
+<p>We can also leverage dynamic typing to and do: </p>
+
+{% highlight ruby %}
+it "loads all users" do
+  Users.stub!(:all).and_return("u think I'm crazy?")
+  get :index
+  assigns[:users].should == "u think I'm crazy"
+end
+{% endhighlight %}
+
+<p>At first glance, this seems a bit silly. Plus, if you are using some type of testing factory, it won't always buy you much. Nevertheless, I can't think of a compelling reason not to do this. As soon as you stub out <code>Users.all</code>, it really doesn't matter what it returns. What matters, from the point of view of this test, is that whatever it returns, is made available to the view.</p>
+
+<p>Lately, I've also been stubbing out internal implementations:</p>
+
+{% highlight ruby %}
+class Vegeta
+  def speak
+     calculate_power_leve > 9000 ? "It's over 9000!!" : "meh"
+  end
+  def calculate_power_level
+    #....
+  end
+end
+
+...
+
+it "gets excited at high power levels" do
+  vegeta = Vegeta.new
+  vegeta.stub!(:calculate_power_level).and_return(9001)
+  vegeta.speak.should == "It's over 9000!!"
+end
+{% endhighlight %}
+
+<p>In a way, this feels a lot like testing private members, which you are never supposed to do. But sometimes it just lets you write a dead simple yet important test. Essentially, we aren't limited to only mocking external dependencies. Yes, this can be abused. </p>
+
+<p>As a final example, how would you test:</p>
+
+{% highlight ruby %}
+def process(data)
+  transform1(data)
+  transform2(data)
+  transform3(data)
+  transform4(data)
+  transform5(data)
+end
+{% endhighlight %}
+
+<p>To do this in a static language, you'd probably end up injecting a <code>TransormationProvider</code> which implements <code>ITransformationProvider</code> go down that familiar rabbit hole. With a dynamic language, you can either stub out each of those methods directly, or you could integrate the lightweight "provider" directly in the class:
+
+{% highlight ruby %}
+class Processor
+  def self.transformations
+   [:transform1, :transform2, :transform3, :transform4, :tranform5]
+  end
+
+  def process(data)
+    Processor.transformations.each{|t| send(t, data) }
+  end
+end
+{% endhighlight %}
+
+<p>The outcome is the same..but both the tests and the actual code are simpler. We've introduced a mockable iterable "provider" in 3 lines rather than 2 new types (which fundamentally add no value).</p>

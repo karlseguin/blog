@@ -1,0 +1,43 @@
+---
+permalink: "/2012/5/3/Lets-Increment-I-Assembly-Style/"
+layout: post
+date: 2012-05-03
+title: "Let's Increment i, Assembly Style"
+tags: [tech]
+---
+
+<p>How do computers actually work? We write code, but how do our inputs become outputs? As you know, there are a number of layers between the code that we write and the electrical impulses that race through our hardware. If we stick to the software end of things though, we're actually pretty close to the lowest levels. What I'm talking about, of course, is assembly. Assembly can quickly get complicated, but there's no reason we can't look at some basics.</p>
+
+<p>With that in mind, consider this simple code:</p>
+
+{% highlight clike %}
+  int i = 5;
+  i += 1;
+{% endhighlight %}
+
+<p>Here are the four assembly instructions behind the code: </p>
+
+{% highlight clike %}
+movl  $5, -4(%rbp)
+movl  -4(%rbp), %eax
+addl  $1,%eax
+movl  %eax, -4(%rbp)
+{% endhighlight %}
+
+<p>Before we explain the above lines, do keep in mind that the above would vary based on platform, architecture or compiler. This is the assembly produced by a vanilla GCC for x86-64 on OS X. I made slight modifications to make it easier to read.</p>
+
+<p>The first command, <code>movl  $5,-4(%rbp)</code> corresponds directly to the first line of our code <code>int i = 5;</code>. It is moving the value 5 into a specific address. Let's break it down thoroughly. The <code>mov</code> instruction moves something into something else. The values themselves tell <code>mov</code> whether it's dealing with constants, addresses or registers. In this case, it is moving the constant (identified via the <code>$</code> prefix) 5.</p>
+
+<p>The second parameter is our destination. This is a bit trickier. <code>-4(%rbp)</code> means the our destination is the address at -4 bytes relative to our base stack pointer. Huh? Whenever you enter a new scope, you get a new stack. In assembly, you also get a pointer to the the start of that that stack referenced by the <code>%rbp</code> variable. You don't get the luxury of referencing arbitrary address spaces by name (via a variable). Instead, you get a few known addresses spaces (like the base stack pointer) and get the joy of always having to address things relative to it. So, as long as we are within this scope, the variable <code>i</code> is actually represented by <code>-4(%rbp)</code>. If, we were to introduce another integer variable, we'd reference it via <code>-8(%rbp)</code>.</p>
+
+<p>(technically speaking, <code>%rbp</code> is the frame pointer, not the base stack pointer, but stacks and frames are for a different post.)</p>
+
+<p>The last piece of the puzzle, for this first line anyways, is how much data is moved? From the parameters alone, it's impossible to tell. 5 could be 16bits or even 8 bits. The fact that we are moving it at offset -4 doesn't mean anything...maybe there are 3 other 8 bit values before it (occupying -1(%rbp), -2(%rbp) and -3(%rbp)). This is where the <code>l</code> postfix on <code>mov</code> comes from. It stands for long and means 32 bits ([b]yte for 8 bits, [w]ord for 16 bits, and [q]uad for 64bits).</p>
+
+<p>We have 5 stored on the stack and we can access it (relative to <code>%rbp</code>). How do we increment it? Processors don't do arithmetics in RAM. Instead, they move the necessary values into registers and operate on values there. Registers are the fastest and closest memory to the CPU. This might surprise you, but modern CPUs don't have that many registers. A 64-bit chip might have 16 registers, so you can imagine that data is constantly being moved in and out of them. You also start to understand why processors have other layers of cache (L2 cache and L3 cache). Since data won't stay long in a register, there's at least a chance that it'll be in some other cache - rather than having to go outside the CPU and fetch the data from slow RAM.</p>
+
+<p>The 2nd assembly line loads our value into the <code>EAX</code> register. Once there, we add 1 to the value (turning 5 into 6). Again, the <code>l</code> postfix for the <code>add</code> instruction means we are adding 32bit values. At this point, the <code>EAX</code> register holds the value of 6. Of course, this does our code no good. the variable <code>i</code> isn't pointing to the <code>EAX</code> register, it's pointing to <code>-4(%rbp)</code>. That's why the last instruction moves the value from the register back onto the correct location in our memory.</p>
+
+<p>And there you have it, the 4 instructions needed to increment a value pointed to by a variable. For most of us, is there any value in knowing this? No, not really. First of all, modern languages don't expose these low level details. Secondly, compilers are so sophisticated that they tend to do a better job at optimizing register access than we ever could. Even in C, the <code>register</code> keyword is just a hint to the compiler. The compiler can ignore it. (<code>register</code> tells the compiler that the variable will be heavily used and should be kept in a processor's register when possible).</p>
+
+<p>Having said that, it's still interesting, to me at least, to see our value get moved from RAM to a register, manipulated, then moved back. Behind the scenes, a lot of things go through my mind. As already mentioned, the usefulness of CPU-cache becomes obvious. But also, consider the complexities introduced by multi-threaded programming. While <code>i += 1</code> might seem atomic, we just saw how it's actually made up of 3 separate assembly instructions. What happens if the context switches part way through? I'd guess a snapshot of the current state of registers is taken and stored somewhere. Crazy.</p>

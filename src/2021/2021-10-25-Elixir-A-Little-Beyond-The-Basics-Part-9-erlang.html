@@ -1,0 +1,156 @@
+---
+layout: post
+date: 2021-10-25
+title: "Elixir, A Little Beyond The Basics - Part 9: erlang"
+description: "A look at some of the more useful functions in the erlang standard library"
+tags: [elixir]
+---
+
+<p>Much of Elixir's standard library is implemented as a wrapper around Erlang's existing standard library. This helps provide a consistent and natural experience for Elixir developers. But not all of Erlang's standard library has an Elixir wrapper. We've seen a few of these already, such as <code>:timer.sleep/1</code>, but there's a handful more that I think are worth exploring.</p>
+
+<h3>General Usage & Differences</h3>
+<p>To call an Erlang function from Elixir, you call the Erlang function using the module name as an atom. For example, to call the <code>strong_rand_bytes/1</code> function of Erlang's <code>crypto</code> module, you'd use: <code>:crypto.strong_rand_bytes(16)</code>.</p>
+
+<p>It's worth pointing out that Erlang uses 1-based indexing, whereas Elixir uses 0-based indexing. So when you're calling an Erlang function that requires an offset, you need to use 1-based offset. If we look at Elixir's <code>Kernel.elem/2</code> function, we can see that it wraps <code>:erlang.element/2</code> and adjusts the offset, hence making it more natural to Elixir developers.</p>
+
+<p>Similarly, many Erlang functions work with charlists, not binaries/strings. In Elixir you can have a constant charlist using single quotes instead of double quotes. Otherwise, you can use <code>Sring.to_charlist/1</code>.</p>
+
+<p>Finally, Erlang functions often order their arguments in a way that will surprise Elixir developers. For example, if you look at Erlang's <a href="https://erlang.org/doc/man/maps.html#put-3">map module</a> you'll note that the <code>map</code> argument is always last. Whereas in Elixir it's the first argument (which is usuallly more pipe-friendly).</p>
+
+
+<h3>term_to_binary and binary_to_term</h3>
+<p>Two extremely useful Erlang functions are <code>:erlang.term_to_binary/1</code> and <code>:erlang.binary_to_term/1</code>. The first takes any term (any type of value) and converts it into a binary. The second does the opposite this:</p>
+
+{% highlight elixir %}
+> serialized = :erlang.term_to_binary({:ok, %{over: 9000}, [1, true, [3.3]]})
+<<131, 104, 3, 100, 0, 2, 111, 107, 116 ... >>
+
+> :erlang.binary_to_term(serialized)
+{:ok, %{over: 9000}, [1, true, [3.3]]}
+{% endhighlight %}
+
+<p>I use these all the time to persist state in a database (so that, on crash or deploy, the state can be restore) or to share information between various systems running Elixir. It's very easy to use, but its usefulness comes from the fact that it really works with <strong>any</strong> term (any value). In a quick test I did, it was about 2.8x faster than jiffy and 5.5x faster than Jason. It isn't the most space-efficient though, as the serialized output was slightly larger than the JSON.</p>
+
+<h3>queue</h3>
+<p>Erlang's <code>queue</code> module offers an efficient double-ended FIFO queue, with a number of operations that are amortized to O(1). It's particularly useful if you want to operate on both the tail and head values. One challenge with this module is that it exposes different API conventions to do the same thing. For example, if we want to get the items at the end of our queue (<code>3</code> in this case), we have 2 choices:</p>
+
+{% highlight elixir %}
+# first create and populate our queue with some values
+q = :queue.new()
+q = :queue.in(1, q)
+q = :queue.in(2, q)
+q = :queue.in(3, q)
+
+# Using the "extended API"
+value1 = :queue.get_r(q)
+
+# Using the "Okasaki API"
+value2 = :queue.last(q)
+{% endhighlight %}
+
+<h3>gb_trees</h3>
+<p>Erlang's General Balanced tree module is perfect if you want some map-like capabilities (e.g., key => value lookup) which maintains key ordering. This is particularly useful for time series data, with a timestamp-based key. It's also useful if you need to track the smallest or largest value in a set.</p>
+
+{% highlight elixir %}
+tree = :gb_trees.empty()
+tree = Enum.reduce(1..10, tree, fn value, tree ->
+  key = :rand.uniform(100)
+  :gb_trees.insert(key, value, tree)
+end)
+
+# your output will vary since we're inserting random keys
+
+IO.inspect(:gb_trees.smallest(tree))  # {4, 10}
+IO.inspect(:gb_trees.largest(tree))   # {81, 9}
+IO.inspect(:gb_trees.to_list(tree))   # [{4, 10}, {6, 1}, ...]
+{% endhighlight %}
+
+<p>The output from <code>smallest/1</code>, <code>largest/1</code> and <code>to_list/1</code> includes both the key and the value.<p>
+
+<h3>ets</h3>
+<p>Erlang's Term Storage is probably the Erlang module most familiar to Elixir developers. A short description is that it gives you a thread-safe concurrent map. It's one of the few places where the messaging / mailbox pattern isn't used. But it still maintains strict data isolation: data inside ETS is still owned by a process and only copies of that data can be retrieved. Like most things, it's rather easy to get started with, but has a lot of depth. There's no shortage of resources written about ETS for Elixir developers, including my own <a href="/Learning-Elixir-ETS/">talked about ETS before</a>.</p>
+
+<h3>get_state/1</h3>
+<p>Sometimes, especially when debugging an issue, it's useful to look at the state of a running GenServer. One way to do this is to add a function in each of your GenServers:</p>
+
+{% highlight elixir %}
+def handle_call(:debug, _from, state) do
+  {reply, state, state}
+end
+{% endhighlight %}
+
+<p>Or, you can use <code>:sys.get_state/1</code> and pass it the pid or name of your GenServer. This relies on a callback function, <code>system_get_state/1</code> which all GenServers have implemented (and it does the same as our <code>:debug</code> code above).</p>
+
+
+<h3>crypto</h3>
+<p>There are a lot of useful functions in the crypto modules. Two of the simpler and probably more useful ones are:<code>strong_rand_bytes/1</code> and <code>hash/2</code> - to generate N random bytes and cryptographic hashes respectively:</p>
+
+{% highlight elixir %}
+> :crypto.strong_rand_bytes(10)
+<<202, 31, 186, 167, 189, 44, 145, 110, 96, 10>>
+
+# 2nd argument can be a binary or iolist
+> :crypto.hash(:sha256, "hello")
+<<44, 242, 77, 186, 95, 176, 163, 14, 38, 232, 59, 42, 197, 185, 226, 158, 27,
+  22, 30, 92, 31, 167, 66, 94, 115, 4, 51, 98, 147, 139, 152, 36>>
+{% endhighlight %}
+
+<h3>rand</h3>
+<p>The rand module lets you generate random numbers using a non-cryptographically strong pseudo-random generate. <code>uniform/1</code> is probably the most useful of these. It generates a random integer from 1  to N (inclusive):</p>
+
+{% highlight elixir %}
+# return will be a random integer from 1 to 10
+> :rand.uniform(10)
+8
+{% endhighlight %}
+
+<h3>misc</h3>
+<p><code>:erlang.system_time/1</code> returns the unix time in the specified unit (<code>:second</code>, <code>:millisecond</code>, <code>:microsecond</code> or <code>:nanosecond</code>). The <code>system_time/1</code> value can wrap, you can instead of <code>:erlang.monotonic_time/1</code> to get a value that will always return a value greater than or equal to a value previously returned. The time returned is from some unspecified point in time.</p>
+
+{% highlight elixir %}
+> :erlang.system_time(:millisecond)
+1635085810492  # milliseconds since unix epoch
+
+> :erlang.monotonic_time(:millisecond)
+-576458998734   # milliseconds since some arbitrary point
+> :erlang.monotonic_time(:millisecond)
+-576458997471   # always equal or greater than the last call
+{% endhighlight %}
+
+<p>You can use <code>:erlang.unique_integer/0</code> or <code>:erlang.unique_integer/1</code> to generate an integer unique to the current running application. By default, you can get positive or negative value without any ordering. You can pass either or both <code>:positive</code> and <code>:monotonic</code> to change its behavior:</p>
+
+{% highlight elixir %}
+> :erlang.unique_integer()
+-576460752303423386
+
+> :erlang.unique_integer([:monotonic, :positive])
+1
+> :erlang.unique_integer([:monotonic, :positive])
+2
+
+> :erlang.unique_integer([:positive])
+3
+> :erlang.unique_integer([:positive])
+36
+
+> :erlang.unique_integer([:monotonic, :positive])
+3
+{% endhighlight %}
+
+<p>Note that the uniqueness is tied to the provided parameters (in the above, we got <code>3</code> two times, using different parameters)</p>
+
+
+<p>If you want to maintain ordered events you can use a tuple <code>monotonic_time</code> and <code>unique_integer</code>:</p>
+
+{% highlight elixir %}
+order_id = {:erlang.monotonic_time(), :erlang.unique_integer([:monotonic])}
+{% endhighlight %}
+
+<p>With the first value, the elapsed time between two entries can be calculated (<code>monotonic_time/0</code> returns nanoseconds). The second value, the monotonic unique integer, ensures that two entries with the same monotonic_time maintain their correct/original order.</p>
+
+<p>There are a bunch of other Erlang modules, such as <code>ssh_sftp</code> that provides an SSH FTP client. So it's useful to be comfortable with reading Erlang's documentation and understand how to use those modules and functions from Elixir.</p>
+
+<div id=pager>
+  <a class=prev href=/Elixir-A-Little-Beyond-The-Basics-Part-8-genservers/>genservers</a>
+  <a class=next></a>
+</div>

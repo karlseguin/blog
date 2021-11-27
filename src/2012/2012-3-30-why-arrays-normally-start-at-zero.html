@@ -1,0 +1,38 @@
+---
+permalink: "/2012/3/30/why-arrays-normally-start-at-zero/"
+layout: post
+date: 2012-03-30
+title: "Why Arrays Normally Start At Zero"
+tags: [c, data structures]
+---
+
+<p>Given the following C code, what will <code>x</code> be equal to?</p>
+
+{% highlight clike %}
+  //create an array of integers
+  int array[] = {0, 10, 50, 250, 750, 1225};
+
+  //create and assign a pointer to the first value of our array
+  int *ptr = &array[0];
+
+  int x = *(ptr + 2);
+  //x = ??
+{% endhighlight %}
+
+<p>The above three lines of code are filled with fundamental goodness. It doesn't matter if you don't know or use C. Spending a few minutes understanding this code will make you a better programmer no matter what you are doing or using.</p>
+
+<p>The first thing to understand is how space is allocated for an array. Specifically, the type of fixed-length arrays you'll find in Java, C#, C, etc. It's actually dead-simple. Every type requires a specific amount of memory and every array has a length. If an integer is 4 bytes and we want an array to be able to hold 6 values, we'll allocate 24 bytes. Languages like C have a <code>sizeof</code> operator which, given a type, tells you how much space it'll require.</p>
+
+<p>What's key about this is that there is no overhead. The space required will always be <code>sizeof(int) * length</code>. There are no delimiters or other such markers. There doesn't need to be. As long as you know the location (as a memory address) of the first element, you can find any other element in constant O(1) time. How? Just take the size and multiple it by the index that you want.</p>
+
+<p>Since the first item has an offset of 0 from the start (because it <strong>is</strong> the start) we end-up with 0-based indexes. Thinking about an array's index as the offset from the start is what should crosses your mind every time you use square brackets. The first item can be retrieved by doing <code>sizeof(int) * 0</code>. The second item will be 4 bytes forward, or <code>sizeof(int) * 1</code>. The third item will be 8 bytes forward, or <code>siteof(int) * 2</code>. So on and so forth.</p>
+
+<p>This is why arrays are efficient with index-based operations. All you need to do is multiply two numbers together and add that to some memory location to know where the value is.</p>
+
+<p>The answer to the above question is 50. If we skip the C-syntax, we can still see that <code>ptr</code> is assigned the address of our first - or the start of - the array. We then add 2 to our pointer. 2 what though? Well, we told C that <code>ptr</code> points to an integer, so it knows that any operations we do (such as additions) are <code>sizeof(int)</code> wide. Interestingly, when we extract the value from our pointer (this is known as dereferencing, and uses the the <code>*</code> operator), C knows that it needs to read <code>sizeof(int)</code> bytes to get a meaningful value.</p>
+
+<p>It doesn't matter what programming language you are using. Memory is allocated by knowing the size required for each type upfront. Under the covers of your application, sizeof is called thousands of times and the address of many values is only know in relation (or as an offset) to a starting point.</p>
+
+<p>Of course, those thousands of sizeof() calls can all be optimized at compile time. This explains one of the key reasons why you need a different executable for 64bits versus 32bits. <code>sizeof(X)</code> can yield different result for different architectures.</p>
+
+<p>Like I said...full of fundamental goodness.</p>

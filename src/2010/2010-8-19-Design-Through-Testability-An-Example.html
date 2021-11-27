@@ -1,0 +1,143 @@
+---
+permalink: "/2010/8/19/Design-Through-Testability-An-Example/"
+layout: post
+date: 2010-08-19
+title: "Design Through Testability - An Example"
+tags: [design, testing]
+---
+<p>Despite my <a href="http://openmymind.net/2010/8/17/Write-testable-code-even-if-you-dont-write-tests">previous attempt</a> you may still not believe that testability has a lot less to do with testing and a lot more to do with good design. So I thought we'd walk through an example to see how making code testable (which doesn't necessarily mean testing it) can turn some bad code into something beautiful.</p>
+
+<p>First, the context. I have a need to query a data source (could be a database, an LDAP provider, a web service, or anything, it doesn't really matter) to get employee information based on an id. Since employee information doesn't change frequently and, despite what people try to tell you, performance is a feature, we also want to cache the data. Here's what our initial attempt might look like:</p>
+
+{% highlight clike %}
+public interface IEmployeeLookup
+{
+   Employee Find(string id);
+}
+
+public class EmployeeLookup : IEmployeeLookup
+{
+   private readonly ICache _cache;
+   public EmployeeLookup(ICache cache)
+   {
+      _cache = cache;
+   }
+   public Employee Find(string id)
+   {
+      var key = string.Format("employee_{0}", id);
+      var found = _cache.Get(key);
+      if (found == null)
+      {
+         found = GetItFromActualSource(id);
+         _cache.Insert(key, found);
+      }
+      return found;
+   }
+
+   private Employee GetItFromActualSource(string id)
+   {
+       //implementation doesn't matter
+   }
+}
+{% endhighlight %}
+
+<p>Now this code might already be a few steps ahead from where some would start. Specifically, the <code>IEmployeeLookup</code> interface lets calling code program against an interface - something essential to testability as well as good design (so we can swap out the actual implementation). Similarly, the <code>ICache</code> interface lets us program (and mock) against an interface (so we can start with an InMemoryCache implementation and then move to a MemcachedCache implementation).</p>
+
+<p>However, our code isn't easily testable and, as we'll see, isn't well designed. Lets look at the behaviour of our <code>Find</code> method. First, if the employee is cached, we return it. Secondly, if the employee isn't cached we fetch it from the actual store and return it. Finally, if the employee is fetched from the store we add it to the cache.</p>
+
+<p>The problem is that, as is, we can't test the caching aspect of our method without worrying about hitting the actual data source. Despite how simple our code looks, its actually violating a basic concept: the single responsibility principle. The <code>Find</code> method is actually responsible for two, very different, things: caching and getting the data. I maintain that this design flaw isn't obvious until you consider how you might test it (or, you know, actually do test it). Lets see if our second attempt can solve this:</p>
+
+{% highlight clike %}
+public class EmployeeLookup : IEmployeeLookup
+{
+   public virtual Employee Find(string id)
+   {
+      return GetItFromActualSource(id);
+   }
+
+   private Employee GetItFromActualSource(string id)
+   {
+       //implementation doesn't matter
+   }
+}
+
+public sealed class CachedEmployeeLookup : EmployeeLookup
+{
+   private readonly ICache _cache;
+   public CachedEmployeeLookup(ICache cache)
+   {
+      _cache = cache;
+   }
+   public override Employee Find(string id)
+   {
+      var key = string.Format("employee_{0}", id);
+      var found = _cache.Get(key);
+      if (found == null)
+      {
+         found = base.Find(id);
+         _cache.Insert(key, found);
+      }
+      return found;
+   }
+}
+{% endhighlight %}
+
+<p>As it turns out, our second attempt, doesn't actually solve anything. Its actually swapped out a violation of single responsibility principle for tight coupling - which isn't any easier to test. Inheritance, while a useful tool, will always result in tight coupling. However, it is a step in the right direction. Instead of relying on inheritance, we'll leveraging its underused cousin <em>composition</em>:</p>
+
+{% highlight clike %}
+public class EmployeeLookup : IEmployeeLookup
+{
+   public Employee Find(string id)
+   {
+      return GetItFromActualSource(id);
+   }
+
+   private Employee GetItFromActualSource(string id)
+   {
+       //implementation doesn't matter
+   }
+}
+public class CachedEmployeeLookup : IEmployeeLookup
+{
+   private readonly ICache _cache;
+   private readonly IEmployeeLookup _actualLookup;
+   public CachedEmployeeLookup(ICache cache, IEmployeeLookup actualLookup)
+   {
+      _cache = cache;
+      _actualLookup = actualLookup;
+   }
+   public Employee Find(string id)
+   {
+      var key = string.Format("employee_{0}", id);
+      var found = _cache.Get(key);
+      if (found == null)
+      {
+         found = _actualLookup.Find(id);
+         _cache.Insert(key, found);
+      }
+      return found;
+   }
+}
+{% endhighlight %}
+
+<p>If you are new to composition, take a minute and make sure you really understand the code. Instead of having <code>CachedEmployeeLookup</code> inherit from <code>EmployeeLookup</code>, we are going to inject the dependency. Take note of how testable the <strong>caching</strong> behavior has become:</p>
+
+{% highlight clike %}
+[Fact]
+public void CachesTheEmployeeFromTheStoreWhenTheEmployeeIsNotAlreadyCached()
+{
+   var cache = Dynamic<ICache>();
+   var lookup = Dynamic<IEmployeeLookup>();
+   var employee = new Employee();
+
+   cache.Stub(c => c.Get("employee_23")).Return(null);
+   lookup.Stub(l => l.Find("23")).Return(employee);
+   cache.Expect(c => c.Insert("employee_23", employee));
+   ReplayAll();
+
+   new CachedEmployeeLookup(cache, lookup).Find("23");
+   cache.VerifyExpectations();
+}
+{% endhighlight %}
+
+<p>So what did we learn? The difficulty in testing revealed two important design flaws. The first that our method was doing too much, the second that we had tight coupling. Both are serious issues that can negatively impact the maintainability of your system. Both were resolved by striving to write simple, non-brittle, cohesive tests. Neither was particularly easy to spot - until we tried to test our method.</p>

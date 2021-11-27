@@ -1,0 +1,54 @@
+---
+layout: post
+date: 2021-11-22
+title: "Rust Ownership, Move and Borrow - Part 3"
+description: "A more detailed look at Rust's ownership and inherited mutability"
+tags: [rust]
+---
+
+<p>In this short part, we'll review what we've learnt so far.</p>
+
+<p>All data has one owner. Assignments (using <code>=</code> or passing values to a function) moves ownership. After ownership is moved, the original owner cannot be used. Having a single explicit owner means that Rust doesn't need (and thus doesn't have) a garbage collector. It is always unambiguous to the compiler when data can be be safely freed - and that's exactly what the compiler does: it inserts code to free memory at compile-time (known as <code>Drop</code> in Rust).</p>
+
+<p>Types that implement the <code>Copy</code> trait are copied instead of moved.</p>
+
+<p>Instead of moving data, we can also borrow data. Rust is likely to use a reference to implement borrowing, but this is an implementation detail. Regardless of how move and borrowing are implemented on a case by case basis, what matters is what the compiler enforces and guarantees with respect to moved and borrowed valued.</p>
+
+<p>Along with "borrow" and "reference", you'll often see "aliasing". These are all loosely used interchangeably.</p>
+
+<p>Mutability and borrowing interact in an explicit manner. You can have one mutable borrow or multiple immutable borrows. This is sometimes referred to as "Aliasing XOR Mutability" indicating that borrowing and mutability are exclusive behaviors. This is important in a world without a garbage collector, consider:</p>
+
+{% highlight rust %}
+fn main() {
+  let mut items = vec![1];
+  let item = items.last();
+  items.push(1);
+  println!("{:?}", item)
+}
+{% endhighlight %}
+
+<p>This code fails to compile: <code>items.last()</code> borrows <code>items</code> but <code>items.push</code> tries to mutate <code>items</code>. The reason this isn't allowed is simple: mutations can render borrowed data invalid. The call to <code>push</code> might require new memory to be allocated resulting in previous aliased data (<code>item</code> in this case) to point to no-longer-valid memory. Rust doesn't allow this.</p>
+
+<p>I don't think it's correct to refer to data as mutable or not. It isn't data which is mutable, but rater then bindings (aka, variables). This is obvious when you take an immutable variable and move it to a mutable variable:</p>
+
+{% highlight rust %}
+fn main() {
+  let a: Vec<u32> = Vec::new();
+
+  // fails to compile, a is immutable
+  a.push(1);
+
+  // moved to b, which is mutable
+  let mut b = a;
+  b.push(1);
+}
+{% endhighlight %}
+
+<p>This is a clear example that mutability is tied to the binding, not the data.</p>
+
+<p>Everything we've discussed here is the <em>default</em> behavior. It's the set of rules that most of your Rust code will live under. It provides the strongest safety guarantees and the lowest runtime overhead. However, Rust provides constructs to change these rules on a case by case basis. This often involves deferring compile-time checks to the runtime. Hopefully we'll get to talk about these more advanced cases soon.</p>
+
+<div id=pager>
+  <a class=prev href=/Rust-Ownership-Move-and-Borrow-part-2/>ownership - part 2</a>
+  <a class=next href=/Rust-Strings/>strings</a>
+</div>

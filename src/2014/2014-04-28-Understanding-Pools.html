@@ -1,0 +1,80 @@
+---
+layout: post
+date: 2014-04-28
+title: "Understanding Pools"
+description: "Introducing some core concepts around pools (byte pools, connection pools,...)"
+tags: [golang, learning]
+---
+
+<p>My former colleagues <a href="http://engineering.viki.com/blog/2014/thread-safe-bytepool-for-go/">wrote a blog post last week</a> about the <a href="https://github.com/karlseguin/bytepool">Golang bytepool library</a> that I wrote. Three points are worth expanding on.</p>
+
+<p>The first is with respect to the performance you gain with pools. You can have a pool for anything, and certainly, in some cases such as database connections, the initialization cost is the main factor driving your decision to use/build a pool. However, and I have no proof of this, I have to think that the big win of a bytepool isn't reduced allocations but rather less garbage collection. This is particularly true in a stop-the-world mark-and-sweep world of Go's garbage collector. Assuming the system used to run the benchmark wasn't under any memory constraints, the numbers shown represent the worst-case scenario. I'd be at least as interested in seeing and exploring the results of <code>debug.GCStats</code>.</p>
+
+<p>Secondly, as-is, pools are simple to understand and implement. Where things can get tricky is when you try to dynamically change the size of the pool. Just creating a new array makes a lot of sense for a bytepool, but not for something which is limited on the other side (again, like database connections). Similarly, keeping the pool at a fixed size makes sense for a bytepool running on gigs of RAM, but not in other cases. Beyond that, I can't really say anything intelligent about the subject, but I do think this is a topic worth further exploration. (On a side note, the pool which is <a href="http://tip.golang.org/pkg/sync/#Pool">built into Go 1.3</a> seems to have some dynamic heuristics).</p>
+
+<p>Finally, and most importantly, we should be very clear about what a pool, and in particular a byte pool, represents. Fundamentally, it represents the developer taking over memory management from the runtime. I think too many developers rely too absolutely on their runtime's memory management, so I think this is a <em>good thing</em>, but only when accompanied with diligence. Here's an example of what I mean, can you spot the problem?</p>
+
+{% highlight go %}
+pool := pool.New(10, 100)
+for {
+  bytes := pool.Checkout()
+  bytes.WriteString("Over 9000!!")
+}
+{% endhighlight %}
+
+<p>It's a silly example, but the point is that a bytepool tells the garbage collector to take a hike. And when you tell the garbage collector to take a hike, you become responsible for the consequences. When you're dynamically creating detached buffers, the above isn't the end of the world (though the bytepool ends up just adding meaningless overhead and defeating its own purpose). If you were to attach overgrown buffers back to the pool, the above would represent a serious memory leak.</p>
+
+<p>The solution to this problem is to log statistics. The single most important statistic is the number of times you try to get a value from an empty pool:</p>
+
+{% highlight go %}
+type Pool struct {
+  misses   int64
+  list     chan *Item
+}
+
+func (pool *Pool) Checkout() *Item {
+  var item *Item
+  select {
+  case item = <-pool.list:
+  default:
+    atomic.AddInt64(&pool.misses, 1)
+    item = newItem(pool.capacity, nil)
+  }
+  return item
+}
+{% endhighlight %}
+
+<p>Less important, but equally interesting is the number of items checked out at any given. Do you you really need 8192 buffers?:</p>
+
+{% highlight go %}
+type Pool struct {
+  misses   int64
+  list     chan *Item
+  taken    int64
+  maxTaken int64
+}
+
+func (pool *Pool) Checkout() *Item {
+  var item *Item
+  select {
+  case item = <-pool.list:
+    taken := atomic.AddInt64(&pool.taken, 1)
+    if taken > atomic.LoadInt64(&pool.maxTaken) {
+      atomic.StoreInt64(&pool.maxTaken, taken)
+    }
+  default:
+    atomic.AddInt64(&pool.misses, 1)
+    item = newItem(pool.capacity, nil)
+  }
+  return item
+}
+
+func (pool *Pool) Release(item *Item) {
+  atomic.AddInt64(&pool.taken, -1)
+  pool.list <- item
+}
+{% endhighlight %}
+
+<p>Without the first one, you're playing with fire. Without the second, you're just being wasteful.</p>
+
+<p>Hopefully that sheds some light into the practicalities of using pools. Take back your heap!</p>

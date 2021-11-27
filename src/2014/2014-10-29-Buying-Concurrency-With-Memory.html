@@ -1,0 +1,79 @@
+---
+layout: post
+date: 2014-10-29
+title: "Buying Concurrency with Memory"
+tags: [concurrency, golang, performance]
+description: "A simple trick to achieve higher concurrency at the cost of memory"
+---
+
+<p>A while ago, I <a href="/Space-Efficient-Percentile-Calculations/">wrote about a way to efficiently calculate percentiles.</a> Whether you take that sampling approach or not, what you'd end up with is an array of values that you want to process. Consider this naive implementation:</p>
+
+
+{% highlight go %}
+type Stats struct {
+  sync.Mutex
+  timings []time.Duration
+}
+
+//happens on every request
+func (s *Stats) hit(d time.Duration) {
+  s.Lock()
+  s.timings = append(s.timings, d)
+  s.Unlock()
+}
+
+// happens on a background job
+func (s *Stats) calculate() {
+  s.Lock()
+  // calculate our percentile
+  // relatively slow, we need to sort s.timings!
+  s.Unlock()
+}
+{% endhighlight %}
+
+<p>Whenever we call calculate, we block everyone else. One solution is to copy the values:</p>
+
+{% highlight go %}
+// happens on a background job
+func (s *Stats) calculate() {
+  s.Lock()
+  c := make([]time.Duration, len(s.timings))
+  copy(c, s.timings)
+  s.timings = [0:0]
+  s.Unlock()
+  // calculate our percentile against c
+}
+{% endhighlight %}
+
+<p>This works so long as copying the values is quicker than the processing we need to do. In the above example, we also have to consider the allocation and subsequent garbage the code will generate.</p>
+
+<p>The approach I decided to take, which is nothing novel, is to keep two arrays and to swap them:</p>
+
+{% highlight go %}
+type Stats struct {
+  sync.Mutex
+  timingsA []time.Duration
+  timingsB []time.Duration
+}
+
+//happens on every request
+func (s *Stats) hit(d time.Duration) {
+  s.Lock()
+  s.timingsA = append(s.timingsA, d)
+  s.Unlock()
+}
+
+// happens on a background job
+func (s *Stats) calculate() {
+  s.Lock()
+  //swap
+  s.timingsA, s.timingsB = s.timgingsB, s.timingsA
+  s.timingsA = [0:0]
+  s.Unlock()
+  //calculate based on s.timingsB
+}
+{% endhighlight %}
+
+<p>We've reduced the length of our lock by a lot. We no longer allocate, copy or operate within our lock. We merely assign a few variables. This also avoids unnecessary allocations and GC.</p>
+
+<p>Nothing ground breaking new, but still neat.</p>

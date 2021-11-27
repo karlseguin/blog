@@ -1,0 +1,117 @@
+---
+layout: post
+date: 2017-01-06
+title: "Dependency Injection in Elixir is a Beautiful Thing"
+description: "Using module attributes and configuration files for efficient dependency injection"
+tags: [design, elixir, testing]
+---
+
+<p>I've consistently advocated for integration tests that reduce the need for mocks and stubs. However, occasionally, there's no getting around having some type of test-specific behavior to circumvent a troublesome dependency. There are different tools and techniques to help address this issue. Some languages have support for this baked in. Some don't, requiring the use of libraries. Elixir has a simple and effective mechanism that I'm really keen on. Let's look at an example.</p>
+
+<p>We use SparkPost to send emails and we have a function that looks like:</p>
+
+{% highlight ruby %}
+defmodule MyApp.Mailer do
+  alias SparkPost.Content
+  alias SparkPost.Endpoint
+  alias SparkPost.Transmission
+
+  def send(from, recipient, template, params) do
+    t = %Transmission{
+      return_path: from,
+      recipients: recipient,
+      substitution_data: params,
+      content: %Content.TemplateRef{template_id: template},
+    }
+
+    case Transmission.send(t) do
+      %{id: id} -> {:ok, id}
+      unknown ->
+        Logger.error("failed to send mail: #{inspect unknown}");
+        :error
+    end
+  end
+end
+</div>
+
+<p>We'd have a controller that calls <code>MyApp.Mailer.send(....)</code>. While it isn't practical to test that an actual email is sent (at least, not in a test that's part of a healthy code/test cycle), we'd be happy to at least know that something is being called with the correct parameters AND, given certain responses that we're acting properly.</p>
+
+<p>The simplest and most elegant solution in Elixir is to use module attributes and configuration data. We'll change our code to:</p>
+
+{% highlight ruby %}
+defmodule MyApp.Mailer do
+  @mailer Application.get_env(:myapp, :mailer)
+
+  # not required, but it ensures that any "implementation" will satisfy the interface
+  @callback send(from :: String.t, recipient :: String.t, template :: String.t, params :: map) :: {:ok, String.t} | :error
+
+  def send(from, recipient, template, params) do
+    @mailer.send(from, recipient, template, params)
+  end
+end
+{% endhighlight %}
+
+<p>Our <code>Mailer</code>'s <code>send</code> has become a thin wrapper that calls <code>send</code> on whatever <code>@mailer</code> is. We can see that this <code>@mailer</code> comes from our configuration. Here's what we'll add to our config.exs file:</p>
+
+{% highlight ruby %}
+  config :myapp, :mailer, MyApp.Mailer.SparkPost
+{% endhighlight %}
+
+<p>This means that the line <code>@mailer.send(...)</code> essentially becomes <code>MyApp.Mailer.SparkPost.send(...)</code>.</p>
+
+<p>We can take our original code and stick it into a new module:</p>
+
+{% highlight ruby %}
+defmodule MyApp.Mailer.SparkPost do
+  # will fail to compile if this module doesn't implement all of @callbacks in MyApp.Mailer
+  @behaviour MyApp.Mailer
+
+  # alias SparkPost......
+
+  def send(from, recipient, template, params) do
+    # our real original code that sends the email
+  end
+end
+{% endhighlight %}
+
+<p>All we've done is added a level of indirection. It's the same code, but instead of calling <code>send</code>, we're calling <code>@mailer.send</code>, were <code>@mailer</code> is configurable.</p>
+
+<p>Next we'll change our test.exs:</p>
+{% highlight ruby %}
+config :manage, :mailer, MyApp.Tests.Mailer
+{% endhighlight %}
+
+<p>Now, when running a test, the line <code>@mailer.send(...)</code> becomes <code>MyApp.Tests.Mailer.send(...)</code>. Our fake mailer is easy to implement:</p>
+
+{% highlight ruby %}
+defmodule MyApp.Tests.Mailer do
+  @behaviour MyApp.Mailer
+
+  def send(from, recipient, template, params) do
+    send(self(), {:email, from, recipient, template, params})
+  end
+end
+{% endhighlight %}
+
+<p>The "fake" behavior that you implement is up to you. You could do nothing. Here though, we write the parameters back to the process (if you're familiar with Go, this like writing to a goroutine-owned channel, if such a thing existing). Why? Consider a test:</p>
+
+{% highlight ruby %}
+test "it sends a reset email" do
+  post("/resets", %{email: "paul@caladan.gov"}))
+
+  # receive what our fake implementation sent via "send"
+  token = receive do
+    {:email, _from, recipient, template, params} ->
+      assert template == "password-reset"
+      assert recipient == "paul@caladan.gov"
+      # use params.reset_token to make sure this token is valid and saved
+      # in our DB ...
+  after
+    50 -> assert false # wait 50ms for this message, else fails
+  end
+end
+{% endhighlight %}
+
+<p>We're able to execute the code that causes the email to be sent (posting to <code>/reset</code>) and then verify that at least some proper behavior took place. In the above case, we're making sure that the correct template is being used, the correct person is receiving the email and, as a comment, ensuring that the reset token is valid.</p>
+
+<p>A consequence of the simplicity of this approach is that we don't have the full flexibility that a DI framework might provide. But that's not a bad thing. Keeping this kind of fakeness to both a minimum and to a very basic implementation is a worthwhile and pragmatic approach to testing.</p>

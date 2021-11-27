@@ -1,0 +1,20 @@
+---
+permalink: "/2011/2/10/Do-Relational-Database-Vendors-Care-About-Devs/"
+layout: post
+date: 2011-02-10
+title: "Do Relational Database Vendors Care About Developers?"
+tags: [other]
+---
+<p>For the first time in months I find myself doing heavy work with relational databases. I'm knee deep in Oracle, SQL Server, Sybase and Sqlite (hey, I work at a Bank, what do you expect). In the past, I've argued that the appeal of NoSQL, for most of us, isn't performance but rather frictionless development. This is particularly true when you're working with a static language. MongoDB with Ruby is nice, but ActiveRecord with a relational databases was comparatively painless because of Ruby's own dynamism.</p>
+
+<p>Whatever my preference, the fact is that I'm, once again, working with relational databases. The only difference being that I have real NoSQL experience under my belt. Seriously, that's the only difference because, I've now realized, relational databases have barely changed in the last decade. They've gotten faster, with smarter query planners, easier management, better tooling, nice API and drivers, reliable replication, and so on; but with respect to day to day programming, new features and innovation has been stagnant. The real difference between relational databases and NoSQL seems to be that one is built for people who sign the purchase orders, while the other is built for people who build real applications.</p>
+
+<p>Possibly the greatest thing I've seen tried was SQL Server's .NET integration. Even though it was poorly implemented and subsequently received, they at least tried something. I do think ambitious features are needed in the relational database world, but I'd also settle for some simple things.</p>
+
+<p>Like LIMIT. There's a direct relationship between how expensive a database is and how hard paging results is. A simple way to page is something MySQL, PostgreSQL and Sqlite (and assuredly others) have had for ages. Somehow, the SQL Server and Oracle teams just can't be bothered. I recently learned that Microsoft's SqlCE supports LIMIT, which make's SQL Server's less-than-ideal implementation even more frustrating.</p>
+
+<p>It'd also be great if relational databases could provide logical and efficient bulk insert capabilities. I've used .NET's SqlBulkCopy before, and <a href="http://codebetter.com/karlseguin/2009/10/25/postgresql-day-2/">written my own for PostgreSQL</a>, but yesterday I had the opportunity to use Oracle's. Now, I'm generally an Oracle hater, but this is something they got right. It's basically the same API as a normal insert, but you supply arrays of values to bind. It's so simple, logical and consistent, you realize all the other databases vendors are just dicks for making us jump through hoops to put data in their databases.</p>
+
+<p>Speaking of arrays, can we have them? I want to bind arrays to queries as well as store arrays. I want those embedded arrays to be indexable and queryable - without having to rely on XML. Being able to do so is practical beyond belief, and the hacks that I've seen to simulate this, often involving XML, CSV's and temporary tables, are ridiculous.</p>
+
+<p>The list could go on. Delayed writes, auto sharding, upserts (merge sucks) are all things developers have been asking for ages. I want you you to fail running an unindexed sort if it takes more than X megs of ram. I want you to stop thinking building better XML support is a good use of resources. We've been dreaming of the day when substandard and outdated languages (PL/SQL, TSQL...) would be replaced with something proper. When custom, obscure and procedural libraries replaced with something modern (doing date manipulation in a relational database is like eating dirt). You've given us nothing.</p>

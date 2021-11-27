@@ -1,0 +1,32 @@
+---
+layout: post
+date: 2015-04-04
+title: "Prematurely Blocking Producers in Go"
+tags: [concurrency, golang]
+description: "How to block a producer when no consumers are available before doing any work"
+---
+
+<p>One of the nice things about Go is the ease with which we can control our work queue and concurrent processing. Specifically, writing to a drained channel blocks until a consumer is available:</p>
+
+{% highlight go %}
+for {
+  result := doWork()
+  notify <- result
+}
+{% endhighlight %}
+
+<p>In the above, writing <code>result</code> to the <code>notify</code> channel blocks once the channel's buffer is full and then until a consumer is freed.</p>
+
+<p>The problem I ran into today was that I didn't want <code>doWork</code> to execute until I was sure that writing to notify would not block. In the past, I've advocated the use of <a href="/Condition-Variables/">Condition Variables</a> for these types of problem. Generally speaking, I like using synchronization primitives for control flow and channels for data flow. Still, given that I already had a channel, I couldn't help but wonder if I could somehow leverage it.</p>
+
+<p>The solution I came up with is, to me, stupid and clever. I run into these types of things every now and again and it's always an interesting feeling which I feel compelled to share it. For one thing, I half expect someone to either point out that it doesn't work or point out that there's a much better and normal solution (but how would I know without exposing my stupidity?!):</p>
+
+{% highlight go %}
+for {
+  notify <- nil
+  result := doWork()
+  notify <- result
+}
+{% endhighlight %}
+
+<p>The above code requires consumers to discard any <code>nil</code> messages, which is definitely unfortunate. It works by moving our block before we do any work. Once we know that we're able to write a <code>nil</code> <code>result</code>, we know that we'll be able to write our real <code>result</code> (again, assuming the consumer quickly discards the <code>nil</code> <code>result</code> and moves on to the next real result).</p>

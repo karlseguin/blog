@@ -1,0 +1,47 @@
+---
+layout: post
+date: 2020-02-13
+title: "Action-Specific Plug Pipelines for Phoenix"
+description: "A bit of code to make applying multiple plugs to a single action more ergonomic."
+tags: [elixir]
+---
+
+<p>For our APIs, most of our actions need a common set of plugs (Elixir's middleware). Phoenix has the concept of pipelines, which are a sequence of plugs you can apply to a group of routes. But our actions tend to need action-specific configuraiton.</p>
+
+<p>The way to do this in Phoenix is via the <code>plug</code> macro with a guard clause on your aciton:</p>
+
+{% highlight elixir %}plug App.Plugs.Context, [route: "user_list"] when action == :index
+plug App.Plugs.Cache, [:public, ttl: 60] when action == :index
+plug App.Plugs.Validate, [
+  search: [string: [max: 50]],
+  page: [:int, default: 1]
+] when action == :index{% endhighlight %}
+
+<p>It's a mouthful! But with a bit of code, we can turn the above into:</p>
+
+{% highlight elixir %}pipeline :index, [
+  context: [route: "user_list"],
+  cache: [:public, ttl: 60],
+  validate: [
+    search: [string: [max: 50]],
+    page: [:int, default: 1]
+  ]
+]{% endhighlight %}
+
+<p><code>pipeline/2</code> is just a macro that converts this improved version into the original:</p>
+
+{% highlight elixir %}defmacro pipeline(action, plugs) do
+  for {plug, config} <- plugs do
+    plug = case plug do
+      :context -> App.Plugs.Context
+      :cache -> App.Plugs.Cache
+      :validate -> App.Plugs.Validate
+    end
+
+    quote location: :keep do
+      plug unquote(plug), unquote(config) when var!(action) == unquote(action)
+    end
+  end
+end{% endhighlight %}
+
+<p>I hope someone finds that useful.</p>

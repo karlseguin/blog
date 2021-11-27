@@ -1,0 +1,47 @@
+---
+layout: post
+date: 2020-04-13
+title: "Elegant TCP with Elixir - Part 2 - Message Boundaries"
+description: "Taking advantage of Elixir / Erlang's TCP library to write elegant tcp handling of message boundaries / framing"
+tags: [elixir]
+---
+
+<p>TCP doesn't provide application-level message boundaries (or framing). I <a href="/2012/1/12/Reading-From-TCP-Streams/">wrote about this</a> a long time ago. Here's a recap. If on one side of a socket you send <code>"hello"</code>:</p>
+
+{% highlight elixir %}:gen_tcp.send(socket, "hello"){% endhighlight %}
+
+<p>Then on the receiving side you'd have to call <code>recv</code> 1 to 5 times. That we sent the message with a single <code>send/2</code> has no bearing on how the message will be received. I say "1 to 5" because, the fewest bytes we can get from a successful <code>recv</code> is 1. So, in the worse case, we'd have to call <code>recv</code> 5 times, once for each letter of the word "hello". This works the other way also. If we write two messages:</p>
+
+{% highlight ruby %}
+:gen_tcp.send(socket, "over")
+:gen_tcp.send(socket, "9000!")
+{% endhighlight %}
+
+<p>A single call to <code>recv</code> could get both messages as a continuous block of bytes. While I've used the word "message" to describe the act of sending and receiving, you really need to think about it as a continuous stream of (non delimited!) bytes. (When testing locally, it can appear as though send and receive are dealing with distinct messages, but this isn't how it works outside of localhost).</p>
+
+<p>There are cases where an endless stream of bytes is what you want. But, more often than not, you'll be sending distinct messages and the receiver will want to receive distinct message. The two common solution to achieve this are: prefixing each message with a length, or using a delimiter at the end of each message (like how HTTP 1.x headers are separated by CRLF). When using a length-prefix, it's common to use a 4-byte integer. So instead of sending <code>['h', 'e', 'l', 'l', 'o']</code>, we'd send <code>[0, 0, 0, 5, 'h', 'e', 'l', 'l', 'o']</code>. Now, this message can still be "fragmented" at the receiver, but because we know to expect 4 bytes and those 4 bytes tell us how many additional bytes to expect, we can re-package the stream on the receiving end. In fact, it's quite common for libraries to provide a function to block until N bytes are received:</p>
+
+{% highlight elixir %}def read_message(socket) do
+  with {:ok, <<length::big-32>>} <- :gen_tcp.recv(socket, 4)
+  do
+    :gen_tcp.recv(socket, length)
+  end
+end{% endhighlight %}
+
+<p>(<code><<length::big-32>></code> is Elixir's powerful binary pattern matching, which <a href="/Elixir-Binary-Matching-Performance/">I've talked about before</a>)</p>
+
+<p><a href="/Elegant-TCP-with-Elixir-Part-1-TCP-as-Messages/">In part 1</a> we learnt about the <code>active</code> flag. Now we'll look at the <code>packet</code> flag. This flag supports a number of different values. By default, this is set to <code>raw</code> and it behaves like any other socket library. However, another option is to set it to <code>4</code>. In this mode, any time you <code>send</code>, the library automatically appends a 4-byte length header. And every time a message is received in active or passive mode, you'll only get properly bound messages (with the length header removed). In other words, with <code>packet: 4</code> set on a socket, if we send a message:</p>
+
+{% highlight elixir %}:gen_tcp.send(socket, "over 9000"){% endhighlight %}
+
+<p>Then we're guaranteed to get this exact message in our receiving (here shown while in active mode, but this works with explicit calls to <code>gen_tcp.recv</code> also):</p>
+
+{% highlight elixir %}def handle_info({:tcp, socket, data}, state) do
+  # data == "over 9000"
+end{% endhighlight %}
+
+<p>I hope it's obvious that there's no Elixir-to-Elixir magic going on here. If you set <code>packet: 4</code> on the sending side and the other side doesn't set this flag (or is writen in a different language) than they'll get receive those extra 4 bytes and need to handle it manually. Similarly, if the sending side manually prepends a 4 byte length prefix, regarless of the language/runtime, it'll still work on the receiving elixir code so long as <code>packet: 4</code> is set.</p>
+
+<p>The <code>packet</code> flag takes other values, including <code>0</code> (same as <code>raw</code>), <code>1</code> (1 byte length prefixed) and <code>2</code> (2 bytes length prefixed). All other values, like <code>:line</code> only work on the receiving end (it'll form incoming messages on the newline character, but it won't add a newline on the sending side). There are most advanced values like <code>:fcgi</code>, <code>:httph</code> and <code>:http</code>.</p>
+
+<p>Obviously, you won't always be able to leverage this feature. But prefixing messages with 4 or 2 bytes, or line-delimiting messages, is common enough for this feature to useful.</p>

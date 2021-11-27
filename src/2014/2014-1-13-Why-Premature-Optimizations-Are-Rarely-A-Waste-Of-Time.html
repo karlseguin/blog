@@ -1,0 +1,163 @@
+---
+layout: post
+date: 2014-01-13
+title: "Why Premature Optimizations Are Rarely A Waste Of Time"
+description: "Yesterday I set out to try and improve go's string.IndexByte implementation when an offset could be provided. I achieved a performance improvement of 0ns. In my book, that's a success!"
+tags: [learning, golang]
+---
+
+<p>Yesterday I set out to try and improve go's <code>strings.IndexByte</code> implementation when an offset could be provided. After a few hours, I was finally able to put my implementation to the test. Overall speed improvement? None. Why do I consider this a success? Because the journey to nowhere was awesome.</p>
+
+<p>The <code>strings</code> package has an <code>IndexByte</code> function which returns the position of a byte within a string, or -1 if the byte isn't found. For example, the following will print <strong>4</strong>:</p>
+
+{% highlight go %}
+haystack := "it's over 9000"
+needle := byte(' ')
+println(strings.IndexByte(haystack, needle))
+{% endhighlight %}
+
+<p>It isn't uncommon to want to find the index of a byte starting from a position other than 0. For example, if we wanted to break a string into words, we might look for a space starting from the position following the previous space. The idiomatic way to do this in go is to use a slice:</p>
+
+{% highlight go %}
+// we start at the previous space (4) + 1 so that we skip what we've already found
+println(strings.IndexByte(haystack[5:], needle))
+{% endhighlight %}
+
+<p>In my mind, given a large haystack, that would result in a lot of slices being created. That's when I thought to myself <em>Wouldn't it be better to have a 3rd parameter which specifies an offset?</em> Something with a signature like:</p>
+
+{% highlight go %}
+println(strings.IndexByteFrom(haystack, needle, 5))
+{% endhighlight %}
+
+<p>The first thing I did was create a baseline benchmark: one for the entire string, and 3 for various slice lengths:</p>
+
+{% highlight go %}
+// haystack is a 2500 character LOREM IPSUM string
+// needle doesn't exist in haystack, so this is the worst case performance
+
+func NormalString(b *testing.B) {
+  for i := 0; i < b.N; i++ {
+    strings.IndexByte(haystack, needle)
+  }
+}
+
+func LongSlice(b *testing.B) {
+  for i := 0; i < b.N; i++ {
+    strings.IndexByte(haystack[1:], needle)
+  }
+}
+
+func MediumSlice(b *testing.B) {
+  for i := 0; i < b.N; i++ {
+    strings.IndexByte(haystack[1250:], needle)
+  }
+}
+
+func ShortSlice(b *testing.B) {
+  for i := 0; i < b.N; i++ {
+    strings.IndexByte(haystack[2200:], needle)
+  }
+}
+{% endhighlight %}
+
+<p>Here are the results:</p>
+
+{% highlight text %}
+Normal String  5000000         411 ns/op
+Long Slice     5000000         475 ns/op
+Medium Slice   10000000        276 ns/op
+Short Slice    20000000        101 ns/op
+{% endhighlight %}
+
+<p>Since <code>LongSlice</code> runs slower (takes more time per iteration), I thought I was onto something: there's clearly overhead in creating a slice. Of course, that overhead is small and is quickly made up for by having a smaller string to scan. Still, why not have your cake and eat it to?!</p>
+
+<p>I opened up Go's <a href="http://golang.org/src/pkg/strings">strings package folder</a>, looked for <code>IndexByte</code>, and found:</p>
+
+{% highlight go %}
+func IndexByte(s string, c byte) int // ../runtime/asm_$GOARCH.s
+{% endhighlight %}
+
+<p>Ok....since this is in <code>strings_decl.go</code>, I assume this is some type of header required to link assembly code. I followed the comment and opened up <a href="http://golang.org/src/pkg/runtime/asm_amd64.s">/pkg/runtime/asm_amd64.s</a>. If you search, you'll find the <code>IndexByte</code> function (one for strings and one for bytes).</p>
+
+<p>Now, I spent a fair amount of time in this code, looking and [trying] to learn. The brunt of the work happens in <code>runtime.indexbytebody</code>. I have no idea how this actually works. However, it's well enough documented that we can tell that it uses SSE instructions to look at 16-byte chunks of data at a time, taking care to read any unaligned head and tail chunks. (the <a href="http://golang.org/src/pkg/runtime/asm_386.s">asm_386</a> version is much simpler.)</p>
+
+<p>I was a little deflated, but I still wanted to try. I knew that I'd have to take advantage of <code>runtime.indexbytebody</code>. All I needed to do was setup my data with the right offset. This took me a bit of time to figure out, and I'm not positive it's right, but I essentially ended turning:</p>
+
+{% highlight text %}
+MOVQ s+0(FP), SI
+MOVQ s_len+8(FP), BX
+MOVB c+16(FP), AL
+{% endhighlight %}
+
+<p>into:</p>
+
+{% highlight text %}
+MOVQ s+0(FP), SI
+MOVQ s_len+8(FP), BX
+MOVB c+16(FP), AL
+SUBQ n+24(FP), BX  //added
+ADDQ n+24(FP), SI  //added
+{% endhighlight %}
+
+<p>Essentially, the added 3rd parameter (n) which is our offset, is subtracted from the total length (BX) and added to our string (SI). I also added some extra bound checking, but am leaving it out of here for the sake of simplicity. One thing that I struggled with was the offset of my new parameter. Our function takes: a string, a byte and an integer. A string is represented as a pointer and a length. Since we're on 64bit code, each of those is 8 bytes. We can see that in the above:</p>
+
+{% highlight text %}
+MOVQ s+0(FP), SI       //move the string pointer (offset 0), to the SI register
+MOVQ s_len+8(FP), BX   //move the string length (offset 8), to the BX register
+MOVB c+16(FP), AL      //move the byte that we're looking at (offset 24), to the AL register
+{% endhighlight %}
+
+<p>The offset of a value is the sum of the size of all the values before it. If you look the <code>bytes.IndexByte</code> code, you'll see that <code>c</code> is at offset 24, not 16. Why? Because array slices have a 3rd 8 byte value, the capacity. In other words, the offset of a value after a string will always be equal to the offset of the string + 16. The offset of a value after an array slice will always be equal to the offset of the array + 24.</p>
+
+<p>My confusion though came from the offset for <code>n</code> and the return value. Since <code>c</code> is a single byte, I would have assumed <code>n</code> to be at 17 and the return value to be at 25 (since n is 8 bytes). But in the original code, the return value was a 24. Turns out that <a href="http://plan9.bell-labs.com/sys/doc/asm.html">the spec</a> is quite clear on this: <em>All parameters less than 8 bytes in length have 8 byte slots reserved on the stack to preserve alignment and simplify variable-length argument list access</em>.</p>
+
+<p>Back to our benchmark, we add three tests that make use of our new assembly entry point:
+
+{% highlight go %}
+func LongIndexFrom(b *testing.B) {
+  for i := 0; i < b.N; i++ {
+    indexof.String(haystack, needle, 1)
+  }
+}
+
+func MediumIndexFrom(b *testing.B) {
+  for i := 0; i < b.N; i++ {
+    indexof.String(haystack, needle, 1250)
+  }
+}
+
+func ShortIndexFrom(b *testing.B) {
+  for i := 0; i < b.N; i++ {
+    indexof.String(haystack, needle, 2200)
+  }
+}
+{% endhighlight %}
+
+<p>The results? *drum roll*: no performance improvement. At all.</p>
+
+<p>Confused, I decided to look at the <code>runtime.MemStats</code> of each version. I had expected to find that the slice implementation allocated more objects than the baseline string version. Instead, I found that <code>Mallocs</code>, which tracks the number of mallocs, and <code>HeapObjects</code>, which tracks the total number of allocated objects, were the exact same with or without the creation of slices.</p>
+
+<p>Maybe, I thought, there's a pool of slice objects? But I couldn't find one, so I posed this conundrum to the <a href="https://groups.google.com/forum/#!forum/golang-nuts">golang-nuts google group</a>. The answer was perfect:</p>
+
+<blockquote>
+A slice of a string is a pointer and a length.<br />
+No allocations required. Just two words on the stack.
+</blockquote>
+
+<p>In other words, my assumption that a string slice would result in a heap allocation (and subsequent GC), was wrong. My 'tweaked' version and the slice version are effectively the same (a couple values pushed onto the stack).</p>
+
+<p>What I'm saying is that this is a pattern I've gone through many times before. The performance gains from optimizing tend to be small compared to what the process can teach you. In this case, what I learned (more or less in order of importance):</p>
+
+<ol>
+<li>I wrongly associate stack with primitives and the heap for everything else. I still think that's true for Java, and, structs aside, true for C#. But, if I'm honest, I have no idea how Ruby or Node approach this. Go's specs, I've since learned, never mention the heap or the stack, so it's implementation specific. I know how the current implementation behaves, in this case at least.</li>
+
+<li>Go has highly optimized <code>Index</code> functions for both strings and bytes. I'll never worry about that again.</li>
+
+<li>Calling assembly from Go is easier than I would have guessed. It's probably safe to say that calling C from Go is equally easy. In the future, this knowledge will help me quickly rank the appropriateness of various solutions.</li>
+
+<li>Go source to assembly: <code>go tool 6g -S FILE.go</code>. That could come in handy.</li>
+
+<li>I'll probably never push my own assembly code into production. Still, I refuse to believe that playing around with it was a loss. Just seeing the impact of different instruction sets (SEE vs not) was obvious but neat. It's also neat to see the control flow through various CMP and JMP operations (which I remember pretty well from school, still, the aligned, sse, condition looping is awesome). I also can't figure out how you pick your registers (something from school tells me some flags are tied to specific registers?). Why R11 vs R10 vs X0 vs BX? The documentation is pretty brutal.</li>
+</ol>
+
+<p>Honestly, it doesn't matter why you're exploring stuff outside of what you already know. As long as you're doing it.</p>

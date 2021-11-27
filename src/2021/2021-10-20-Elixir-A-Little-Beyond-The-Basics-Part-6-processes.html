@@ -1,0 +1,317 @@
+---
+layout: post
+date: 2021-10-20
+title: "Elixir, A Little Beyond The Basics - Part 6: processes"
+description: "Demystifying Elixir Process a little to help you understand how concurrency works and why the message box is so useful."
+tags: [elixir]
+---
+
+<p>One of the things I like the most about Elixir is that complexity in the language, standard library and runtime are well layered. By this I mean that it's possible to get up to speed and be productive quickly while slowly and naturally uncovering more advanced and nuanced concepts.</p>
+
+<p>I can think of no better example of this than processes. Processes are a fundamental part of programming in Elixir, yet it's common for developers to build full Phoenix applications without interacting with them directly. Then one day, a need arises, which, with some online searching, leads to examples of Agents and GenServers and a whole new world opens up.</p>
+
+<p>One of the reasons this is such a smooth experience is the synergy between the languages, standard library and runtime: GenServers, as a whole, have nice ergonomics despite their relative complexity. But this same ease-of-use can result in a superficial understanding of what's happening behind the scenes.</p>
+
+<p>Let's start from zero. Elixir's terminology (inherited from Erlang) is initially confusing, but, as you learn more, accurate. Elixir doesn't have "threads", it has "processes". When you're just starting out though, it's safe to think of them as any other "green thread" (or "virtual thread"), such as goroutines. This means that they're managed by the Erlang runtime, are cheap to create and have low overhead.</p>
+
+<p>We start a process with the <code>spawn</code> function:</p>
+
+{% highlight elixir %}
+spawn fn -> IO.puts("over 9000!") end
+{% endhighlight %}
+
+<p>It's worth pointing out that everything is running in a process. If you run the above code in an iex terminal, that's a process (which, like any other code, can spawn more processes).</p>
+
+<p>Where Elixir processes differ from most thread and green thread implementations is that they're isolated. They don't share memory with other processes, including the process that spawned them. This has implications on how processes interact with each other, as typical concurrency primitives (e.g. mutexes) cannot work. Specifically, all interactions between processes are done via message passing. Let's look at an example:</p>
+
+{% highlight elixir %}
+pid = spawn fn ->
+  receive do
+    msg -> IO.puts("received: #{msg}")
+  end
+end
+send(pid, "hello")
+{% endhighlight %}
+
+<p>Here we see three things. First, spawn returns the process identifier (PID or pid). We use <code>send</code> to send a message to a pid. Above we're sending a string, but we can send any term (i.e. anything). Finally, <code>receive</code> is used to read messages.</p>
+
+<p>By default, <code>receive</code> will block until a message is received. We can change this behavior, as well as add pattern matching to the received message.  We can also receive multiple messages by calling <code>receive</code> multiple times:</p>
+
+{% highlight elixir %}
+defmodule MyApp.Receiver do
+  def run(counter) do
+    IO.puts(counter)
+
+    receive do
+      :incr -> run(counter + 1)
+      {:incr, by} -> run(counter + by)
+      :stop -> :ok
+    after
+      250 -> run(counter) # executed after 250 milliseconds
+    end
+
+  end
+end
+
+pid = spawn fn -> MyApp.Receiver.run(0) end
+:timer.sleep(1000)
+
+send(pid, :incr)
+:timer.sleep(2000)
+
+send(pid, {:incr, 10})
+:timer.sleep(1000)
+
+send(pid, :stop)
+{% endhighlight %}
+
+<p>You might get different results each time you run this, but it should be similar to <code>0</code> printed four times, followed by <code>1</code> printed eight times and finally <code>11</code> printed four times.</p>
+
+<h3>Thread Safety</h3>
+<p>What you must understand is that each Elixir processes has its own mailbox. Messages sent to a process are placed at the end of the mailbox. When a process reads from its mailbox, using <code>receive</code>, the message is removed from the front it its mailbox (it's a queue). Multiple processes can send messages to the same target process, but that target process can only process one message at a time.</p>
+
+<p>When you combine this mailbox pattern with process isolation, you get a strong guarantee: a process can always manipulate its data without needing any concurrency control. (To be clear, there is synchronization within the runtime to allow concurrent access to the mailbox, but this is completely hidden from the application).</p>
+
+<p>You might be thinking to yourself that our above example is too simple. Of course, <code>counter</code> can't be shared between processes, it's just an integer that exists on <code>run's</code> stack. But the reality is that processes always have exclusive access to their data (which we typically call their "state"), regardless of the type. This is because message which cross process boundaries are deep copied (strings larger than 64 bytes have special optimizations where only a reference is passed).</p>
+
+<p>This <em>is</em> less efficient than passing references. But it has two significant advantages. First, as we already mentioned, processes are thread-safe without any additional concurrency control. Second, it allows the garbage collector to be more efficient: since data is isolated per process, garbage collection is also isolated per process.</p>
+
+<h3>Send & Receive</h3>
+
+<p>While <code>receive</code> will block, <code>send</code> never blocks. In fact, we can send to a non-existent process:</p>
+
+{% highlight elixir %}
+pid = spawn fn -> end
+
+:timer.sleep(100)
+Process.alive?(pid) # false, the process has exited
+
+send(pid, :hello)
+{% endhighlight %}
+
+<p>If you've used GenServers, you know that you can interact with them asynchronously (via <code>cast/2</code>) and synchronously (via <code>call/2</code>). How is that possible? Our sender can <code>receive</code> to wait for a reply:</p>
+
+{% highlight elixir %}
+pid = spawn fn ->
+  receive do
+    {:add, a, b, reply_pid} -> send(reply_pid, {:sum, a + b})
+  end
+end
+
+send(pid, {:add, 9000, 1, self()})
+receive do
+  {:sum, value} -> IO.puts(value)
+after
+  5000 -> raise :timeout
+end
+{% endhighlight %}
+
+<p><code>self/0</code> returns the current PID, which we need to send to our calculator in order for it to know where to direct the reply.</p>
+
+<p>In addition to <code>send/2</code>, there's also <code>Process.send_after/3</code> which can be used to send a message, to a pid, after a certain amount of time:</p>
+
+{% highlight elixir %}
+Process.send_after(pid, :refresh_token, :timer.minutes(1))
+{% endhighlight %}
+
+<p><code>receive</code> also has one neat trick: it'll search the mailbox for messages that match the given pattern(s):</p>
+
+{% highlight elixir %}
+pid = spawn fn ->
+  receive do
+    {:add, a, b} when is_number(a) and is_number(b) -> IO.puts("#{a} + #{b} == #{a + b}")
+    {:sub, a, b} when is_number(a) and is_number(b) -> IO.puts("#{a} - #{b} == #{a - b}")
+  end
+end
+
+send(pid, {:multiply, 9000, 2})
+send(pid, {:add, "hello", "world"})
+send(pid, {:sub, 1000, 5})
+{% endhighlight %}
+
+<p>The above will only output <code>1000 - 5 == 995</code>, as the first two message will be ignored. In the above example, our spawned process exits shortly after we send the 3rd message, as this unblocks the receiver and causes the function to exit. However, if our process was long-lived, it's important to know that the first two messages we sent continue to exist in the process' mailbox (the runtime doesn't know if some later call to <code>receive</code> will want those messages.). We can see this in action:</p>
+
+{% highlight elixir %}
+pid = spawn fn ->
+  receive do
+    {:add, a, b} when is_number(a) and is_number(b) -> IO.puts("#{a} + #{b} == #{a + b}")
+    {:sub, a, b} when is_number(a) and is_number(b) -> IO.puts("#{a} - #{b} == #{a - b}")
+  end
+
+  receive do
+    msg -> IO.inspect("unknown1: #{inspect(msg)}")
+  end
+  receive do
+    msg -> IO.inspect("unknown2: #{inspect(msg)}")
+  end
+
+  # this will block, since we've now emptied our mailbox
+  receive do
+    _ -> raise "should not be called"
+  end
+end
+
+send(pid, {:multiply, 9000, 2})
+send(pid, {:add, "hello", "world"})
+send(pid, {:sub, 1000, 5})
+{% endhighlight %}
+
+<p>Which outputs</p>
+
+{% highlight text %}
+1000 - 5 == 995
+"unknown1: {:multiply, 9000, 2}"
+"unknown2: {:add, \"hello\", \"world\"}"
+{% endhighlight %}
+
+<p>Normally, when we call <code>receive</code>, we'll get messages in the order that they were written into the process' mailbox. But we can see from the above, where the first message received is actually the last sent, that a selective receive, via pattern matching, adds another layer.</p>
+
+<h3>Process Names, Process Info and Process Dictionaries</h3>
+<p>We can give a process a name, and use the name rather than the pid when sending a message. This makes it possible to send messages to process without knowing their current pid.</p>
+
+{% highlight elixir %}
+pid = spawn fn ->
+  receive do
+    {:add, a, b, reply_pid} -> send(reply_pid, {:sum, a + b})
+  end
+end
+
+Process.register(pid, :myapp_calculator)
+send(:myapp_calculator, {:add, 9000, 2, self()})
+receive do
+  msg -> IO.inspect(msg)
+end
+{% endhighlight %}
+
+<p><code>Process.whereis/1</code> can be used to get the pid for a given name. It returns <code>nil</code> if no process is registered with that name. <code>Process.registered/0</code> can be used to get a list of all registered process names.</p>
+
+<p><code>Process.info/1</code> can be used to get information about a process. It takes a pid, not a registered name. Similarly, <code>Process.info/2</code> takes a list of the specific fields we're interested in. Twenty or so fields are exposed by <code>Process.info/0</code>:</p>
+
+{% highlight elixir %}
+> Process.info(self())
+[
+  current_function: {Process, :info, 1},
+  initial_call: {:proc_lib, :init_p, 5},
+  status: :running,
+  message_queue_len: 0,
+  links: [],
+  dictionary: [],
+  trap_exit: false,
+  error_handler: :error_handler,
+  priority: :normal,
+  group_leader: #PID<0.66.0>,
+  total_heap_size: 13544,
+  heap_size: 2586,
+  stack_size: 51,
+  reductions: 87142,
+  garbage_collection: [
+    max_heap_size: %{error_logger: true, kill: true, size: 0},
+    min_bin_vheap_size: 46422,
+    min_heap_size: 233,
+    fullsweep_after: 65535,
+    minor_gcs: 6
+  ],
+  suspending: []
+]
+
+> Process.info(self(), [:status, :message_queue_len, :reductions])
+[status: :running, message_queue_len: 0, reductions: 140543]
+{% endhighlight %}
+
+<p><code>message_queue_len</code> and <code>reductions</code> are particularly useful if you're interested in monitoring the performance and efficiency of your processes. The first indicates the size of the mailbox, or how many message are waiting to be received by the process. In most cases, you'll want <code>message_queue_len</code> to spend as much time at or near 0 as possible.<code>reductions</code> can be viewed as an opaque unit of work. A processes <code>reductions</code> will continue to increment, so what we care about is the rate. In reality, a reductions is a counter which is incremented on a function call. In current versions of the Erlang runtime, a context switch happens at every 4000 reductions). While the absolute count of reductions is less valuable than the rate (else long-running processes will always appear as "heavier"), we can quickly get a list of the processes with the highest reductions:</p>
+
+{% highlight elixir %}
+Process.list() # gets a list of all running pids
+|> Enum.map(fn pid ->
+  info = Process.info(pid, [:reductions, :registered_name])
+
+  # not every process has a name, if it doesn't, fallback to the pid
+  name = case info[:registered_name] do
+    [] -> pid
+    name -> name
+  end
+
+  %{name: name, reductions: info[:reductions]}
+end)
+|> Enum.sort_by(fn p -> p[:reductions] end, :desc)
+|> Enum.take(10)
+{% endhighlight %}
+
+<p>There's another field in the process information that's interesting: <code>dictionary</code>. In the above sample output, it was just an empty list. However, if you run <code>Process.info(self())</code> in an iex terminal, you'll get a non-empty list (try running it more than once!).</p>
+
+<p>Every process has an internal dictionary which can be used to store arbitrary values. The process dictionary is only accessible within the process. You interact with it via <code>Process.get/1</code>, <code>Process.put/2</code> and <code>Process.delete/1</code>:</p>
+
+{% highlight elixir %}
+defmodule MyApp.Process do
+  def run() do
+    Process.put(:myapp_history, [])
+    read_loop(0)
+  end
+
+  defp read_loop(3) do
+    IO.inspect(history())
+    read_loop(0)
+  end
+
+  defp read_loop(count) do
+    receive do
+      msg -> Process.put(:myapp_history, [msg | history()])
+    end
+    read_loop(count + 1)
+  end
+
+  defp history(), do: Process.get(:myapp_history)
+end
+
+pid = spawn &MyApp.Process.run/0
+
+send(pid, 1)
+send(pid, 2)
+send(pid, 3)
+IO.inspect(Process.get(:myapp_history))
+{% endhighlight %}
+
+<p>Similar to iex, we use the process dictionary to keep a history. We print out the history on every 3rd message. Importantly, because every process has its own dictionary, the last line of the above snippet will print <code>nil</code>. Since it's being executed form a different process, it doesn't matter that we're using the same key, namely <code>:myapp_history</code>.</p>
+
+<p>While process dictionaries can be useful in some cases, do note that they can make code hard to understand and maintain. Values stored in the process dictionary as essentially globals of the process - with the advantage that, being fully owned and isolated to the process, they are, of course, thread safe.</p>
+
+<h3>Processes and Modules</h3>
+<p>This might be obvious, but it's important to be clear: processes and modules aren't tied. Given the following:</p>
+
+{% highlight elixir %}
+defmodule MyApp.Calculator do
+  def start() do
+    pid = spawn &loop/0
+    Process.register(pid, :calculator)
+  end
+
+  defp loop() do
+    receive do
+      {:add, a, b, reply_pid} -> send(reply_pid, a + b)
+    end
+    loop()
+  end
+
+  def add(a, b) do                              # 1
+    send(:calculator, {:add, a, b, self()})     # 1
+    receive do                                  # 1
+      sum -> sum                                # 1
+    after                                       # 1
+      1000 -> raise :timeout                    # 1
+    end                                         # 1
+  end                                           # 1
+end
+
+MyApp.Calculator.start()                        # 1
+IO.puts MyApp.Calculator.add(1, 3)              # 1
+{% endhighlight %}
+
+<p>It's important to know what's being run from what process. Everything commented with <code># 1</code> is running in our initial process. This includes the <code>add/2</code> which is located in the <code>MyApp.Calculator</code> module. While GenServers (to be discussed in greater detail in a later part) often give the impression that modules and process map 1 to 1, this isn't the case.</p>
+
+<h3>tl;dr</h3>
+<p>Every Elixir process has a mailbox and all communication between processes happens via messages sent to and received from mailboxes. Because a process can only operate on one message at a time, and because processes are isolated (do not share any of their data/state), processes do not require any application-level concurrency control.</p>
+
+<div id=pager>
+  <a class=prev href=/Elixir-A-Little-Beyond-The-Basics-Part-5-tuples-and-records/>tuples</a>
+  <a class=next href=/Elixir-A-Little-Beyond-The-Basics-Part-7-supervisors/>supervisors</a>
+</div>

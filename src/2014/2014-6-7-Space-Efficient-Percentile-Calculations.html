@@ -1,0 +1,45 @@
+---
+layout: post
+date: 2014-06-07
+title: "Space Efficient Percentile Calculations"
+tags: [learning, performance]
+description: "Calculating percentiles using a fixed amount of memory"
+---
+<p><a href=/The-Deceptive-Nature-Of-Averages>Being generally opposed to averages</a>, one of the problems I've faced while collecting percentiles has revolved around memory efficiency. The simplest way to measure a percentile is to collect all data points, sort them, and then find the value of the data point at the desired percentiles. This approach requires O(N) memory - if we have 100 data points, we'll need to store 100 values; if we have 1 000 000, we'll need to store 1 000 000 values. In some cases, that's a problem.</p>
+
+<p>The approach I settled on, sampling, isn't specific to percentiles. When sampling, we only store a subset of all values. Since our goal is to move away from linear memory usage, we begin by creating a fixed-size bucket of values:</p>
+
+{% highlight go %}
+samples := make([]int, 500)
+{% endhighlight %}
+
+<p>A simplistic approach would be to randomly enter/replace values in our sample:</p>
+
+{% highlight go %}
+func hit(time int) {
+  l := len(samples)
+  if l < 500 {
+    samples[l] = time
+  } else {
+    samples[rand.Int31n(500)] = time
+  }
+}
+{% endhighlight %}
+
+<p>The problem with this approach is that it favors new data points over old ones. This might not be an actual issue. If we're looking at response times and snapshotting every minute, we might be justified in expecting respresentativie data over the course of a day.</p>
+
+<p>Still, in order to evenly consider every data point, we need to weigh our data points. The decision on whether or not to sample the data point, becomes:</p>
+
+{% highlight go %}
+  hits += 1
+  l := len(samples)
+  if l < 500 {
+    samples[l] = time
+  } else if 500/hits > rand.Float64() {
+    samples[rand.Int31n(500)] = time
+  }
+{% endhighlight %}
+
+<p>The more number of hits we have, the less likely a point is going to get sampled, yet the earlier a point is sampled, the more chance it has to get replaced.</p>
+
+<p>With sampling you potentially end up throwing out outliers. However, unlike an average, I <strong>think</strong> that over the long run, you aren't going to be consistently smoothing out your curve. Nevertheless, if outliers is of interest (and why wouldn't it be?!), the simplest and most scalable solution is still to keep a simple counter of outliers.</p>

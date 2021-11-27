@@ -1,0 +1,106 @@
+---
+layout: post
+date: 2021-10-14
+title: "Elixir, A Little Beyond The Basics - Part 5: tuples and records"
+description: "Elixir tuples and records provide fast read operations at the cost of expensive writes"
+tags: [elixir]
+---
+
+<p>So far we've seen that using contiguous memory for arrays and structures is common in languages with mutable data. Elixir on the other hand, in the name of immutability, relies on persisted data structures. These tend to be less efficient and, in some case, less functional. This is particularly true for lists, which have an efficient prepend, but lack the definitive random-access property of arrays.</p>
+
+<p>Elixir <em>does</em> have access to a contiguous memory based type: tuples. You're probably making good use of tuples in your code already, as a type of small anonymous structure. As we previously discussed though, the only way to preserve immutability when writing to contiguous memory is to make a copy of the memory, and this holds true of tuples as well. In other words it's very cheap to create a tuple, and to read from it, but writing is O(N) based on the size of the tuple. This makes them particularly well suited as return values, especially when paired with pattern matching, which is probably exactly how you're using them. But ill-suited for anything more dynamic.</p>
+
+<p>Consider the following:</p>
+
+{% highlight elixir %}
+t1 = {"a", "b", "z"}
+t2 = put_elem(t1, 2, "c")
+t3 = Tuple.append(t2, "d")
+IO.puts(elem(t3, 3))
+{% endhighlight %}
+
+<p>Creating <code>t2</code> involves copying <code>t1</code> which will obviously depends on the size of <code>t1</code>. Similarly appending (or prepending) to create <code>t3</code> requires another copy. However accessing an element of the tuple in our last line is done in constant time.</p>
+
+<p>That doesn't mean that there aren't more places where tuples can be used though. Here's a random-string generation snippet I found online:</p>
+
+{% highlight elixir %}
+@chars "ABCDEFGHIJKLMNOPQRSTUVWXYZ" |> String.split("")
+
+1..50
+|> Enum.map(fn _ -> Enum.random(@chars) end)
+|> Enum.join("")
+{% endhighlight %}
+
+<p>This code is repeatedly reading from a fixed-length list. Since lists are linked lists, and you have to walk through the linked list to access a random element, the above code is not particularly efficient. With tuples though, we'd have O(1) access to any element (random access), which is exactly what this code is doing. Here's the tuple version:</p>
+
+{% highlight elixir %}
+@chars "ABCDEFGHIJKLMNOPQRSTUVWXYZ" |> String.split("") |> List.to_tuple()
+
+1..50
+|> Enum.map(fn _ -> elem(@chars, :rand.uniform(tuple_size(@chars) - 1)) end)
+|> Enum.join("")
+{% endhighlight %}
+
+<p>On my laptop, the tuple version is twice as fast. Make <code>@chars</code> larger though, say 10000 elements (for testing, you can do: <code>String.duplicate("a", 10_000)</code>, and it becomes 200 times faster.</p>
+
+<p>There are other places where tuple may or may not make sense, such as the configuration value of a Plug, the accumulator of a loop, or the state of a process. One of the challenges with tuples though is that they aren't expressive. Say we wanted to reverse and count a list, a tuple is a good choice:</p>
+
+{% highlight elixir %}
+{reversed, count} =
+  Enum.reduce(original, {[], 0}, fn item, {acc, count} ->
+    {[item | acc], count + 1}
+  end)
+{% endhighlight %}
+
+<p>But if we need more values, or if our tuple exists over a larger scope (such as multiple function calls of a GenServer), tuples can become unwieldy. For example, if you have a GenServer that must track 2 values, a tuple is probably manageable. But even in this simple case, adding a 3rd value will require more of a refactoring versus having used a 2-field map in the first place.</p>
+
+<p>One possible option is an infrequently used type called a <code>record</code>. Records essentially give labels, getters and setters to tuples. A record is to a tuple what a structure is to a map. Importantly though, they don't change any of the performance characteristics (i.e. reads are fast and writes slow). Setting up a new <code>record</code> type is easy:</p>
+
+{% highlight elixir %}
+defmodule MyApp.User do
+  require Record
+  Record.defrecord(:user, id: nil, active: true, name: nil)
+end
+{% endhighlight %}
+
+<p>The above code generates <code>user/0</code>, <code>user/1</code> and <code>user/2</code> macros within our module. The first creates a default user, the 2nd creates a user with a specific keyword list, and the gets or sets a value, depending on what you pass to it. These macros can be used, as-is, within the <code>MyApp.User</code> module, or we can require the module to use them externally:</p>
+
+{% highlight elixir %}
+alias MyApp.User
+require User
+
+> goku = User.user(id: 0, name: "Goku", active: true)
+{:user, 0, true, "Goku"}
+
+> goku = User.user(goku, id: 1, name: "Son Goku") # change the name
+{:user, 1, true, "Son Goku"}
+
+> User.user(goku, :name) # get the name
+"Goku"
+{% endhighlight %}
+
+<p>You can see from the above code that tuples created as records include the record name (<code>:user</code> in this case as the first element in the tuple).</p>
+
+<p>Because these are <strong>macros</strong>, they only work with literals. We cannot do:</p>
+
+{% highlight elixir %}
+field = :id
+> User.user(goku, field)
+{% endhighlight %}
+
+<p>But we could, of course, always create our own wrappers, something like:</p>
+
+{% highlight elixir %}
+def get(user, :id), do: user(user, :id)
+def get(user, :name), do: user(user, :name)
+def get(user, :active), do: user(user, :active)
+{% endhighlight %}
+
+<p>Still, if I'm being honest, I don't find the ergonomics of records pleasant. Whenever I try to use them, it turns into a slightly frustrating experience. I struggle with naming (because the record is almost always named what I want to name my variable, e.g. <code>user</code>), or with dynamic field names, or, most commonly, with pattern matching. Nevertheless, there are cases, especially when created once and read multiple times where they can be useful (the configuration for a Plug comes to mind). They provide the performance of a tuple with slight readability improvements by using names rather than offsets.</p>
+
+<p>Knowing how tuples are implemented and the consequences of that implementation, will hopefully help you decide how best to use them. There are obvious purely static cases where tuples are advantageous over lists. For use in accumulators and process states though, it's up to you, though I think the most important factors are the number of fields and scope of the values. Maps are more explicit and can better evolve with your code. In some cases, records might be able to fill the gap.</p>
+
+<div id=pager>
+  <a class=prev href=/Elixir-A-Little-Beyond-The-Basics-Part-4-structures/>structures</a>
+  <a class=next href=/Elixir-A-Little-Beyond-The-Basics-Part-6-processes/>processes</a>
+</div>

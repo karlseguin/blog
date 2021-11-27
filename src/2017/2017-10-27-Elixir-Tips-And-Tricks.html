@@ -1,0 +1,382 @@
+---
+layout: post
+date: 2017-10-27
+title: "Elixir Tips and Tricks"
+description: "A list of Elixir tricks which you may or may not know about"
+tags: [elixir]
+---
+
+<h3>1. Struct Update</h3>
+<p>The special syntax for updating a map, <code>%{var | field: value}</code> is particularly useful with structs.</p>
+
+<p>With a plain map, the following gives a runtime erorr:</p>
+
+{% highlight elixir %}saiyan = %{name: "goku"}
+saiyan = %{goku | pwer: 9001}{% endhighlight %}
+
+<p>because <code>%{var | ...}</code> can only be used to update an existing field. However, with a struct, you'll get a compile-time error:</p>
+
+{% highlight elixir %}defmodule Saiyan do
+  defstruct [:name, :power]
+  ...
+end
+
+goku = %Saiyan{name: "goku"}
+goku = %Saiyan{goku | pwer: 9001}
+
+** (CompileError) code.ex:17: unknown key :pwer for struct Saiyan
+{% endhighlight %}
+
+<h3>2 alias, import and use</h3>
+<p>Starting off, it can be a overwhelming to realize that Elixir has at least three ways of interacting with other modules. While there's a bit of overlap, they mostly serve distinct purposes.</p>
+
+<h4>2.a alias</h4>
+<p><code>alias</code> is the simplest to understand and the one you'll use the most. It lets you access a module via a shortened name rather than its full name:</p>
+
+{% highlight elixir %}MyApp.Service.Auth.user(email, password)
+
+# vs
+alias Myapp.Service.Auth
+...
+Auth.user(email, password){% endhighlight %}
+
+<h4>2.b import</h4>
+<p><code>import</code> takes this a step further: once imported, you can access functions directly as though they're defined in the current module:</p>
+
+{% highlight elixir %}import Myapp.Service.Auth
+...
+user(email, password){% endhighlight %}
+
+<p>Personally, I think you should avoid importing. It makes things obscure: where is <code>user</code> defined? Also, because you lose the context provided by the [hopefully] meaningful module name, for the sake of readability, you'll often have you re-add that context to the function name, such as <code>auth_user</code>.</p>
+
+<p>Why bother? First, you <strong>have to</strong> import a module if you want to use its macros. As a beginner-safe-rule, you should only import when you need to use a module's macros. You can enforce this:</p>
+
+{% highlight elixir %}import MyApp.Service.Auth, only: :macros{% endhighlight %}
+
+<p>You can also import only functions or specific functions or macros.</p>
+
+<p>I confess that we do occasionally import functions. Most notably in our tests, where a number of helpers are repeatedly needed. For example, all of our integration tests have access to an imported <code>truncate</code> function which is used to wipe a database clean.</p>
+
+<h4>2.c use</h4>
+<p><code>use</code> isn't like <code>alias</code> or <code>import</code> but it's so powerful that it can be, and often is, used to inject an <code>alias</code> and/or <code>import</code>. When you <code>use</code> a module, that module's <code>__using__/1</code> macro is executed. That macro can do anything, which means the behavious of <code>use</code> changes from module to module.</p>
+
+{% highlight elixir %}defmodule MyApp.Controller.Base do
+  # automatically called when you: use MyApp.Controller.Base
+  defmacro __using__(_opts) do
+    quote do
+      # Gets injected into the calling module
+      import MyApp.Controller.Base
+
+      # ... probably does more things
+    end
+  end
+end{% endhighlight %}
+
+<p>Above is a somewhat common pattern where a <code>use</code>'d module imports itself. If you're just starting to learn elixir, <code>use</code> when a library / documentation tells you to, and take the opportunity to look at that module's <code>__using__/1</code> macro to learn what it's doing.</p>
+
+<h3>3. alias __MODULE__, as...</h3>
+<p>You can minimize the presence of <code>__MODULE__</code> by aliasing it:</p>
+
+{% highlight elixir %}defmodule DBZ.Saiyan do
+  # Expands to alias DBZ.Saiyan, which means we can now use
+  # Saiyan instead of __MODULE__
+  alias __MODULE__
+
+  def new(name) do
+    %Saiyan{name: name}
+  end
+end{% endhighlight %}
+
+<p>We often do this in our GenServers and give it the name of <code>State</code> (unless something more specific makes sense). This works well when combined with the special update syntax described in tip #1:</p>
+
+{% highlight elixir %}defmodule Dune.Harvesters do
+  use GenServer
+  alias __MODULE__, as: State
+
+  defstruct [:lookup, :dispatched]
+
+  # ...
+
+  def handle_cast({:destroyed, id}, state) do
+    state = %State{state | lookup: Map.delete(state.lookup, id)}
+    {:noreply, state}
+  end
+end{% endhighlight %}
+
+<h3>4. With's default else behaviour</h3>
+<p>Elixir's <code>with</code> is <a href="/Elixirs-With-Statement">useful for dealing with more complex flows</a>, but did you know that you can omit the <code>else</code> clause? The default behaviour is to return whatever broke the flow (and would have triggered the <code>else</code>).</p>
+
+<p>In other words, any time you write:</p>
+
+{% highlight elixir %}with {:ok, decoded} <- Poison.decode(data),
+     {:ok, scores} <- extract_scores(decoded)
+do
+  # do something with scores
+else
+  err -> err
+end{% endhighlight %}
+
+<p>You can omit the <code>else</code> block:</p>
+
+{% highlight elixir %}with {:ok, decoded} <- Poison.decode(data),
+     {:ok, scores} <- extract_scores(decoded)
+do
+  # do something with scores
+end{% endhighlight %}
+
+<h3>5. Atom Memory</h3>
+<p>Atom's aren't garbage collected. You should be weary of using <code>String.to_atom/1</code>. Doing this on user input, for example, is a good way to run out of memory.</p>
+
+<p>One option is to use <code>String.to_existing_atom/1</code> which raises if the atom isn't already defined.</p>
+
+<p>Another option is to leverage matching:</p>
+
+{% highlight elixir %}def planets("caladan"), do: :caladan
+def planets("ix"), do: :ix
+def planets("arrakis"), do: :arrakis
+def planets(_), do: nil{% endhighlight %}
+
+<p>Or less tedious and less readable:</p>
+
+{% highlight elixir %}for {value, input} <- [caladan: "caladan", ix: "ix", ...] do
+  def planets(unquote(input)), do: unquote(value)
+end
+def planets(_), do: nil{% endhighlight %}
+
+<h3>6. IO.inspect Label</h3>
+<p><code>IO.inspect</code> takes an optional <code>label</code> value which is prepends to the output:</p>
+
+{% highlight elixir %}IO.inspect("#{min} - #{max}", label: "debug")
+> debug: "10 - 100"{% endhighlight %}
+
+<h3>7. IO.inspect return</h3>
+<p>Speaking of <code>IO.inspect</code>, it returns the parameter that you pass into it. This makes it injectable without having to change your code (say, by having to introduce a temporary variable or breaking a pipe chain):</p>
+
+{% highlight elixir %}case IO.inspect(parse_input(input)) do
+  ...
+end
+
+# or
+result = String.split(input, ",", parts: 3)
+|> Enum.map(&String.to_integer/1)
+|> IO.inspect()
+|> ...{% endhighlight %}
+
+<h3>8. Running a Specific Test</h3>
+<p>Add the path to the <code>mix test</code> command to run that specific file and optionally include <code>:LINE</code> to run a specific test:</p>
+
+{% highlight elixir %}mix test test/users_test.exs
+mix test test/users_test.exs:24{% endhighlight %}
+
+<h3>9. Dependencies</h3>
+<p>List outdated dependencies by running <code>mix hex.outdated</code>; clean unused dependencies with <code>mix deps.clean --unlock --unused</code></p>
+
+<h3>10. Phoenix custom action parameters</h3>
+<p>If you find yourself using the same variable from <code>conn.assigns</code>, consider having it automatically injected into your actions:</p>
+
+{% highlight elixir %}# turn
+def show(conn, params) do
+  context = conn.assigns[:context]
+  ...
+end
+
+# into
+def show(conn, params, context) do
+  ...
+end
+{% endhighlight %}
+
+<p>This can be achieved by overriding <code>action/2</code> within your controller, (<a href="https://hexdocs.pm/phoenix/Phoenix.Controller.html#module-overriding-action-2-for-custom-arguments">as described in the documentation</a>):</p>
+
+{% highlight elixir %}def action(conn, _) do
+  args = [conn, conn.params, conn.assigns[:context]]
+  apply(__MODULE__, action_name(conn), args)
+end{% endhighlight %}
+
+<h3>11. Default parameters and function heads</h3>
+<p>If you're new to elixir, you might see a function parameter which includes two backslashes: <code>opts \\ []</code>. This is how elixir defines a default value for a parameter.</p>
+
+<p>Default values are related to another strange thing you might spot: functions with no bodies (called function heads). Consider the implementation of <code>Enum.all/2</code>:</p>
+
+{% highlight elixir %}def all?(enumerable, fun \\ fn(x) -> x end) # No body?!
+
+def all?(enumerable, fun) when is_list(enumerable) do
+  ...
+end
+
+def all?(enumerable, fun) do
+  ...
+end{% endhighlight %}
+
+<p>That first line is required by the compiler whenever you use default values and have multiple versions of the function. It removes any ambiguity that might arise from having default values and multiple functions.</p>
+
+<p>(Function heads are also useful in more advanced cases where documenting actual implementation(s) is messy or impractical, usually related to macros).</p>
+
+<h3>12. Pattern matching anonymous functions</h3>
+<p>Just like normal functions, anonymous functions can also do pattern matching:</p>
+
+{% highlight elixir %}def extract_errors(results) do
+  Enum.reduce(results, [], fn
+    :ok, errors -> errors  # don't do anything
+    {:error, err}, errors -> [err | errors]
+    other, errors ->  -> [other | errors]
+  end)
+end{% endhighlight %}
+
+<h3>13. Enum.reduce/3</h3>
+<p>Any function in the <code>Enum</code> module can be implemented using <code>Enum.reduce/3</code>. For example, <code>Enum.map/2</code> is implemented as a reduce + reverse (since it preserves ordering).</p>
+
+<p>You should always consider using the more readable versions, but if you're just getting started, it's a good mental exercise to consider how you'd implement each function using only <code>reduce/3</code>. Also, if performance matters and you have specific needs (like wanting to map but not caring about order), doing things in <code>reduce/3</code> might be faster.</p>
+
+<h3>14. Don't overlook Enum.reduce_while/3</h3>
+<p><code>Enum.reduce_while/3</code> is a powered-up version of <code>reduce/3</code>. It behaves almost the same, including taking the same parameters, but you control when it should stop enumerating the input. This makes it a more efficient solution for implementing <code>Enum.find/2</code>, <code>Enum.take_while/2</code> and any custom partial enumeration behaviour you need.</p>
+
+<p>In the normal <code>reduce/3</code> the supplied function returns the accumulator, which is passed to the next iteration. With <code>reduce_while/3</code> the function returns a tuple, either: <code>{:cont, acc}</code> or <code>{:halt, acc}</code>. The values <code>:cont</code> and <code>:halt</code> control whether iteration should continue or halt. These values are stripped from the final return.</p>
+
+<p>For example, say we're dealing with user input. We're getting an array of strings. We want to convert them into integers and limit the array to 10 items:</p>
+
+{% highlight elixir %}{_count, ids} = Enum.reduce_while(param["ids"], {0, []}, fn
+  id, {11, ids} -> {:halt, {10, ids}} # or counter is > 10, stop processing
+  id, {count, ids} ->
+    case Integer.parse(id) do
+      {n, ""} -> {:cont, {count + 1, [n | ids]}}
+      _ -> {:cont, {count, ids}}
+    end
+end){% endhighlight %}
+
+<h3>15. Process Mailboxes</h3>
+<p>The most important thing to understand about processes is how they interact with their mailbox. Every process has a queue of pending messages called a mailbox. When you send a message to a process (say via <code>send/2</code>, <code>GenServer.call/2</code> or <code>GenServer.cast/2</code>), that message is added at the back of the target process' queue.</p>
+
+<p>When you <code>receive</code> you dequeue the oldest message from the mailbox. For a GenServer receiving happens automatically; but the important point is that one message is processed at a time. It's not until you return from your <code>handle_call/3</code>, <code>handle_cast/2</code> or <code>handle_info/2</code> function that the next pending message will be processed. This is why your processes state is always consistent, it's impossible to have two concurrent threads of execution within the same process overwriting each other's changes to your state.</p>
+
+<p>Whether you're using <code>GenServer.cast/2</code> or <code>call/2</code> doesn't change anything from the target process' point of view. The difference between the two only impacts the callers behaviour. If you <code>cast</code> and then <code>call</code>, you're guaranteed that the <code>handle_cast</code> will fully execute before the <code>handle_call</code> and thus the <code>handle_call</code> will see any state changes made by the <code>handle_cast</code></p>
+
+<h3>16. GenServer's init</h3>
+<p>A failure in your GenServre's <code>init/1</code> will take down your entire app. The behaviour might surprise you at first, but it isn't without benefits: it provides a strong guarantee about the state of your app. This is particularly true given that supervisors and their workers are started synchronously. In other words, if you have a supervisor tree that places <code>WorkerB</code> after <code>WorkerA</code>, then <code>WorkerB</code> can be sure that <code>WorkerA</code> has been fully initialized (and thus can call it).</p>
+
+<p>If you absolutely need a database connection for your app to work, establish it in init. However, if you're able to gracefully handle an unavailble database, you should establish it outside of your init function. A common pattern is to send yourself a message:</p>
+
+{% highlight elixir %}def init(_) do
+  send(self(), :connect)
+  {:ok, nil}
+end
+
+def handle_info(:connect, state) do
+  ...
+  {:noreply, new_state}
+end{% endhighlight %}
+
+<p>Because processes only handle one message at a time, you could simply block in the above <code>handle_info/2</code> until a connection can be established. Any <code>call/2</code> or <code>cast/2</code> into this process will only be processed once the above function returns. Of course, by default, <code>call/2</code> will timeout after 5 seconds (which is probably what you want: the app will startup, but trying to use the features that rely on this process will error).</p>
+
+<h3>17. nil</h3>
+<p>There are a couple properties of <code>nil</code> that you should be aware or. First, because <code>nil</code>, like <code>true</code> and <code>false</code>, is actually an atom, it participates in <a href="https://github.com/elixir-lang/elixir/blob/master/lib/elixir/pages/Operators.md#term-ordering">term ordering rules</a>:</p>
+
+{% highlight elixir %}nil > 1
+> true
+
+nil > "1"
+> false
+
+nil > :dune
+> true
+
+nil > :spice
+> false{% endhighlight %}
+
+<p>Secondly the Access behaviour (<code>var[:key]</code>) ignores nils. So while many languages would throw an exception on the following code, Elixir doesn't:</p>
+
+{% highlight elixir %}user = nil
+user[:power]
+> nil
+
+user[:name][:last]
+> nil{% endhighlight %}
+
+<h3>18. Sigils</h3>
+<p>Strings that embed quotes can be messy to write and hard to read. Sigils are special functions that begin with <code>~</code> aimed at helping developers deal with special text.</p>
+
+<p>The most common is the <code>~s</code> sigil which doesn't require quotes to be escaped:</p>
+
+{% highlight elixir %}
+"he said \"it's over 9000!!\""
+
+# vs
+
+~s(he said "it's over 9000")
+{% endhighlight %}
+
+<p>The difference between the lowercase <code>s</code> and uppercase <code>S</code> sigils is that the lowercase one allows escape characters and interpolation:</p>
+
+{% highlight elixir %}
+~s(he said:\n\t"it's over #{power}")
+> he said:
+  "it's over 9000"
+
+# vs
+
+~S(he said:\n\t"it's over #{power}")
+> he said:\n\t\"it's over \#{power}\"
+{% endhighlight %}
+
+<p>The other popular sigil is <code>~r</code> to create a regular expression:</p>
+
+{% highlight elixir %}
+Regex.scan(~r/over\s(\d+)/, "over 9000")
+> [["over 9000", "9000"]]
+{% endhighlight %}
+
+<p>Finally, you can always <a href="https://elixir-lang.org/getting-started/sigils.html#custom-sigils">create your own sigils</a>.</p>
+
+<h3>19. [Linked] Lists</h3>
+<p>Lists in Elixir are implemented as linked lists. In the name of performance, this is something you should always be mindful of. Many operations that are O(1) in other languages, are O(N) in Elixir. The three that you'll need to be most vigilant about are: getting the count/length, getting a value at a specific index and appending a value at the end of the list. For example, if you want to know if a list is empty, use <code>Enum.empty?/1</code> rather than <code>Enum.count/1 == 0</code> (or match against <code>[]</code>code>).</p>
+
+<p>While appending a value is O(N), prepending is O(1) - the opposite of what you'd see in languages with dynamic arrays. For this reason, when dealing with multiple values, you should favour prepending (+ reversing if order matters).</p>
+
+<p>There are also cases where Erlang's <a href="http://erlang.org/doc/man/queue.html">double-ended queue</a> might prove useful. It has O(1) operation to get and add values at both ends of the queue. Sadly, it still doesn't have an O(1) length operation, but you could easily create your own wrapper.</p>
+
+<h3>20. iolists</h3>
+<p>Many language us a buffered string when dealing building a string dynamically. While that isn't an option given immutable data structure, we do have a suitable alternative: iolists. An iolist is a list made of binaries (strings) or nested iolists. Here's a simple example, but keep in mind that iolists are often deeply nested:</p>
+
+{% highlight elixir %}
+sql = ["select ", ["id", " ,name", " ,power"], " from saiyans"]
+{% endhighlight %}
+
+<p>Much of the standard library and many third party libraries can work with iolists directly:</p>
+
+{% highlight elixir %}
+IO.puts(["it's", " ", ["over ", ["9000", "!!!"]]])
+> it's over 9000!!!
+
+File.write!("spice", ["the", [" ", "spice", [" must", [" flow"]]]])
+IO.inspect(File.read!("spice"))
+> "the spice must flow"\
+{% endhighlight %}
+
+<p>In some cases functions that receive an iolist will first convert it to a normal binary then process it (which is what <code>Poison.decode/1</code> does if you pass it an iolist). However, in other cases, processing happens on the iolist directly.</p>
+
+<p>Taking a step back, let's say we have a list of words:</p>
+
+{% highlight elixir %}colors = ["red", "blue", "green", "orange", "yellow"]{% endhighlight %}
+
+<p>To append "grey" via the <code>++</code> operator, we need to create a new list and copy all the values into the new list. That's why we say it's O(N). Now consider what needs to happen if we do this as an iolist. The result would look like:</p>
+
+{% highlight elixir %}
+colors = [["red", "blue", "green", "orange", "yellow"], "grey"]
+{% endhighlight %}
+
+<p>The original list doesn't change and so its values aren't copied. We do create a new list (the outer brackets). That new list references the original list at its head, and the new value at its tail. The cost of an iolist is no longer tied to the number of elements in the lists.</p>
+
+<h3>21. Piping</h3>
+<p>Don't do single statement piping. It's the bad sort of clever. This:</p>
+
+{% highlight elixir %}
+params = params |> Map.delete(:id)
+{% endhighlight %}
+
+<p>Is less readable than this:</p>
+
+{% highlight elixir %}
+params = Map.delete(params, :id)
+{% endhighlight %}
+
+<p>It's never called for.</p>

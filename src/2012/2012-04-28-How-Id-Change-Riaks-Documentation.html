@@ -1,0 +1,55 @@
+---
+permalink: "/2012/4/28/How-Id-Change-Riaks-Documentation/"
+layout: post
+date: 2012-04-28
+title: "How I'd Change Riak's Documentation"
+tags: [writing]
+---
+
+<p>On Tuesday, <a href="http://twitter.com/pharkmillups">Mark Phillips</a> wrote about <a href="http://www.themarkphillips.com/2012/04/24/riak-adoption-we-have-some-work-to-do.html">trying to improve Riak's adoption</a>. Mark went and got feedback from existing Riak users, and at the top of the list was the desire for better/different documentation.</p>
+
+<p>I do consider myself an amateur tech writer, and quite enjoy it, so I thought I might be able to provide some feedback. For some context, on a scale of 1 to 10, my knowledge of Riak is a pretty low  2 or 3.</p>
+
+<h3>Moving Too Fast</h3>
+<p>As I'm reading Riak's documentation, the fundamental issue I see is the misplaced focus. Rather than showing me how Riak can work for me, much (most?) of the documentation talks about Riak's implementation. Imagine going to MySQL's page and the first thing they explain is what a hash join is, and how MySQL does it.</p>
+
+<p>Yes, this information is eventually important, but it needs to be buried far away from new developers (lest you overwhelm them). Most of the time, developers will organically seek out advanced information when the time is right for them.</p>
+
+<p>This is a classic example of being too close to the problem. As developers of Riak, their idea of what's essential is vastly different than what a user of Riak needs.</p>
+
+<p>After 2 pages of documentation for a database, I better know how to SELECT, DELETE, UPDATE and INSERT data. Period.</p>
+
+
+<h3>DSL</h3>
+<p>One of the challenges Riak will need to address is the lack of a nice DSL (by adding a nice DSL).</p>
+
+{% highlight text %}
+curl -i http://localhost:8098/riak/jsconf?keys=true5d5c37dd6a9cc01c7f67802063575730ede03b01amp;props=false
+{% endhighlight %}
+
+<p>Is simply not as compelling as the Redis equivalent: <code>keys *</code></p>
+
+<p>As a general rule, I am not a fan of database protocols over HTTP (so maybe I'm biased). But, when it comes to learning and documentation, it's just brutal.</p>
+
+<p>Compare: </p>
+{% highlight text %}
+curl -v -X PUT -d '{"bar":"baz"}' -H "Content-Type: application/json" -H "X-Riak-Vclock: a85hYGBgzGDKBVIszMk55zKYEhnzWBlKIniO8mUBAA==" http://127.0.0.1:8098/riak/test/doc?returnbody=true
+
+//or their binary protocol (yes, this is actually the example their docs give!):
+00 00 00 1C 0B 0A 01 62 12 01 6B 22 0F 0A 0D 7B
+22 66 6F 6F 22 3A 22 62 61 72 22 7D 28 02 38 01
+{% endhighlight %}
+
+<p>To:</p>
+{% highlight text %}
+db.test.insert({doc: 'baz'});
+{% endhighlight %}
+
+<p>Again, understanding riak's underlying protocol is important. But, if it's gonna be so yuck,  documentation should use something cleaner. Show how it's done from Ruby or Java (or let people switch languages).</p>
+
+<h3>Real World</h3>
+<p>My final observation is that, after spending quite a bit of time on their site, it isn't clear to me how I'd build an app using Riak. Is Riak a general purpose solution? Or is it more specialized? How would I model a forum or a blog? What about a time series, or a leaderboard?</p>
+
+<p>Also what isn't clear to me is whether or not Riak has any application benefits. You see, it's very clear that Riak has a number of operational benefits, but do any of those translate to a better developer experience. Document DB's, for example, tend to have less friction between object and storage, and are thus quicker to develop with. Redis can turn 20 lines of code into a single explicit and easily testable statement.</p>
+
+<p>This problem is a result of the first two. Not having an concise DSL and focusing too little on the user's side of the story makes Riak's purpose/benefit ambiguous.</p>

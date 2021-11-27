@@ -1,0 +1,16 @@
+---
+permalink: "/2010/8/19/HttpHandlerWrapper/"
+layout: post
+date: 2010-08-19
+title: "HttpHandlerWrapper"
+---
+{% highlight clike %}public abstract class HttpHandlerWrapper : IHttpHandler
+{
+   public void ProcessRequest(HttpContext context)
+   {
+       ProcessRequest(new HttpContextWrapper(context));
+   }
+
+   public abstract bool IsReusable { get; }      
+   public abstract void ProcessRequest(HttpContextBase context);
+}{% endhighlight %}

@@ -1,0 +1,68 @@
+---
+permalink: "/2012/3/31/Malloc-and-Free/"
+layout: post
+date: 2012-03-31
+title: "Malloc and Free"
+tags: [c, learning]
+---
+
+<p>Yesterday we vaguely covered what happens, with respect to memory, when we create an array and access a value by index. I really do believe that the basics of memory allocation isn't something to ignore, so let's look at some more lower-level examples.</p>
+
+<p>In C there are two ways to allocate memory: statically and dynamically. Here's a couple example of static memory allocation:</p>
+
+{% highlight clike %}
+  int power = 9001;
+  char name[10];
+{% endhighlight %}
+
+<p>Not only is this easy to do, it's also easy to understand. Especially when you know that each type has a size, and static allocation simply allocates that size. In the case of an array, it allocates the size * the number of elements. The best thing about statically allocated memory is that when variables fall out of scope, their associated memory is automatically freed.</p>
+
+<p>Unfortunately, you won't always know upfront how much memory you are going to need. In our above example, will <code>char[10]</code> be enough, what about 100? In some cases you could simply allocate the maximum possible value, but even on modern hardware with gigs of memory, sometimes that just isn't feasible (and it's certainly never efficient!) The solution is to dynamically allocate memory. This is done with the <code>malloc</code> function: </p>
+
+{% highlight clike %}
+  int nameSize = 10; //this could come from an input or any other source
+  char *name = malloc(nameSize * sizeof(char));
+{% endhighlight %}
+
+<p><code>malloc</code> returns a pointer which points to the memory address at the start of the allocated memory. How we use this pointer isn't really the goal of this article, but as we saw yesterday, for the most part, pointers and arrays are interchangeable. So, the following is perfectly ok:</p>
+
+{% highlight clike %}
+  int nameSize = 10; //this could come from an input or any other source
+  char *name = malloc(nameSize * sizeof(char));
+  name[0] = 'l';
+  name[1] = 'e';
+  name[2] = 't';
+  name[3] = 'o';
+  name[4] = '\0';
+  printf("%s", name);
+{% endhighlight %}
+
+<p>On a side note, you might be interested in knowing that <code>malloc</code> will return <code>NULL</code> when allocation fails (maybe there's no more memory). Therefore, it's important to check the return value before we go ahead and use it.</p>
+
+<p>The difficulty with dynamic allocation is that when the variables fall out of scope, the memory is not automatically freed. The developer is responsible of freeing memory, via the <code>free</code> function:</p>
+
+{% highlight clike %}
+  int nameSize = 10; //this could come from an input or any other source
+  char *name = malloc(nameSize * sizeof(char));
+  //do something with name
+  free(name);
+{% endhighlight %}
+
+<p>What happens if we lose access to the variable without freeing? Consider this example:</p>
+
+{% highlight clike %}
+  while(1) {
+    char *buffer = malloc(50 * sizeof(char));
+    fgets(buffer, 50, stdin);
+    if (buffer[0] == '\n') { break; }
+    printf("you typed %s", buffer);
+  }
+{% endhighlight %}
+
+<p>As long as the users enters something other than just <code>return</code> we'll keep echoing the input. However, notice that a buffer is created in each iteration without ever being freed. Once our <code>while</code> loop starts over again, we've lost any reference to the memory which was created in the previous iteration. At this point, the memory is truly unreachable and cannot be used until our program exits and the OS frees up all of the memory associated with our program.</p>
+
+<p>If we moved the buffer allocation outside of our loop, the damage would be lessened. Rather than losing 50 bytes per loop, we'd lose 50 bytes in total. Still, for large programs that have a long running life (like an OS, or a web server), even small and infrequent leaks can eventually eat up all available memory.</p>
+
+<p>Thanks to automated garbage collection, manually tracking and freeing memory isn't something we need to worry about anymore. Runtimes knows how many variables point to a given chunk of memory and thus can do necessary house cleaning whenever a chunk of memory is no longer referenced. We still need to worry about things like fragmentation, pinning and rooting (topics for another post), but those tend to be far less problematic.</p>
+
+<p>Even if freeing memory isn't part of our day to day lives, I think it's still valuable to understand what <code>malloc</code> does, why it's useful, and how memory actually is cleaned. It isn't like these concepts aren't in use in C#, Java, Python or Ruby, it's merely that the runtime takes care of it for you.</p>

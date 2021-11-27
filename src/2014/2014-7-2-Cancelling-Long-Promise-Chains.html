@@ -1,0 +1,50 @@
+---
+layout: post
+date: 2014-07-02
+title: "Cancelling Long Promise Chains"
+tags: [learning]
+description: "The simple way to cancel long chains of promises"
+---
+
+<p>My previous <a href="/Understanding-Javascript-Promises/">introduction to promises</a> left out a common case: cancelling a chain of promise. Ideally, this is something you won't have to do too often; but for the one or two times when you run into it, here's one solution to handle it.</p>
+
+<p>First though, the problem. Pretend you have a chain of promises, this could be a controller that has to go through multiple steps and transformation:</p>
+
+{% highlight coffeescript %}
+Promise = require('bluebird')
+
+a = -> Promise.resolve('1')
+b = -> Promise.resolve('2')
+c = -> Promise.resolve('3')
+
+a().then (value) ->
+  console.log(value)
+  b()
+.then (value) ->
+  console.log(value)
+  c()
+.then (value) ->
+  console.log(value)
+{% endhighlight %}
+
+<p>The above prints <code>1</code>, <code>2</code> and <code>3</code>. However, we'd like to change our code to stop processing when <code>a()</code> returns <code>null</code>. As a practical example, think of a controller loading a record by id and quickly returning a 404 if that id isn't found.</p>
+
+<p>The solution is to cancel our promise. With <a href="https://github.com/petkaantonov/bluebird">Bluebird</a>, the promise library I'm using here, this first requires that we mark our promise as <code>cancellable</code>. Next we can cancel the promsie and finally handle the cancellation:</p>
+
+
+{% highlight coffeescript %}
+p = a().then (value) ->
+  console.log(value)
+  return p.cancel() if value == null
+  b()
+.then (value) ->
+  console.log(value)
+  c()
+.then (value) ->
+  console.log(value)
+.catch Promise.CancellationError, ->
+  console.log('cancelled')
+.cancellable()
+{% endhighlight %}
+
+<p>With the above code, when <code>a()</code> returns <code>null</code>, our output will be <code>null</code> followed by <code>cancelled</code>. It's possible to <code>cancel</code> with an explicit reason, or we can <code>cancel</code> without a reason and catch the <code>Promise.CancellationError</code> type.</p>

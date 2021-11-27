@@ -1,0 +1,13 @@
+---
+permalink: "/2010/9/27/Introducing-jstub/"
+layout: post
+date: 2010-09-27
+title: "Introducing jstub"
+---
+<p>After playing with a skeleton yesterday, I spent a couple hours and rolled out my own <a href="http://www.github.com/karlseguin/jstub">javascript stubbing framework</a>. I happen to have a rapidly growing amount of javascript code that needs testing, so I figured it'd make a nice testbed. The github project has fairly comprehensive documentation (the readme and the tests).</p>
+
+<p>You might be asking why another framework? The truth is that the few that I had either looked at or was using just didn't do it for me. Largely, they were more full blown mocking frameworks, when the reality is that, right or wrong, the way I write my javascript and the way I test it, simple stubs is just a better fit.</p>
+
+<p>Also, I had been using <a href="http://github.com/appendto/jquery-mockjax">mockjax to mock out my ajax calls</a>, but it wasn't doing it for me. First, I found it painful to specify the expected posted data (something critically important). I also wanted the stub to work synchronously to greatly increase the readability of my test. A coworker and I had a disagreement about whether this was good. His belief was that making a synchronous stub out of an asynchronous call is diverging too far away from the actual code.  My belief is that the unreliable nature of asynchronous code means that it should be interchange with synchronous code - if you have code that relies on being execute either before or after a async call, that must be explicitly coded for.</p>
+
+<p>Check out the source code on github at: <a href="http://github.com/karlseguin/jstub">http://github.com/karlseguin/jstub</a> and let me know what you think.</p>

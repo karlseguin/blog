@@ -1,0 +1,56 @@
+---
+layout: post
+date: 2017-03-28
+title: "Learning Elixir's Agent"
+description: "An introduction to Elixir's Agent and concurrent programming"
+tags: [concurrency, elixir]
+---
+
+<p>We recently <a href="/Learning-Elixir-GenServer-Part-1/">saw how Elixir's GenServer works</a> by building an shared id map. We used a GenServer because we wanted to have the id map periodically refreshed which required that we take advantage of the <code>Process.send_after</code> function. However, without this requirement, we could have used an Agent to achieve our goal with much less effort.</p>
+
+<p>Where a GenServer has a fairly flexible API and purpose, an Agent is more specialized as it's largely driven by two functions: <code>get</code> and <code>update</code>.</p>
+
+<p>When we started our GenServer, we passed it the module which implemented the GenServer behaviour. An Agent, being simpler, doesn't require such decoration. However, just like we wanted to encapsulate the GenServer implementation within our module, so to do we want to encapsulate the Agent implementation. But things are still a little different, consider how we start an Agent:</p>
+
+{% highlight elixir %}defmodule Goku.IdMap do
+  @name __MODULE__
+  def start_link(_opts) do
+    Agent.start_link(fn -> load() end, name: @name)
+  end
+
+  defp load() do
+    %{"goku" => 1, "gohan" => 2}
+  end
+end{% endhighlight %}
+
+<p>Our Agent will still be supervised, which is what will call this module's <code>start_link</code> function. But, there's no behaviour to implement. An Agent is just state that we can get and update. Anything we add to this module is just there to create a nicer API around the Agent, not something the Agent itself needs (like the GenServer's <code>handle_*</code> functions).</p>
+
+<p>We use <code>get</code> to get data from our state:</p>
+
+{% highlight elixir %}def get(key) do
+  Agent.get(@name, fn state -> 
+    Map.get(state, key)
+  end)
+end{% endhighlight %}
+
+<p>Behind the scenes, this behaves like our GenServer. The data/state is owned by our Agent, so while <code>Agent.get</code> is called by one process, the closure is executed by our Agent's process. What you're seeing here is just a more focused API for doing a <code>GenServer.call</code> with a <code>handle_call</code> that returns a value and doesn't modify the state. (I'll repeat this over and over again, in Elixir, data ownership doesn't move around and isn't global like many other languages)</p>
+
+<p>The <code>update</code> function expects you to return the new state. For completeness, we could reload the state like so:</p>
+
+{% highlight elixir %}def update() do
+  Agent.update(@name, fn _old_state ->
+    load()
+  end)
+end{% endhighlight %}
+
+<p>A more idiomatic example might be where our state represents a queue that we want to push a value onto:</p>
+
+{% highlight elixir %}def push(value) do
+  Agent.update(@name, fn queue -> [value | queue] end)
+end{% endhighlight %}
+
+<p>There's also a <code>get_and_update</code> which expects a tuple of two values, the first being the value to get, the second being the new state. And, like a GenServer, all these functions let you specify a timeout.</p>
+
+<p>There are a few more functions available, but you get the idea. Anything you can do with an Agent, you can also do with a GenServer (the reverse isn't true). The Agent's advantage are it's simpler API that results in more expressive code. It's probably a safe rule to say that, if you can use an Agent, you should. And, if your needs grow, converting an Agent to a GenServer should be trivial.</p>
+
+<p>But, again, the important point here is to understand the multi-process interaction that's going on here. Because we're using closures, it's less obvious here than with a GenServer. In the <code>push</code> example above, you have single line of code that represents two statements, each being executed by a distinct process. Practically speaking, that detail probably won't matter. But the more clearly you grasp the fundamentals, the better your code will be.</p>

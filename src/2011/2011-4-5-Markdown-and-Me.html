@@ -1,0 +1,18 @@
+---
+permalink: "/2011/4/5/Markdown-and-Me/"
+layout: post
+date: 2011-04-05
+title: "Markdown and Me"
+tags: [writing]
+---
+<p>There's been some interest in my opinion of writing an ebook using Markdown. I wrote the original Foundations of Programming using Word. Aside from the code formatting, it was an ok experience. I was a fan of Word for a very long time. However, for Foundations of Programming 2 and The Little MongoDB Book, I decided to use Markdown.</p>
+
+<p>Markdown, in case you aren't familiar, is a simple markup language. You can check out the <a href="http://daringfireball.net/projects/markdown/syntax">markdown syntax here</a>. I didn't know it (which is one of the reasons I picked it) and it didn't take more than a few paragraphs to get comfortable.</p>
+
+<p>I consider anything more than bold, italics and headers as evil. Ok, that's a slight exaggeration, but I do believe that, when it comes to any written material (emails, presentation, blogs, books, ...) less is more. It's the reason people use the <a href="https://www.readability.com/">Readability bookmarks</a>. It's part of the reason Apple presentations are so good.</p>
+
+<p>My exact process was to write everything in markdown, and then use <a href="http://johnmacfarlane.net/pandoc/">pandoc</a> to handle the conversion to other formats. Pandoc relies heavily on <a href="http://en.wikipedia.org/wiki/LaTeX">LaTeX</a> which is a markup and "document preparation system". This meant that I had to install the mammoth <a href="http://www.tug.org/mactex/">MacTeX</a>. Once installed, I was able to use the <code>markdown2pdf</code> wrapper. (I had problems manually going from markdown to LaTeX to pdf, but thankfully in the end the wrapper produced a nice output.) Within the github repository, you can see the template I used to fine tune the final pdf - the main readme has more insight on the process.</p>
+
+<p>Now, if you look at The Little MongoDB Book's markdown, you'll see that I use LaTeX twice directly in the file (which Pandoc handles properly). The first is around the title page - it requires special margins and stuff. The 2nd is to create a page break for each chapter. Having said that, page breaks would be a wonderful addition to Markdown.</p>
+
+<p>If I ever write another book, I have no doubt that I'll take a similar route. The process just feels way more frictionless. I end up worrying less about formatting and focusing more on content. I'm also happy with the end result. Beyond that though, check out the <a href="https://github.com/karlseguin/the-little-mongodb-book/network">network graph for The Little MongoDB Book</a>. I sincerely believe that a simple markup language is a huge enabler for this type of community contribution. Oh, and merging pull requests on .markdown files in github is cake.</p>

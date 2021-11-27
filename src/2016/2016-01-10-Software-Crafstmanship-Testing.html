@@ -1,0 +1,48 @@
+---
+layout: post
+date: 2016-01-10
+title: "Software Craftsmanship: Testing"
+description: "Effective automated unit and integration tests are the most important tool you have"
+tags: [craftsmanship, testing]
+---
+
+<p>Across different frameworks and focuses, blogging engines and URLs, <em>testing</em> has been the only constant in my programming and writing life. It's been a steady evolution which has provided me with experiences and opportunities to reflect.</p>
+
+<p>Last year I wrote that, as I became a better programmer, <a href="/A-Decade-Of-Unit-Testing/">I was gaining less from unit testing</a>. Everything I wrote last year still holds true, but I feel like I've made significant refinements. First, to recap where I stand on automated tests.</p>
+
+<h2>Recap</h2>
+
+<h3>It's a Design Tool</h3>
+<p>First and foremost, testing is a design tool. Code that is hard to test is hard to read and hard to maintain. When I jump onto a new project, I'll often find myself thinking <em>"there's no way this code has any tests,"</em> or <em>"wow, this person's a good coder."</em> Having tests and being a good coder as synonymous for me. Not because good coders write tests, but because good coders write code which is easy to test.</p>
+
+<p>After years of programming, you'll have learned most of the design lessons that testing has to offer. It becomes natural to write code with high cohesion and low coupling without writing tests. But even if I'm not writing tests, I almost always think <em>this will be hard to test</em> and refactor.</p>
+
+<h3>Focused Unit Tests </h3>
+<p>I write focused tests around distinct behaviors. They run fast. They aren't brittle. Changes to the code result in predictable (and few) broken tests. For me, <em>behavior</em> isn't just features, but also includes algorithms and operational correctness. For this reason, I have no qualms about testing private code. In fact, the idea that you shouldn't test private behavior has become absurd to me. I'll only occasionally mock or stub an object.</p>
+
+<p>I'll likely write a handful of broader tests (from controller action to database verification) in order to cover common cases or, possibly, cover code which is otherwise difficult to reach (which is probably a sign of a bad design, but sometimes pragmatism wins).
+
+<h3>Logging and Monitoring Above All Else</h3>
+<p>I won't say too much about this, but logging and monitoring continue to be critical. Between good tests and good logs, I'll take the good logs. It's easier to achieve and more likely help you identify issues.</p>
+
+<h2>What's New?</h2>
+<h3>Broad Integration Tests</h3>
+<p>In the past, I used to think of integration tests as something which hit the database from an action's method. Now it means building binaries, starting servers and hitting endpoints over http. It's about testing the interaction between different processes (services, infrastructure, ...).</p>
+
+<p>With only unit tests, you can create a producer that sends a <code>uid</code> parameter and a consumer that expects a <code>userId</code> parameter and never catch the error until you've deployed. I've seen this too many times. Integration tests help eliminate these types of issues, as well as similar versioning issues.</p>
+
+<h3>Collaboration</h3>
+<p>The most striking benefit that I've noticed this year has been in relation to collaboration. Specifically, I've seen a lot of people join a project, add a specific feature, move on to something else and maybe not come back for months. Or, similarly, onboarding new people (interns!) onto a project.</p>
+
+<p>Being able to type <code>make test</code> and know that you haven't broken anything is, arguably, the silver-bullet of productivity. Given the choice to contribute to: 1 - A project in an unfamiliar language but with good tests, or 2 - A project with a familiar stack but no tests, I'll <strong>always</strong> pick 1.</p>
+
+<p>Well written tests (focused, properly named) also act as documentation.</p>
+
+<p>(as an aside, the ability to quickly setup the project locally is critical).</p>
+
+<h3>Speed</h3>
+<p>Finally, one thing that I no longer believe is that writing tests <em>slows us down</em>. Sure, it slows you down as you're learning, like anything else. But, again like anything else, once you get good at it, you will not be less productive. Here, I'm talking about strictly writing the code. Overall, tests dramatically increase the the gain in productivity.</p>
+
+<p>I'll confess that for me, this is largely true of unit tests. Setting up an integration test harness still takes some time (hours, a few days...). But even in the course of the first few weeks, I usually feel like I'm ahead in terms of productivity.</p>
+
+<p>Also, I'll admit that some code is just hard to test. Also, for some projects in some early phases (when things are changing a lot), tests might prove too brittle. However, I'm fairly skeptical when I hear this. Prototypes have a way to turn into product. And I find the people most likely to use this excuse just aren't likely to test in any situation.</p>

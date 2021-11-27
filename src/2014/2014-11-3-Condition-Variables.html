@@ -1,0 +1,124 @@
+---
+layout: post
+date: 2014-11-03
+title: "Condition Variables"
+tags: [concurrency, golang]
+description: "An introduction to using condition variables for concurrency (in golang)"
+---
+
+<p>Condition variables let you block until a condition is met. For example, let's say that we're writing a little TCP server that can have up to MAX_CLIENTS connected. We might start with:</p>
+
+{% highlight go %}
+import (
+  "net"
+  "sync"
+)
+
+type Server struct {
+  sync.Mutex
+  clients int
+
+}
+
+func (s *Server) Listen(address string) {
+  l, err := net.Listen("tcp", address)
+  if err != nil {
+    panic(err)
+  }
+  defer l.Close()
+  for {
+    conn, err := l.Accept()
+    if err != nil {
+      //to do log this
+      continue
+    }
+    s.Lock()
+    s.clients++
+    s.Unlock()
+    go s.handleClient(conn)
+  }
+}
+
+func (s *Server) handleClient(conn net.Conn) {
+  defer s.disconnected()
+  for {
+     // ...
+  }
+}
+
+func (s *Server) disconnected() {
+  s.Lock()
+  s.clients--
+  s.Unlock()
+}
+{% endhighlight %}
+
+<p>One way to limit the total number of clients would be to check the value of <code>s.clients</code> within a loop:</p>
+
+
+{% highlight go %}
+  for {
+    s.Lock()
+    for s.clients == MAX_CLIENTS {
+      s.Unlock()
+      time.Sleep(time.Second)
+      s.Lock()
+    }
+    s.Unlock()
+    conn, err := l.Accept()
+    ...
+  }
+{% endhighlight %}
+
+<p>A more elegant solution is to use a condition variable. Condition variables provide a simple mechanism which our goroutines can use to signal a change to <code>s.clients</code>. First, we define the condition variable:</p>
+
+{% highlight go %}
+import (
+  "net"
+  "sync"
+  "sync/atomic"
+)
+
+type Server struct {
+  clients uint64
+  cond    *sync.Cond
+}
+{% endhighlight %}
+
+<p>Condition variable are made up of their own mutex. To iniate one, we'd do:<p>
+
+{% highlight go %}
+s := &Server{
+  cond: &sync.Cond{L: &sync.Mutex{}},
+}
+{% endhighlight %}
+
+<p>Next, instead of the above <code>for</code> spin, we can <code>Wait</code> for a signal:</p>
+
+{% highlight go %}
+  for {
+    s.cond.L.Lock()
+    for s.listeners == MAX_CLIENTS {
+      s.cond.Wait()
+    }
+    s.cond.L.Unlock()
+    conn, err := l.Accept()
+    ...
+  }
+{% endhighlight %}
+
+<p>And we change our <code>disconnected</code> method:</p>
+
+{% highlight go %}
+func (s *Server) disconnected() {
+  s.cond.L.Lock()
+  s.clients--
+  s.cond.L.Unlock()
+  s.cond.Signal()
+}
+{% endhighlight %}
+
+<p>There are a couple interesting things in the above code. First of all, notice the locking and unlocking around the call to <code>Wait</code>. It might seem like we're locking for a very long time. But <code>Wait</code> unlocks <code>L</code> on entry and relocks <code>L</code> on exit. This results in much cleaner code -- you lock and unlock normally, without being locked while you wait.</p>
+
+<p>Also, notice that we're still checking our condition inside of a loop. This is because the state of <code>s.clients</code> could be changed by a different goroutine between the time that the signal is sent and our code exiting <code>Wait</code>. (In this specific example, when the blocked goroutine is also the only one that can increment <code>s.clients</code>, the for loop is unecessary. But I wanted to show the for loop example anyways because it's more complete and more common).</p>
+

@@ -1,0 +1,153 @@
+---
+layout: post
+date: 2017-09-25
+title: "Testing Asynchronous Code in Elixir"
+description: "A little trick to help make asynchronous code easier to test"
+tags: [elixir, testing]
+---
+
+<p>Elixir makes it easy to execute code asynchronously, and, when possible, this should be your preferred way to operate. However, a consequence of this is that code can be hard to test. Our assertions are likely to fail since they'll run before the code under test.</p>
+
+<p>We've been using a simple pattern to work around this. While it doesn't work in all cases, it has proven useful.</p>
+
+<p>First, let's pretend we have a process that logs things asynchronously:</p>
+
+{% highlight elixir %}defmodule MyApp.Log do
+  use GenServer
+  
+  def start_link() do
+    GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  end
+
+  def log(message) do
+    GenServer.cast(__MODULE__, {:log, message})
+  end
+
+  def handle_cast({:log, message}, state) do
+    # insert into db
+    {:noreply, state}
+  end
+end{% endhighlight %}
+
+<p>The problem with the above, as far as testing goes, is that if we want to write a test that asserts that some function logs a specific message, the following probably won't work:</p>
+
+{% highlight elixir %}test "failed login attempt logs a message" do
+   Auth.login("invalid", "invalid") 
+   assert get_log_from_db() == "invalid login with email 'invalid'"
+end
+{% endhighlight %}
+
+<p>The call to <code>get_log_from_db</code> is likely to be executed before the insert happens.</p>
+
+<p>To solve this, our solution has been to inject an fake that can signal our test, via messaging, when things happen. I'll go over how to do that in a second, but the test ends up looking like:</p>
+
+{% highlight elixir %}test "failed login attempt logs a message" do
+   Auth.login("invalid", "invalid") 
+   assert forwarded() == %{:log, "invalid login with email 'invalid'"}
+end
+
+# move this in some the base test template so that all tests have access to it.
+def forwarded() do
+  receive do
+     msg -> msg
+  after
+    100 -> flunk("expected a message that never came")  # time is in milliseconds
+  end
+end{% endhighlight %}
+
+<p>We can expand the <code>forwarded/0</code> helper as much as we want. We can make it collect <code>n</code> messages, or build more type-specific helpers like <code>def fowarded_log(expected_message) do...</code>. The point is that our test stays relatively streamlined without having to sleep or poll or any other such nonsense.</p>
+
+<p>To make this work, the first thing we need is a Forwarder that can send messages to the current test process:</p>
+
+{% highlight elixir %}defmodule MyApp.Tests.Forwarder do
+  use GenServer
+
+  def start_link() do
+    GenServer.start_link(__MODULE__, nil)
+  end
+
+  # called at the start of each test to set the current process id
+  def setup(pid) do
+    GenServer.cast(__MODULE__, {:setup, pid})
+  end
+
+  # used to send a message to a test
+  def send(msg) do
+    GenServer.cast(__MODULE__, {:send, msg})
+  end
+
+  # store the current pid as our state
+  def handle_cast({:setup, pid}, _state) do
+    {:noreply, pid}
+  end
+
+  # send the message to the test
+  def handle_cast({:send, msg}, pid) do
+    send(pid, msg)
+    {:noreply, pid}
+  end
+end{% endhighlight %}
+
+<p>And, make it so that each test sets up the forwarder:</p>
+
+{% highlight elixir %} # again, this can be done one in a base test template
+setup do
+  MyApp.Tests.Forwarder.setup(self())
+  :ok
+end{% endhighlight %}
+
+<p>Next, we introduce a fake logger which will use the forwarder:</p>
+
+{% highlight elixir %}defmodule MyApp.Tests.Fake.Log do
+  use GenServer
+  
+  def start_link() do
+    GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  end
+
+  def handle_cast({:log, message}, state) do
+    MyApp.Tests.Forwarder.send({:log, message})
+    {:noreply, state}
+  end
+end{% endhighlight %}
+
+<p>We need to start both of these before our tests starts. We can do this by changing <code>test_helper.exs</code>:</p>
+
+{% highlight elixir %}{:ok, _pid} = MyApp.Tests.Forwarder.start_link()
+{:ok, _pid} = MyApp.Tests.Fake.Log.start_link()
+ExUnit.start(){% endhighlight %}
+
+<p>Finally, notice that we're still missing one big link. All of our code is logging by calling <code>MyApp.Log.log("some message")</code> which, so far, has nothing to do with any of our fake stuff. To fix this, we'll change our implementation to send the message to our fake logger while testing, and the real one otherwise:</p>
+
+{% highlight elixir %}defmodule MyApp.Log do
+  use GenServer
+
+  # Some people don't like this kind of code in their source. It's worked well
+  # for us, but if you prefer an alternative (like using a Registry or pushing
+  # this to the configurations, be my guest).
+
+  if Mix.env == :test do
+    @name MyApp.Tests.Fake.Log
+  else
+    @name MyApp.Log
+  end
+  
+  def start_link() do
+    GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  end
+
+  def log(message) do
+    GenServer.cast(@name, {:log, message})
+  end
+
+  def handle_cast({:log, message}, state) do
+    # insert into db
+    {:noreply, state}
+  end
+end{% endhighlight %}
+
+<p>To recap. Our approach relies on switching the process we cast to while testing. The fake implementation uses <code>send(pid, msg)</code> to send messages to our test. This is achieved by going through a Forwarder which is told the pid of the current running test.</p>
+
+<p>All of this is similar to <a href="/Dependency-Injection-In-Elixir/">how we can do dependency injection in Elixir</a>, but with less ceremony and some reusable pieces that can be used by any GenServer.</p>
+
+

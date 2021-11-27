@@ -1,0 +1,58 @@
+---
+permalink: "/2011/9/23/Compressed-Blobs-In-MongoDB/"
+layout: post
+date: 2011-09-23
+title: "MongoSpy, MongoWatch and Compressed Blobs"
+tags: [mongodb]
+---
+<h3>MongoSpy</h3>
+<p>Yesterday I wrote MongoSpy, a simple <a href="http://nodejs.org/">node.js</a> application which monitors the system.profile collection of a MongoDB database and, using <a href="http://socket.io">socket.io</a>, streams the info to your browser's console. The result is insight into the MongoDB activity each action of your site performs. Hopefully it'll prove useful to some of you building mongo-backed sites. This is purely a development tool. You can learn more at <a href="http://spy.mongly.com/">http://spy.mongly.com/</a> and get the source on <a href="https://github.com/karlseguin/mongospy/">github</a>.</p>
+
+<h3>MongoWatch</h3>
+<p>Today I'm releasing MongoWatch. MongoWatch captures some high-level statistics on one or more MongoDB instance and keeps a historical record. The information is useful for looking a high-level trends - like is your working set no longer fitting into memory. This isn't an active monitoring tool. Honestly, I wrote this more to better familiarize myself with node.js programming (god I suck at it) and experiment with compressing blobs (binary large object) of data within MongoDB than anything else. You can see a demo at <a href="http://watch.demo.mongly.com/">watch.demo.mongly.com</a>, learn more about the project at <a href="http://watch.mongly.com/">http://watch.mongly.com</a> and get the source on <a href="https://github.com/karlseguin/mongowatch/">github</a>.</p>
+
+<h3>Compressed Blobs</h3>
+<p>One of the reasons I wrote MongoWatch was to experiment with using MongoDB as a, what I like to call, multi-key value store. Essentially, I wanted to see how natural it would be to store documents within mongodb like so: <code>{key1: 'first indexed key', key2: 'second indexed key', data: 'byte array of all the other fields'}</code>. The idea is that any field which you don't need for querying (or sorting) gets thrown into a single blob (which can then be compressed). The benefits, I hoped, would be smaller storage size and faster processing (find/inserts).</p>
+
+<p>Blobs aren't new. Many relational database offer first class clob/blob support. Relational databases normally provide this feature as a means of storing unstructured data. One could think of it as a rich man's schemaless database. Also, NoSQL solutions which don't support secondary indexes (Redis, Riak, ...) more or less fit this pattern. One day, MongoDB will hopefully <a href="https://jira.mongodb.org/browse/SERVER-164">have this feature</a> built-in. When you know exactly how your data is going to get queried, I think Mongo's mix of secondary indexes and schemaless design can really work well with blob values.</p>
+
+<h4>Initial Design</h4>
+<p>Without a blog, a MongoWatch document would look something like:</p>
+{% highlight javascript %}
+{account: 1231232, server: 'linode1', latest: 'Sep 23 2011', data: [
+  {virtual: 1887, mapped: 849, uptime: 8179298, hit: 100, date: 'Sep 20 2011'},
+  {virtual: 1888, mapped: 849, uptime: 8092898, hit: 100, date: 'Sep 21 2011' },
+  {virtual: 1889, mapped: 850, uptime: 8006498, hit: 99, date: 'Sep 22 2011' },
+  {virtual: 1889, mapped: 852, uptime: 7920098, hit: 99, date: 'Sep 23 2011' }
+]}
+{% endhighlight %}
+
+<p>The data per server per account is stored within a single document in an embedded array. In this array we can keep the last X records. The solution works really well. Notice that the <code>latest</code> field is denormalized (duplicated) out of the array into the root document. We do this because we want to limit how often statistics are allowed (once a day) without having to pull down any extra information. When we do our check we can just do something like: <code>statistics.find({account: account, server: server}, {latest:1, _id:-1})</code> which'll only pull the latest field from MongoDB.</p>
+
+<h4>Blobbing It</h4>
+<p>I can look at the above document, match it to my needs, and tell you that I'll never need to query or individually access any of the fields within <code>data</code>. So why not look at storing it as a single compressed blob? I'll take more about the approach that I took, but for now, the end result is a document that looks something like :</p>
+{% highlight javascript %}
+{account: 1231232, server: 'linode1', latest: 'Sep 23 2011', data: [
+  BinData(0,"iad42ZXJzaW9upTEuOC4wpnVwdGltZc4Ae3z"),
+  BinData(0,"ia23d2ZXJzaW9upTEuOC5apnVwdG3ltZc4Ae3z"),
+  BinData(0,"iad2ZXJazaW9upTEuOCz34pnVw4dGltZc4Ae3z"),
+  BinData(0,"iadc2ZXJzaW9upTEuOC5a9pnVwdGltZc4Ae3z")
+]}
+{% endhighlight %}
+
+<p>There's no point spending time talking about numbers since the type and size of data you are dealing with is going to have a huge impact on what algorithm, if any, is best. I can tell you that for the "real" project I intend to use this on, the data will vary greatly. The approach I'm leaning towards is to run some analysis (possibly just length) on the input, and pick an algorithm based on that. Short data might remain uncompressed while medium-to-large data might use <a href="http://code.google.com/p/snappy/">Google's Snappy</a>. With this type of hybrid approach, I'll add a compression type to each document so I know how to decompress it on the way out: </p>
+{% highlight javascript %}
+{account: 1231232, server: 'linode1', latest: 'Sep 23 2011', data: [
+  {type: 1, data: BinData(0,"iad42ZXJzaW9upTEuOC4wpnVwdGltZc4Ae3z")},
+  {type: 1, data: BinData(0,"iad42ZXJzaW9upTEuOC4wpnVwdGltZc4Ae3z")},
+  {type: 1, data: BinData(0,"iad42ZXJzaW9upTEuOC4wpnVwdGltZc4Ae3z")},
+  {type: 0, data: {virtual: 1889, mapped: 852, uptime: 7920098, hit: 99, date: 'Sep 23 2011' }}
+]}
+{% endhighlight %}
+
+<p>For the record though, MongoWatch uses <a href="http://msgpack.org/">MessagePack</a>, which worked best on my small and json-esque input. (Unfortunately, there's some pretty nasty bugs in the node.js implementation, and the maintainer is AWOL so pull requests aren't being accepted. If you do use MessagePack for node.js, pull from my fork or someone else's which is more up to date). A typical record serializes to 393 bytes using BSON (Mongo's serializer), 363 with Snappy and 294 bytes using Message Pack. Message pack was also about twice as fast. Of course, once you change your value, to say lorem ipsum of 1000 characters, Snappy is 800 bytes vs a little over 1000 bytes for both MessagePack and BSON.</p>
+
+<h4>Does it Really Matter and Be Careful</h3>
+<p>Going from 393 bytes to 294 might not seem like a lot. For MongoWatch is certainly isn't. But against 100 million documents, that's 9 gigs worth of savings. Not bad.</p>
+
+<p>You really shouldn't use this approach unless you've thought it through carefully. You can always back out of your decision, so it isn't a huge deal if you make a mistake. But, from Mongo's point of view, data within your blob might as well be invisible. You can't query it,  pick out individual fields or analyze it. You'll have to pull it down to the client, decompress it, and do whatever else you want in code. In most cases, it isn't a good tradeoff.</p>

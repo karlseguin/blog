@@ -1,0 +1,144 @@
+---
+layout: post
+date: 2013-07-25
+title: "Caching: Your Worst Best Friend"
+description: "Caching isn't just about using a key value store and calling it a day. It requires meticulous attention to detail and a deep knowledge of your system."
+tags: [design, devops, performance]
+---
+
+<p>A cache is a mixed blessing. On the one hand, it helps make things faster. On the other, it can become a crutch, or worse, an excuse. Furthermore, caches can deceive us in two ways. First, they can easily hide a system's true performance characteristics, masking poor design until things start to fail. Secondly, while a cache might exposes a simple interface, getting the most of it requires that you pay close attention to details and have a thorough understand of how your system works.</p>
+
+<h3>Defining a Cache</h3>
+<p>To me, what defines something as a cache is the possibility of a miss. If you write code assuming that data is in the cache, then it isn't a cache, it's a database. The most tragic abuse of this I've seen are applications that won't even start unless they can connect to the cache.</p>
+
+<p>We can rephrase this by defining what a cache isn't. A cache is not the reason your system can handle its current load. If you unplug your cache and system resources become exhausted, it isn't a cache. A cache isn't how you make your site fast, or handle concurrency. All it does is help.</p>
+
+<p>Of course, that's a generalization. In fact, the goal of this post is to help you take a small step away from this generalization; to help you use caching as a integral part of a good design instead of just a bandaid.</p>
+
+<h3>Stats Or It Didn't Happen</h3>
+<p>To get the most out of a cache, you need to collect statistics. If you can't answer the question "What's your cache hit ratio?", you aren't caching, you're guessing. But a cache hit ratio is just the start of what you need to know.</p>
+
+<p>For the rest of this post, I'm going to assume that you're using a cache to store a variety of objects with different characteristics. I'm talking about things like object size, cache duration, cost of a miss and so on.</p>
+
+<p>When we look at our cache, there are 4 high-level statistics that we want to track, per object type:</p>
+
+<ul>
+  <li>cache hit ratio,</li>
+  <li>number of gets,</li>
+  <li>cost of a miss, and</li>
+  <li>size of the data</li>
+</ul>
+
+<p>All of these help paint a clear picture of the health and effectiveness of your cache.</p>
+
+<p>Since our cache sits as a proxy on top of a RESTful API, we can use the URL to figure out the object type. For example <code>/users/50u.json</code> and <code>/videos/99v/recommendations</code> map to the <code>show user</code> and <code>list video recommnedation</code> object types. Normally you should be able to use the object's cache key to figure out its type.</p>
+
+<p>We collect our statistics via a custom nginx log format. Something like:</p>
+
+{% highlight text %}
+  # defined in the http section
+  # our caching proxy sets the X-Cache header to hit or miss
+  log_format cache '$request_method $uri $sent_http_x_cache $bytes_sent $upstream_response_time';
+  ....
+
+  # defined in the specific location that proxies to our cache
+  access_log /var/log/apiproxy/cache.log cache buffer=128K;
+{% endhighlight %}
+
+<p>This gives us a file that looks like:</p>
+
+{% highlight text %}
+GET /v4/videos/75028v.json hit 2384 0.000
+GET /v4/videos/176660v.json miss 2287 0.002
+GET /v4/episodes.json hit 372 0.001
+GET /v4/videos/222741v/timed_comments/en.json hit 36747 0.001
+GET /v4/roles.json miss 511 0.012
+GET /v4/containers/20186c.json hit 1561 0.000
+GET /v4/containers/20186c/episodes.json miss 426 0.002
+GET /v4/containers/20186c/people.json miss 425 0.09
+GET /v4/containers/20186c/recommendations.json miss 5376 0.002
+GET /v4/containers/6784c/covers/en.json hit 9653 0.001
+GET /v4/containers/20186c/contributions.json miss 441 0.016
+GET /v4/users/51351u/subscriptions.json hit 360 0.001
+{% endhighlight %}
+
+<p>We don't need a huge amount of data. Just enough to get a good representation. <a href="https://gist.github.com/karlseguin/6079737">It doesn't take much to parse this</a>. Here's a snapshot of the first time we analyzed our cache:</p>
+
+{% highlight text %}
+route                       |  total hits  |  ratio  |  size  |  miss time  |
+show videos                 |    758112    |  42.4   |  2114  |      4      |
+list videos/recommendations |    406792    |  38     |  4529  |      6      |
+show containers             |    393084    |  53.1   |  4577  |      4      |
+show sessions               |    390095    |  72.9   |   988  |     11      |
+show videos/subtitles       |    288032    |  89.6   | 19233  |     20      |
+list containers/people      |    266975    |  91.1   |  1232  |     17      |
+list videos/streams         |    228886    |  18.9   |   716  |      5      |
+show users                  |    221952    |  0      |   997  |     11      |
+{% endhighlight %}
+
+<p>Pretty horrible, eh? Our global cache hit ratio, hovering around a not-great 50%, wasn't very accurate. As an average, the routes with a good hit ratio masked just how bad things really were (not the mention the fact that something was obviously broken with the user's endpoint).</p>
+
+<p>From the above, there's 1 core statistic that we aren't measuring: reason for evictions. Specifically, it would be helpful to know if items are being evicted because they are stale, or because the system is under pressure. Our solution for now, which is far from ideal due to the lack of granularity, is to measure the number of times we need to prune our cache due to memory pressure. Since we aren't currently under memory pressure (more on why later), we aren't seeing many prunes, and thus haven't looked very deeply into it.
+
+<p>If your cache isn't a proxy sitting near the top of your stack, you'll likely have to jump through more hoops to extract this data. You could also opt to log some or all of it in real-time using Statsd (or something similar). Finally, although it's always better to measure than assume, there's a good chance that you'll already have an idea about the size and load time of these objects relative to each other (still, measure and expect and be delighted at surprises!).</p>
+
+<h3>Master Your Keys</h3>
+<p>Few of our objects use a simple cache key, such as <code>video:4349v</code>. At best, some types have a handful of permutations. At worse, thousands. Many of our objects vary based on the user's country, platform (web, mobile, tv, ...), user's role and query string parameters (to name a few). This is the reason we had to move beyond Varnish: we needed to generate cache keys that were application-aware. Many object types, for example, treat our iOS and Android applications as the same platform, but a few don't.</p>
+
+<p>This ends up being application specific. The important thing to know is that there'll come a point where a single cache key format just won't scale (because you'll have to pick the one with the most permutations for all routes). It might seem like you're violating some type of design rule, but coupling your keys to your data and system behavior becomes critical if you want to keep things under control.</p>
+
+<p>I will say that we did spend some time normalizing our cache keys. For example, a <code>page=1</code> is the same as no <code>page</code> parameter, and a <code>per_page=10</code> is the same no <code>per_page</code> parameter. It's trivial to do and it can cover some rather common cases (these two are particularly good example of common cases).</p>
+
+<p>Speaking of paging, early on, we had the capability to serve small <code>per_page</code> request from a larger one. For example, if we had a <code>per_page=25</code> cached, we'd be able to server any requests where <code>per_page</code> was &lt;= 25. We'd actually over-fetch and overlap pages to minimize the impact of various paging inputs. Ultimately this proved incompatible with other design goals, but it's a decent example of how your cache keys don't have to be dumb.</p>
+
+<p>Key permutations is one of those things that can easily cause your caching to fall apart. It's pretty easy to miss the impact on your cache that new features will have. A seemingly isolated feature might force you to add new permutations across the system (we're currently facing this), which can easily cause a cascade. It isn't just that more permutations lead to more misses, but also that more variation -> more memory usage -> more evictions -> more misses.</p>
+
+<p>Dump and examine your cache keys. Looks for patterns and duplications. Most importantly, make sure you're using the most granular key possible.</p>
+
+<h3>Own Your Values</h3>
+<p>We've taken two steps to minimize the size of our cache, thus minimizing the number of misses due to premature eviction. The first and simplest is to store compressed values. As a proxy cache, this makes a lot of sense since decompression is distributed to clients. For an internal application cache, you'll likely get much less value from it. We use Nginx's relatively new gunzip module to take care of decompressing the content should the client not support compression.</p>
+
+<p>The other feature that we've recently added is deduplication. The number of possible values is far smaller than the total number of possible keys. For example, even though we need to query them separately, a Canadian user is likely to get the same video details as an American user. This was one of the many projects our <a href=http://twitter.com/lvtien93>amazing intern</a> accomplished. The first thing he did was analyze the cache for duplicates. At 45% duplication after only a day's worth of uptime, we felt the feature was worth adding.</p>
+
+<h3>Freshness</h3>
+<p>Despite everything we've talked about so far, ultimately the best way to improve the effectiveness of your cache is to increase the duration items can stay in the cache. The downside to this is that users will get stale data.</p>
+
+<p>I'm aware of two solutions to this problem. The first is to use object versions to bust the cache. <a href="http://37signals.com/svn/posts/3112-how-basecamp-next-got-to-be-so-damn-fast-without-using-much-client-side-ui">37signals has a good explanation of this approach</a>.</p>
+
+<p>The approach that we're using is to purge the cache whenever there's an update. This worked well for us because we were already using a queue to communicate changes between system (as a side note, I strongly recommend that you do this, you'll end up using it more than you can imagine). So it was really just a matter of creating a new listener and sending an HTTP purge to each data center. Most items are purged within 2 seconds of an update.</p>
+
+<p>This approach did require that we design our cache so that we could purge an object, say video 10 and purge all variations (json, xml, country us, country ca, ....). If you're using Varnish, it already supports purging all variations.</p>
+
+<h3>But Wait, There's More</h3>
+<p>Varnish has two neat features that we adopted into our own cache which can be quite useful: grace mode and saint mode. Grace mode is about serving up a slightly stale value while a fresh value is fetched in the background. This solves two problems. First, everyone gets a fast cache response. Secondly, when a lot of people ask for the same object at the same time (called a thundering herd), only a single fetch is made.</p>
+
+<p>Saint mode is about serving up stale values when a fresh value isn't available.</p>
+
+<p>Here's what the flow looks like:</p>
+
+{% highlight go %}
+cached, is_cached := cache.Get(key)
+if is_cached {
+  if c.Fresh() {
+    return cached
+  }
+
+  // it's ok to serve something that's aged, but not stale
+  if cached.Aged() {
+    go grace(req)
+    return cached
+  }
+}
+//not cached
+response := getResponse(req)
+//we got an error, might as well serve the cached object
+//no matter its age
+if response.Status() >= 500 && is_cached {
+   return cached
+}
+{% endhighlight %}
+
+<h3>Conclusion</h3>
+<p>Caching isn't a trivial problem to solve. For us, the solution was to collect data and increase our coupling between the cache and the rest of the systems. We've introduced some cases where changes to the business logic will need to be reflected in the cache. We also spent time removing a lot of inefficiency that come from trying to use it as a generic get/set mechanism. Deduplication was a huge win, which for the time being has resolved our memory constraint. Cleaning up our keys is an ongoing effort as new features are introduced which add new permutations.</p>
+
+<p>Today, our cache hit ratio is looking much better. Within the next couple days we hope to bring the top 10 resources up above 80% (we're almost there). The most important thing though is that all the systems which sit behind our caching layer can survive without it. Some considerably better than others, true. But we aren't driving our cache hit ratio up because our system won't work otherwise. We're driving it up because it results in a better user experience.</p>

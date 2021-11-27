@@ -1,0 +1,61 @@
+---
+layout: post
+date: 2013-03-10
+title: "Testing In Golang"
+tags: [golang, testing]
+---
+
+<p>I generally dislike testing code at the same time as I'm learning a language. It's too much. Plus it always seems like tests written in an unknown environment are end up being worse than useless. Sooner or later though, there's just no excuse for putting it off.</p>
+
+<p>The way testing works is to include a <code>_test.go</code> file alongside the file under test, in the same folder and package. Any function within this file that stats with <code>Test</code> will be tested. Such functions are expected to take a pointer to <code>testing.T</code>.</p>
+
+<p>For example, if we wanted to test the file <code>lazycache.go</code> in the <code>lazycache</code> package, we could expect to see a file named <code>lazycache_test.go</code> with the following skeleton:</p>
+
+{% highlight go %}
+package lazycache
+
+import (
+  "testing"
+)
+
+func TestHandlesNonExistingItems(t *testing.T) {
+  ....
+}
+{% endhighlight %}
+
+<p>using the <code>testing.T</code> type is a real pain, you need to constantly wrap things in <code>if</code> statements: </p>
+
+{% highlight go %}
+func TestHandlesNonExistingItems(t *testing.T) {
+  _, exists := New().Get(9001)
+  if exists == true {
+    t.Error("expected the item not to exits")
+  }
+}
+{% endhighlight %}
+
+<p>There are 3rd party packages that greatly improve the story, but so far I've been using a <a href=https://gist.github.com/karlseguin/5128442>simple wrapper</a>. With it, the above test can be rewritten as:</p>
+{% highlight go %}
+func TestHandlesNonExistingItems(t *testing.T) {
+  spec := tests.Spec(t)
+  _, exists := New().Get(9001)
+  spec.Expect(exists).ToEqual(false)
+}
+{% endhighlight %}
+
+<p>As a static language, testing in Go has a strong Java/C# feel: interfaces are your friend. The difference between a method that's easy to test and not is often a matter of whether you are passing interfaces (good) or concrete types (bad). Since functions are first class types in Go, functions can also be passed around to decouple implementations.</p>
+
+<p>For example, since the <code>http.ResponseWriter</code> is an interface, we can easily put it under test. We can either use a mocking framework, or <a href=https://gist.github.com/karlseguin/5128461>create our own fake response</a>.</p>
+
+<p>There's something about Go though that makes testing more pleasant than other static languages. I'm not sure if it's considered proper or if it's an anti-pattern; but since tests reside in the same package as the type under test, you have access to unexported types and members. While I'm not advocating that you test private members (or the closest Go has to private members), I've found it extremely useful to access these to set a desired state. This is especially true when you're writing lower level code which doesn't necessarily have a top-down flow (timers, goroutines, channels, ....).</p>
+
+<p>Our <code>LazyCache</code> has a pruner which runs in a separate goroutine. Internally, we schedule it's next run period. We could expose this, but I hate exposing stuff just for testing. Instead, we can simply reach into the object and set whatever state we want:</p>
+
+{% highlight go %}
+  cache.nextPrune = time.Now().Add(-1 * time.Second)
+  cache.Get("fail get triggers a prune")
+  time.Sleep(5 * time.Millisecond) //let the pruner do its job
+  //assert..
+{% endhighlight %}
+
+<p>Overall, it's hard to rate Go's testing. Clearly the built-in package needs love. It also feels like you need to write a lot of support code - fake objects, builders, helpers, etc. On the flip side, the type of code we're writing in Go has always tended to be hard to test (sockets, threads, timers, ...), and Go, as a language, does a decent job of helping you out.</p>

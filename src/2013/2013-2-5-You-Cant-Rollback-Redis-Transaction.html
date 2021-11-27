@@ -1,0 +1,32 @@
+---
+layout: post
+date: 2013-02-05
+title: "You can't rollback Redis transactions"
+tags: [redis]
+---
+
+<p>When you think transaction, you probably think of being able to rollback changes if something goes wrong. For example, none of the inserts below will be committed, since the 3rd one violates a not-null constraint:</p>
+
+{% highlight ruby %}
+  pg.transaction do |conn|
+    conn.exec("insert into users values (1, 'john')")
+    conn.exec("insert into users values (2, 'bill')")
+    conn.exec("insert into users values (3, null)") #exception causes implicit rollback
+  end
+  # no rows were inserted
+{% endhighlight %}
+
+<p>This isn't the case in Redis (with either <code>multi</code>/<code>exec</code>/<code>discard</code> or scripting):</p>
+
+{% highlight ruby %}
+redis.multi do
+  redis.set 'user:1', 'john'
+  redis.set 'user:2', 'bill'
+  redis.llen 'user:1' # exception, no rollback possible
+end
+# user:1 and user:2 will be set
+{% endhighlight %}
+
+<p>What transactions and scripting in Redis do is two things. First, it guarantees sequential and uninterrupted commands. Second, it guarantees that all or none of your commands are run - assuming you don't have a bug in your code. The only way, that I know of, for a command to fail in Redis is that you either run out of memory, use the wrong syntax or use a command against the wrong type of key (such as I did in this example).</p>
+
+<p>If you want to rollback, you'll have to do it yourself.</p>

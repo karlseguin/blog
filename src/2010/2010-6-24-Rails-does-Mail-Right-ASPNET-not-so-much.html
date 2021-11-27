@@ -1,0 +1,112 @@
+---
+permalink: "/2010/6/24/Rails-does-Mail-Right-ASPNET-not-so-much/"
+layout: post
+date: 2010-06-24
+title: "Rails does Mail Right. ASP.NET, not so much."
+tags: [ruby]
+---
+<p>Yesterday I had to send a confirmation email from a Rails application. The experience felt so right that it made me wonder why the fuck ASP.NET hasn't implemented something similar. I've actually started to doubt the way I've been sending emails in ASP.NET, because, in comparison, I can't believe how half-assed the implementation is.</p>
+
+<p>I don't know about everyone else, but the way I've been going about emails in ASP.NET is something like:</p>
+
+{% highlight csharp %}
+public interface IMailSender {
+  void SendConfirmation(string name, string email, string activationCode);
+}
+
+public sealed class MailSender : IMailSender {
+  private static readonly IDictionary<string, Message> _templates = LoadTemplates();
+
+  public void SendConfirmation(string name, string email, string activationCode) {
+    var message = GetContent("activation", new {Name = name, Activation= activationCode});
+    var mail = new MailMessage(Configuration.AdminEmail, email, message.Subject, message.Body) { IsBodyHtml = true };
+    new SmtpClient().Send(mail);
+  }
+
+  private static Message GetContent(string name, object substitutions) {
+    var message = _templates[name)];
+    var content = new StringBuilder(message.Body);
+    if (substitutions != null) {
+      //object.ToDictionary is a common extension method
+      //you can see an implementation at http://nxl.codeplex.com/SourceControl/changeset/view/32395#232454
+      foreach (var kvp in substitutions.ToDictionary()) {
+        var value = kvp.Value == null ? string.Empty : kvp.Value.ToString();
+        var key = string.Concat('#', kvp.Key.ToUpper(), '#');
+        content.Replace(key, value);
+      }
+    }
+    return new Message {
+      Subject = message.Subject,
+      Body = content.ToString(),
+    };
+  }
+
+  private static IDictionary<string, Message> LoadTemplates() {
+    var templates = new Dictionary<string, Message>();
+    foreach (var file in Directory.GetFiles(Configuration.ResourcePath  + "emails")) {
+      var lines = File.ReadAllLines(file);
+      var message = new Message {
+        Subject = lines[0],
+        Body = string.Join(Environment.NewLine, lines, 1, lines.Length - 1)
+      };
+      templates.Add(Path.GetFileNameWithoutExtension(file), message);
+    }
+    return templates;
+  }
+
+  private class Message {
+    public string Subject { get; set; }
+    public string Body{ get; set;}
+  }
+}
+{% endhighlight %}
+
+<p>This requires a template called activation.html to be placed in Configuration.ResourcePath + "emails\", that might look like:</p>
+
+{% highlight html %}
+Account Activation <-- first line is hacked to the subject-->
+
+<p>Hi #NAME#,</p>
+
+<p>To activate your account click this: <a href="#ACTIVATION#">#ACTIVATION#</a></p>
+
+<p>Sincerely,</p>
+<p>Us</p>
+{% endhighlight %}
+
+<p>I essentially have email templates in a folder with placeholders like #NAME#  which this code then replaces with supplied parameters. It works, and its testable, but...</p>
+
+<p>In Rails, ActionMailer is built around MVC. Once you see it, its so obvious you wonder how the ASP.NET team couldn't see it. Essentially, the above boilerplate code is replaced by leveraging the existing
+
+MVC infrastructure. Here's an example:</p>
+
+{% highlight ruby %}
+class Notifier < ActionMailer::Base
+  default :from => Configuration.email_from
+
+  def activate_account(user)
+    @user = user
+    @activation_link = link_to_activate(@user)
+    mail(:to => user.email, :subject => "account activation")
+  end
+end
+{% endhighlight %}
+
+<p>We can then write a view, like any other controller view (in app/views/notifier/active_account.html.erb), that looks like</p>
+
+{% highlight clike %}
+<p>Hi <%=user.name%>,</p>
+
+<p>To activate your account click this: <a href="<%=activation_link%>"><%=activation_link%></a></p>
+
+<p>Sincerely,</p>
+<p>Us</p>
+{% endhighlight %}
+
+<p>For completeness, the email could be sent via:</p>
+
+{% highlight ruby %}
+Notifier.activate_account(user).deliver
+{% endhighlight %}
+
+<p>Its a small example, but to me the difference is striking. It just seems like the right way. And it isn't way less code because of any Ruby magic. Its way less code because its done right.</p>

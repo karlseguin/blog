@@ -1,0 +1,22 @@
+---
+permalink: "/2011/2/16/Regex-Positive-Negative-Look-Ahead-Behind/"
+layout: post
+date: 2011-02-16
+title: "Regular Expressions: Positive/Negative Look-Ahead/Behind"
+tags: [tech]
+---
+<p>Regular expressions are useful to know since they come in handy quite often. Like a swiss army knife, once you speak grep, it seems like problems where regular expressions are a solution spring to life. You don't have to remember all of the syntax, but you should understand them well enough to feel it in your gut when a pattern, fancy or not, might be in order.</p>
+
+<p>There are countless places to learn about regular expressions. Despite their appearance, the basics really aren't hard to master. Most people think of regular expressions as a tool which can match a sequence of characters.  You can always skip characters using <code>.*</code> (or the non-greedy <code>.*?</code>), but that actually consumes those characters. The fact is that most of us think of patterns and regular expressions as a sequence of characters going from left to right (and possibly up to down with the appropriate settings).</p>
+
+<p>This isn't wrong. In fact, most regular expressions are used to solve problems like this. It's only natural that the overwhelming way we use them is how we typically think of them. However, it isn't right either. More than once I've seen a developer declare that regular expressions simply couldn't match a pattern due to a limitation of the programmer's knowledge, not regular expressions themselves. I'm not talking about unstructured data like SGML, but rather non sequential patterns.</p>
+
+<p>What's a non sequential pattern? It's a pattern which is dependent on the presence (or the exclusion) of other patterns either ahead or behind of the current position. The catch is that the data between the current position and the other pattern is important. In other words, you need to be able to match subsequent text (or previous text) without consuming the text in between. Let's look at an example.</p>
+
+<p>Using a regular expression, find every entry in the following data which ends with 'o': <code>Connecticut,Colorado,Guam,Idaho,New Mexico,Ohio,Pennsylvania,Puerto Rico,</code></p>
+
+<p>Your first approach might be something like <code>[\w ]+?o,</code> however, this actually consumes the comma and makes it part of the matched value. What we need is to be able to match against the comma, but not actually include it in our pattern. Or, we want to look ahead from our current position and find a positive match. The syntax for doing this isn't important. What is important is that you know that it CAN be done, that it's called a positive look-ahead and that you can use google. For completeness, the pattern we are looking for is: <code>[\w ]+?o(?=,)</code>.  The <code>(?=PATTERN_HERE)</code> is the syntax for a positive look ahead.</p>
+
+<p>Another example, which is actually what made me post this was my desire for a pattern which validating a reasonable password. The goal? A password with at least 2 non-characters and a minimum length of 8 characters. The first part is easy: <code>.*[^a-zA-Z].*[^a-zA-Z].*</code>. Adding a length check to this (admittedly, not the best solution), makes things a lot more complicated because the two non-characters could be anywhere in the value. The solution is to mix the pattern with a positive look-behind pattern which looks behind for 7 characters. Why 7? because the 8th will be consumed by the current location from where our look-behind starts. Check it out: <code>.*[^a-zA-Z].*[^a-zA-Z].*(?<=.{7}).</code>. I see this pattern and I think: a pattern is found when a it contains two non-letters AND a character (the very last .) proceeded by 7 other characters. <code>(?<=PATTERN)</code> means proceeded by. What's important here is that the first part and the second part are working against the same set of values - because assertions don't consume characters, merely inspect them (known as zero-width assertions).</p>
+
+<p>TL;DR: Regular expressions aren't limited to a sequence of characters. They are able to skip ahead of behind looking for the presence of (or the lack of presence) of another pattern.</p>

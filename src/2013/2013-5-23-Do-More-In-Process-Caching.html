@@ -1,0 +1,63 @@
+---
+layout: post
+date: 2013-05-23
+title: "Do More In-Process Caching"
+description: "Improving performance by caching data in-process"
+tags: [design, golang, performance]
+---
+
+<p>It seems opposite of what everyone's doing, but today I'd like to talk about caching data directly inside your process. The most obvious reason to do this is for performance. Data stored in-process obviously doesn't need to be fetched from another process which is possibly running on a different box. More importantly, it doesn't have to be serialized and deserialized. This means less objects being created, less memory fragmentation and less garbage collection.</p>
+
+<p>Before you can do in-process caching, you need to understand how (or even if) your stack makes it possible to share data between requests. For our Node code, each process has its own cache built around the <a href="https://github.com/isaacs/node-lru-cache">lru-cache package</a>. Since this means that different processes might have different cached items, we think hard about what can go in here and for how long. The best example is application details which is needed to authenticate and authorize every request. It's a perfect candidate for in-process caching. It's used thousands of times per second, doesn't change often and takes virtually no memory (if it takes more than 1MB per process, I'd be surprised).</p>
+
+<p>Our Node approach is simple, but limited. Real caching shouldn't be negatively impacted by horizontal scaling. Obviously, beyond a single machine, you can't do in-process caching for every request. However, within a single box, you can get pretty extreme.</p>
+
+<p>Before a request hits our Node application servers, they pass through a reverse proxy. Like our Node code, it also needs access to application details. As a skeleton, we could start with:</p>
+
+{% highlight go %}
+package main
+
+import (
+  "sync"
+)
+
+type CacheItem interface {
+  GetId() string
+}
+
+type Cache struct {
+  items map[string]CacheItem
+  lock *sync.RWMutex
+}
+
+func New() *Cache {
+  return &Cache {
+    items: make(map[string]CacheItem, 1024),
+    lock: new(sync.RWMutex),
+  }
+}
+
+func (c *Cache) Get(id string) CacheItem {
+  c.lock.RLock()
+  defer c.lock.RUnlock()
+  return c.items[id]
+}
+
+func (c *Cache) Add(item CacheItem) {
+  c.lock.Lock()
+  defer c.lock.Unlock()
+  c.items[item.GetId()] = item
+}
+
+func (c *Cache) Remove(id string) {
+  c.lock.Lock()
+  defer c.lock.Unlock()
+  delete(c.items, id)
+}
+{% endhighlight %}
+
+<p>I know Go channels are great, but a read-write mutex is well suited for a cache because it allows multiple readers concurrently. In other words, while calls to <code>Add</code> and <code>Remove</code> block, calls to <code>Get</code> don't block other calls to <code>Get</code>. If you frequently call <code>Remove</code> on items not cached, you could first check if the item exists using a read-lock before acquiring a write-lock (though this isn't very typical, in my experience).</p>
+
+<p>We still need to add expiration, but that's something <a href="http://openmymind.net/Writing-An-LRU-Cache/">I wrote about recently</a>. I will mention that you can take the caching pattern pretty far. One of our main caches never expires items in the foreground. Only the first request for an item happens in the requesting goroutine. Refreshing an item happens in the background, meaning that we'll serve a stale item while trying to refresh it - making us more tolerant to failure. We also keep a blacklist of invalid entries and avoid re-requesting them too frequently.</p>
+
+<p>Is caching in-process useful? Absolutely. But it isn't just about speed. There are two important reasons to do it. First, it makes you think and see your data from a different perspective - always a good thing. How stale can it be? How large is it? Can we have multiple versions hanging around? How often does it change? Those are all good things to know about your data. Secondly, concurrent programming is rewarding and a useful skill to have.</p>

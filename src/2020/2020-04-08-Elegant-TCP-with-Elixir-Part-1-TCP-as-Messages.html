@@ -1,0 +1,64 @@
+---
+layout: post
+date: 2020-04-08
+title: "Elegant TCP with Elixir - Part 1 - TCP as Messages"
+description: "Taking advantage of Elixir / Erlang's TCP library to write elegant and idiomatic Elixir code."
+tags: [elixir]
+---
+
+<p>Over the next few posts, I want to talk about some features of Elixir and how they can be leveraged to build simple (or complex) TCP socket code. I say "features of Elixir" but, as I've pointed out before, the beauty of the language is the synergy it has with its runtime and standard library. So, technically these aren't language features, but let's not get pedantic.</p>
+
+<p>While there's a new <a href="https://erlang.org/doc/man/socket.html">Socket module</a> which better aligns with traditional socket API ergonomics, I'm going to stick with then <a href="https://erlang.org/doc/man/gen_tcp.html">gen_tcp module</a>. </p>
+
+<p>The first feature is about receiving data from a socket. Normally, given a socket, you'd call the <code>recv</code> function to get data from it. Two common patterns are to issue a <code>recv</code> after a <code>send</code> as part of a request->reply, or to block on <code>recv</code>, process the incoming message, and then loop back wait for the next message - handling messages as they come in.</p>
+
+<p>In Elixir, we have another option: letting the runtime read from the socket and deliver the data as messages to a process. This is called "active mode". Before we jump into code, note that there are possible negative implications to this feature (which we'll get to).</p>
+
+<p>By default, the process that creates the socket is considered the socket's "controlling process". For outbound connections, that's probably fine. You can spawn a process and connect to your destination from within that process. However, for incoming connections, you'll most likely create the socket in a listening process and spawn a handler. Something like:</p>
+
+{% highlight elixir %}defp accept(socket) do
+  case :gen_tcp.accept(socket) do
+    {:ok, client_socket} -> GenServer.start(Client, socket: client_socket)
+    err -> # log this error
+  end
+  accept(socket)  # go back to listening for more connections
+end{% endhighlight %}
+
+<p>What we need to do is change the "controlling process" from the process that accepted the connection to the newly spawned GenServer:</p>
+
+{% highlight elixir %}{:ok, client_socket} ->
+   {:ok, pid} = GenServer.start(Client, socket: client_socket)
+   :gen_tcp.controlling_process(client_socket, pid){% endhighlight %}
+
+<p>That's it. Thankfully, any messages received before the controlling process is changed will get moved to the new process' mailbox (so you won't lose any messages, but this wasn't always the case!).</p>
+
+<p>Inside of the controlling process, there are three messages you'll want to handle. These are normal Erlang messages. I'm showing how to handle them in a GenServer:</p>
+
+{% highlight elixir %}def handle_info({:tcp, socket, data}, state) do
+...
+end
+
+def handle_info({:tcp_closed, socket}, state) do
+...
+end
+
+def handle_info({:tcp_error, socket, reason}, state) do
+...
+end{% endhighlight %}
+
+<p>How do you put a socket in active mode? There are three ways. First, if you're opening an outbound connection, you can pass <code>active: true</code> to <code>connect/3</code> or <code>connect/4</code>. Secondly, you can also pass this option to <code>listen/2</code> which will then put any accepted sockets in active mode. Finally, an existing socket can be put in or out of active mode by calling <code>:inet.setopts(socket, active: true | false)</code>.</p>
+
+<p>That means you can switch a sockets from active to passive (and vice versa) whenever you want. This is particularly useful given the other possible values you can give the <code>active</code> flag. Specifically, you can specify <code>:once</code>. When <code>active: :once</code> is used, you'll receive 1 <code>{:tcp, socket, data}</code> message and then the socket will automatically switch into passive mode. At which point you can proceed to process the data (possibly manually calling <code>:gen_tcp.recv(socket)</code> to get more data). Typically in these cases, once you're done processing a message, you'll call <code>:inet.setopts(socket, active: :once)</code> and repeat the flow:</p>
+
+{% highlight elixir %}def handle_info({:tcp, socket, data}, state) do
+  # assume the socket was initially in active: :once
+  # do things with data, maybe read more bytes from socket
+  :inet.setopts(socket, active: :once)
+  {:noreply, state}
+end{% endhighlight %}
+
+<p>Why does <code>:once</code> exists? It's to prevent overburdening your process (especially in terms of memory usage). Remember, Elixir's process mailboxes are boundless. When a socket is in active mode, the messages will be delivered as fast as they can be - which may be faster than you can process them. By using <code>active: :once</code> you more truthfully represents your capacity to process data to the VM and the operating system.</p>
+
+<p>(You can also specify <code>active: -32768 ..32767</code>, but that's less common and meaningless until we cover message boundaries in part 2)</p>
+
+<p>Having said that, if all your peers are well-behaved, keeping the socket in active mode has two big advantages. First, it makes your code consistent. Switching between active and passive means having to deal with two different APIs and the fact that sometimes errors (like a closed socket) will be returned sycnhronously and sometimes asynchronously. Secondly, active is faster. It let's the VM transfer data from the OS into your process in the most efficient manner and avoids constant calls to <code>:inet.setopts/2</code>. Intuitively, it makes a lot of sense that passive or once can be a lot slower: all that time you're spending processing the message is time that the OS and VM could be passing more bytes into your process (which active mode does).</p>

@@ -1,0 +1,28 @@
+---
+layout: post
+date: 2018-10-13
+title: "Basic Brain Dump On Dealing With Errors"
+description: "My never ending struggle with error handling and what I think I've learned so far"
+published: false
+tags: [design]
+---
+
+<p>Errors, what a pain. Is there any good general advice on hanlding them? What about generating them? Let's do a brain dump</p>
+
+<h3>Centralize Logging</h3>
+<p>Putting your logs in a central <strong>queryable</strong> repository can be a massive boon to quality especially relative to the low cost. I'm a fan of the ELK stack (elastic search, logstack and kibana), but anything is fine (just be mindful not to flood yourself).</p>
+
+<h3>Actionable Logs</h3>
+<p>The one thing most likely to undermine your centralized logging is having a poor signal-to-noise ratio. Error logs should be actionable, even if that action is to stop logging a specific error. You can log informational data, but errors should be distinctly queryable.</p>
+
+<h3>Errors Should be Actioned</h3>
+<p>Not only should error logs be actionable, but actioning them should be the top priority. Mainly because, if you have errors, you should fix them. Resolving them also helps keep your logs clean. Finally and more subtly, some errors are easier to figure as they're happening.</p>
+
+<h3>Intermittent / Non Critical Errors</h3>
+<p>Many errors can't be handled but also shouldn't be silenced. Intermittently dropped connections and timeouts are common example. Move these to counters and set up alerts to fire when a threshold over a period is reached (or some fancier anomaly detection). A dropped connection a day might be fine, but 10 an hour might require investigation.</p>
+
+<h3>Log Labels</h3>
+<p>A simple way to improve the usefulness of logs is to give them a static label such as "connection failed". Without this, it can be hard to group errors together if code gets refactored, line number of function names change, or if there's any dynamic data in the error details. Grouping is important to know when it first and last happened, how often it's happening, has the rate increased and so on</p>
+
+<h3>Central Error Handling</h3>
+<p>Moving into code.

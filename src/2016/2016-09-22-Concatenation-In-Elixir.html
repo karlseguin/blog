@@ -1,0 +1,92 @@
+---
+layout: post
+date: 2016-09-22
+title: "Concatenation in Elixir"
+description: "Examining the implications of immutability at the data structure level"
+tags: [elixir, learning, performance]
+---
+
+<p>Data in Elixir is immutable. Superficially, the implications of this are easy to grasp. When you first start off, you'll occasionally forget and write things like:</p>
+
+{% highlight ruby %}
+def call(conn, _default) do
+  set(conn, get_req_header(conn, "authorization"))
+end
+
+def set(conn, nil), do: conn
+
+def set(conn, [authorization]) do
+  user = load_user_from_authorization(authorization)
+  assign(conn, :user, user) # THIS IS WRONG
+  log_access(user)
+  conn
+end
+{% endhighlight %}
+
+<p>The above doesn't work as intended because the line with the <em>THIS IS WRONG</em> comment discards the new <code>conn</code> created by the <code>assign</code> function. <code>assign</code> creates a new <code>conn</code> because data is immutable, and thus <code>conn</code> cannot be changed directly. The fix is to re-assign the result of <code>assign</code> to <code>conn</code>:</p>
+
+{% highlight ruby %}
+conn = assign(conn, :user, user)
+{% endhighlight %}
+
+<p>Whether you're adding a key to a map, appending a value to list, or doing just about anything else, you'll follow the same pattern (or something similar). (If this is your first time seeing Elixir, there's a pipe operator (<code>|&gt;</code>) which makes it all less tedious).</p>
+
+<p>I want you to take a second and consider the implications of immutable data structures for an operation as simple as string or array concatenation. You can't leverage a buffer-based structure (vector, dynamic array, stringbuilder, arraylist, ...) to amortize the cost of an append because appending would mutate the structure. In Elixir, every append has to take the original value, copy it and add the new element.</p>
+
+<p>Rather than relying on "traditional" data structures, immutable languages use <a href="https://en.wikipedia.org/wiki/Persistent_data_structure">Persistent Data Structures</a> which always preserve previous versions of themselves (ideally not as full copies). The simplest example of this is a Linked List, which is actually how Lists are implement in Elixir (that has its own set of implications). <em>How does a linked list help?</em>, I hear you asking.</p>
+
+<p>Imagine we have an initial list of integers which the variable <code>x</code> points to:</p>
+
+{% highlight text %}
+x → [1] → [2] → [3]
+{% endhighlight %}
+
+<p>Obviously (I hope), we cannot append to this list without also mutating <code>x</code>. In Elixir, if we append to an list, a copy of the list is created. So we're still at square one. Or are we? What we <strong>can</strong> do without needing to copy is to <strong>prepend</strong> to our list:</p>
+
+{% highlight text %}
+y = [0 | x]
+
+[0] → [1] → [2] → [3]
+ ↑     ↑
+ y     x
+ {% endhighlight %}
+
+ <p>Prepending is handy, but what if you want to append? One common solution is to keep prepending and reverse (<code>Enum.reverse</code>) the final result. We still incur an O(N) traversal, but we avoid all the extra allocations + copying of appending.</p>
+
+ <p>There's another, more efficient, option: an io list. An io list is just a list of nested lists. If I wanted to concatenate <code>5</code> to <code>[1, 2, 3, 4]</code>, I could either append (thus having to allocate a new list with 5 spots, and copying the values over), or I could create a new list to wrap the two values: <code>[[1, 2, 3, 4], 5]</code>. We don't have to create a new list and copy over N values. Instead, we create a new line which points to our existing list and add the new value. We can also nest deeply: <code>[[[1, 2, 3, 4], 5], 6]</code>.</p>
+
+ <p>Of course, we probably want to do something with this data. At the worst case, we can use <code>List.flatten</code> to get a "normal" list back. From a performance standpoint, this is a lot like prepending + reversing. However, it's also possible to flatten it as we're processing it, which is how a lot of functions behave. For example, the following code:</p>
+
+ {% highlight ruby %}
+ File.write("data", [[[1, 2, 3, 4], 5], 6])
+ {% endhighlight %}
+
+ <p>Produces the correct 6 byte file.</p>
+
+<p>It still might not be obvious how you put an io list together. Usually, you'll do it through recursion. Here's an example using <code>Enum.reduce</code>. It take a list of integers, and calculates their factors, storing each result in an increasingly nested list</p>
+
+{% highlight ruby %}
+# taken from https://rosettacode.org/wiki/Factors_of_an_integer#Elixir
+defmodule RC do
+  def factor(1), do: [1]
+  def factor(n) do
+    (for i <- 1..div(n,2), rem(n,i)==0, do: i) ++ [n]
+  end
+
+  # Recursive (faster version);
+  def divisor(n), do: divisor(n, 1, []) |> Enum.sort
+
+  defp divisor(n, i, factors) when n < i*i    , do: factors
+  defp divisor(n, i, factors) when n == i*i   , do: [i | factors]
+  defp divisor(n, i, factors) when rem(n,i)==0, do: divisor(n, i+1, [i, div(n,i) | factors])
+  defp divisor(n, i, factors)                 , do: divisor(n, i+1, factors)
+end
+
+input = [10, 11, 12, 13, 14]
+list = Enum.reduce(input, [], fn (i, acc) ->
+  [acc | RC.factor(i)]
+end)
+
+{% endhighlight %}
+
+<p>The above generates an io list that looks like: <code>[[[[[[], 1, 2, 5, 10], 1, 11], 1, 2, 3, 4, 6, 12], 1, 13], 1, 2, 7, 14]</code>.</p>

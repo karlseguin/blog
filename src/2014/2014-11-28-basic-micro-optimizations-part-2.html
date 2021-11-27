@@ -1,0 +1,55 @@
+---
+layout: post
+date: 2014-11-28
+title: "Basic Micro-Optimizations Part 2"
+tags: [performance]
+description: "How pre-allocated pools of objects can impact performance"
+---
+
+<p>Following yesterday's post on <a href="/basic-micro-optimizations/">basic micro-optimizations</a>, I wanted to look at a concrete example I recently came across. A couple weeks ago, I was profiling code for a typical HTTP API service written in Go. A significant amount of memory was being allocated for <code>http.Header</code> instances. Even if you aren't familiar with Go, the following code should be obvious:</p>
+
+{% highlight go %}
+var body = []byte("hello world!")
+func fatHandler(writer http.ResponseWriter, req *http.Request) {
+  header := writer.Header()
+  header["Content-Length"] = []string{"12"}
+  header["Cache-Control"] = []string{"public,max-age=30"}
+  header["Content-Type"] = []string{"text/plain"}
+  writer.WriteHeader(200)
+  writer.Write(body)
+}
+{% endhighlight %}
+
+<p>Calling the above 1 million times takes 432ms and allocates 48MB of memory. On my machine, it required 753 garbage collections which took 175ms - a significant percentage of the total time.</p>
+
+<p>What's the above code doing? Go's <code>http.Header</code> structure is a <code>map[string][]string</code>. In other words, it's a dictionary where the key is a string and the values are an array of strings. Why an array of strings? Because HTTP allows a key to have multiple values. Knowing this, think about what the above code is doing. First, it's allocating a map. From an API point of view, a map makes sense, but given that that 99% of all cases will require very few keys (&lt;20), it's far from the most efficient solution. Next, for each key, it's allocating a dynamic array. I don't know what the starting size of the array is, but if it's anything other than 1, in most cases, that's a lot of wasted space.</p>
+
+<p>There's little we can do about the fact that the built-in <code>http.ResponseWriter</code> requires a map, but can we reduce the memory footprint caused by the arrays and, if so, what impact would it have?</p>
+
+<p>When I'm testing performance and memory alternatives, I always try to keep things focused. Isolate the components and data and do the simplest possible tests to see if it makes any sense. This was what I came up with: </p>
+
+{% highlight go %}
+var (
+  body = []byte("hello world!")
+  headerbucket = []string{"", "", ""}
+)
+
+func slimHandler(writer http.ResponseWriter, req *http.Request) {
+  headerbucket[0] = "12"
+  headerbucket[1] = "public,age=30"
+  headerbucket[2] = "text/plain"
+
+  header := writer.Header()
+  header["Content-Length"] = headerbucket[0:1]
+  header["Cache-Control"] = headerbucket[1:2]
+  header["Content-Type"] = headerbucket[2:3]
+  writer.WriteHeader(200)
+  writer.Write(body)
+}
+{% endhighlight %}
+
+<p>Sticking with our 1 million calls, the above code will allocate 2 999 999 fewer arrays than the original version. Result? 85KB (from 48MB), 188ms (from 432ms), 1GC (from 753) which required 0.35ms (from 175ms).</p>
+
+<p>The above code isn't production ready. Specifically, we [probably] need to make it concurrent-friendly, but that's a solvable problem (using a pool of []string for example).</p>
+
+<p>It's a significant difference and, I believe, it's the type of attention to detail that results in being able to handle tens of thousands of requests per second on a few machines rather than a few hundred. It makes the code more complicated and more fragile, but even if it doesn't make sense in most cases, it's always good to be familiar with possibilities.</p>

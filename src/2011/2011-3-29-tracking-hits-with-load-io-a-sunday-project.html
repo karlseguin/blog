@@ -1,0 +1,16 @@
+---
+permalink: "/2011/3/29/tracking-hits-with-load-io-a-sunday-project/"
+layout: post
+date: 2011-03-29
+title: "tracking hits with load.io, a sunday project"
+tags: [logging]
+---
+<p>I don't run google analytics on my blog. I find the idea somewhat...narcissistic. However, I was interesting in finding out how many people were going to <a href="http://openmymind.net/2011/3/28/The-Little-MongoDB-Book">download The Little MongoDB Book</a>. So, I wrote a simple service and put it up at <a href="http://load.io/">load.io</a></p>
+
+<p>The entire purpose is that you can easily track actions (hits/loads/whatever) against a resource. When you visit the homepage you get a unique id, which you can use to track hits. You include a .js file and add a bit of javascript, and voila</p>
+
+<p>You can see a sample output from the id used for the book: <a href="http://load.io/data/4d908b01563d8a0ba2000002">http://load.io/data/4d908b01563d8a0ba2000002</a>.(I'm using <a href="http://code.google.com/p/flot/">flot</a> for the graphs)</p>
+
+<p>There are a couple neat things about this. Looking at access logs, The Little MongoDB Book has been downloaded around 10 000 times in the last 24 hours.  That's more than 3x what this is showing. What's up? First, a lot of people are linking directly to the PDF. If this was a webpage I could have hooked into an onload event and solved that problem. As is, I'm only tracking clicks on my specific links to the pdf.</p>
+
+<p>The other interesting thing is that the tracking code uses a tracking image to cause a hit (the oldest trick in the tracking book). Images are downloaded asynchronously and when you start to navigate away from the page (say, when you are following an href), the browser cancels all incomplete asynchronous requests. You can see the source code for the script at <a href="http://js.load.io/js/0.1/hit.js">http://js.load.io/js/0.1/hit.js</a>. Its using a setTimeout to try to buy itself some time, but there's really no guarantees. So you'll lose some tracking this way. An alternative would be to send the link to load.io and redirect back to the resource - but that's pretty much a URL shortening service. If anyone has a better idea, i'd love to hear it. </p>

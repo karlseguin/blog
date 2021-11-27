@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>{{ title }}</title>
+		<meta name=referrer content=origin>
+		<meta name=viewport content="width=device-width,initial-scale=1">
+		<link href="/assets/mongly/css/main.css" rel="stylesheet" type="text/css">
+		<script src="/assets/mongly/js/jquery.js"></script>
+		<script src="/assets/js/main.js"></script>
+		{% if css %}<link href="/assets/mongly/css/{{css}}.css" rel="stylesheet" type="text/css">{% endif %}
+		{% if multi %}<script src="/assets/mongly/js/multi.js"></script>{% endif %}
+		{% if js %}<script src="/assets/mongly/js/{{ js }}.js"></script>{% endif %}
+	</head>
+	<body{% if page.theme %} class="{{ theme }}"{% endif %}>
+		<div id="page">{{ content }}</di>
+	</body>
+</html>

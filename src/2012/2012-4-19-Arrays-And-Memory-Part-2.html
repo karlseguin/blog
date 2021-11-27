@@ -1,0 +1,62 @@
+---
+permalink: "/2012/4/19/Arrays-And-Memory-Part-2/"
+layout: post
+date: 2012-04-19
+title: "Arrays and Memory, Part 2"
+tags: [c, data structures]
+---
+
+<p>Not too long ago we talked about <a href="http://openmymind.net/2012/3/30/why-arrays-normally-start-at-zero/">why arrays start at 0</a>. Repeating what I said in that post, those three lines really are full of learning goodness. Since I obviously feel strongly about it, let's expand on what we've seen so far. This won't be nearly as fundamental, but I still find it quite interesting.</p>
+
+<p>Here's the C code that we're going to learn from:</p>
+
+{% highlight clike %}
+  char *the = malloc(4 * sizeof(char));
+  char *cat = malloc(4 * sizeof(char));
+
+  the[0] = 't';
+  the[1] = 'h';
+  the[2] = 'e';
+  the[3] = '\0';
+
+  cat[0] = 'c';
+  cat[1] = 'a';
+  cat[2] = 't';
+  cat[3] = '\0';
+
+  printf("%s", &the[4]);
+{% endhighlight %}
+
+<p>I want to draw your attention to the fact that <code>the</code> only has enough space allocated to hold 4 characters, which we fill with the value 'the\0'. (\0 is just how C knows that it has reached the end of the string, I'll blog about that some other time). However, notice that we're actually trying to print a string starting outside the bounds of <code>the</code>.</p>
+
+<p>When you try to go beyond an array's boundaries, modern languages typically handle it one of two ways. They'll either return a default value, like the following Ruby code which returns nil <code>['a','b','c'][100]</code>, or they'll generate an error, like .NET throwing an <code>IndexOutOfRangeException</code>.</p>
+
+<p>I'm not sure how this is accomplished, but I can take a guess. In these languages, an array is a combination of the space allocated for values, as well as its length. Whenever a position in the array is accessed (for writing or reading), the code makes sure that <code>i &lt; length</code>.</p>
+
+<p>In C however, an array really is nothing more than a pointer to a continuous chunk of memory. The initial size of the array isn't something that's kept around. The benefit is that arrays have little memory overhead (a single pointer) and little performance overhead (no extra checks, just simple pointer arithmetics). That might seem extreme, but remember that 386s ran at 16MHz, and that was fast!</p>
+
+<p>With that out of the way, what will the above code print?</p>
+
+<p>The answer is that there's no way of knowing. The only thing we know is that we'll be accessing memory located at <code>the + (4 * sizeof(char))</code>. That memory could be protected by the OS, or not even exist, and end up causing a segmentation fault. That specific location could happen to hold your banking password, and we'll end up printing it out. It's even possible that our two calls to <code>malloc</code> allocated memory side-by-side, which means that the output will be <em>cat</em>.</p>
+
+<p>This Wild Wild West approach to memory access is the cause for many security vulnerabilities, normally in the shape of a buffer overflow. Consider the following code: </p>
+
+{% highlight clike %}
+  char *name = malloc(10 * sizeof(char));
+  printf("enter your name: ");
+  gets(name);
+  printf("you entered: %s", name);
+{% endhighlight %}
+
+<p>The <code>gets</code> function doesn't do any bound checking, which means it'll read from STDIN as much as we type. If we type 15 characters, it'll store all 15, meaning 5 characters will overwrite memory which wasn't meant for <code>name</code>. What if the memory you are able to overwrite is critical? Data stored in memory isn't just for reading and writing, it's often executed, say in the form of the address of a function to execute.</p>
+
+<p>The solution is to use something like <code>fgets</code> rather than <code>gets</code>, which let's us specify a size:</p>
+
+{% highlight clike %}
+  char *name = malloc(10 * sizeof(char));
+  printf("enter your name: ");
+  fgets(name, 10, stdin);
+  printf("you entered: %s", name);
+{% endhighlight %}
+
+<p>You can see how raw and unguarded access to memory requires much more care. But it also provides great performance and less memory. Even if an array is now a somewhat complex object, I think there's value in thinking of them as little more than a continuous block of memory of which we only know (and need to know) its starting address.</p>

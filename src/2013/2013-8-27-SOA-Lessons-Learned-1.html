@@ -1,0 +1,19 @@
+---
+layout: post
+date: 2013-08-27
+title: "SOA Lessons Learned"
+description: "While the move to a mostly service oriented architecture has paid off, it hasn't been without some pain points"
+tags: [design, soa]
+---
+
+<p>A few days ago, I mentioned that <a href="/On-Sharing-Infrastructure/">the shared services we use between services is something of a pain to manage</a>. That's definetly the first lesson that we've learnt. Which isn't to say that I'd change it. Some of it <strong>has</strong> to be shared, like the queue and the routing. Pragmatically speaking our DB also needs to be shared (we aren't big enough for every team to manage their own DB). Sharing caching on the other hand, has clearly been a mistake.</p>
+
+<p>Externally, our architecture doens't leak much. Consumers don't know about our architecture or changes that we make to it. This is thanks to our router which takes all requests to api.viki.io and proxies to the appropriate service. If I had to pick two things that have made our meta-architecture work, it would have to be this custom router/proxy at the very head of each request, and a queue for messaging at the very tail of the system.</p>
+
+<p>Internally, things are a bit more of a mess. Where an external client might want to show a list of 20 users, an internal service might need to loop through all of them and then mash this up with data from other services. Doing this via web services is both much slower and much more complicated. <strong>I should point out that this might not be an intrisic problem with SOA. It could merely be a problem with our approach to SOA - which means we haven't learned the solution, but at least we've learned one possibility which doesn't work.</strong></p>
+
+<p>An example of this is the notification system we put in place to notify users of new episodes available for a show they watch. The initial SOA approach took hours to run and was rather complex - connecting to 3 services and paging through various results. The rewrite, which simply connected to the three databases directly, was basically a single file script of a few hundred lines. And it ran much faster.</p>
+
+<p>While this might have been a particular exterme examples with respect to complexity, my experience is that it's a pretty accurate representation on the performance side of things. Over large enough amounts of data, I just don't know how to do things within a reasonable amount of time without simply going directly to the database.</p>
+
+<p>Thoughts?</p>

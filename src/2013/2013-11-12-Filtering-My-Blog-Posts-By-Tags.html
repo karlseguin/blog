@@ -1,0 +1,62 @@
+---
+layout: post
+date: 2013-11-12
+title: "Filtering My Blog Posts By Tags"
+description: "Thanks to some minimalistic JavaScript, you can now filter my posts by tag"
+tags: [ui]
+---
+
+<p>I pushed a change to the index page which allows posts to be filtered by tags. Given my <a href=/Minimalist-Markup/>desire to keep the landing page small</a>, and the <a href=/#performance>enjoyment I get from optimizing</a>, I faced some hurdles.</p>
+
+<p>The changes have increased the size by 32%, or 7Kb. The bulk of this comes from the JavaScript, but there'll of course be extra data for each new post. I opted to forgo any framework, which probably means it doesn't work in older browsers (though I did test most of it in IE8).</p>
+
+<p>The approach can be broken down into 2 parts. First, the data is collected. We store two indexes. The first is a map of tags to list items. The second is a map of tags to tag elements. With these two indexes, we can easily toggle the visibility of appropriate items as well as change the style of the selected tag.</p>
+
+<p>Showing the proper items ends up looking something like:</p>
+
+{% highlight javascript %}
+var indexes = {
+  soa: [li1, li3]
+}
+var items = [li1, li2, li3, li4, li5, liN];
+var currentTagName = null;
+
+function show(tagName) {
+  toggleItems(items, 'none');
+  toggleItems(indexes[tagName], 'block');
+  currentTagName = tagName;
+}
+
+function toggleItems(items, display) {
+  for (var i = 0, length = items.length; i < length; i++) {
+    items[i].style.display = display;
+  }
+}
+
+show('soa');
+{% endhighlight %}
+
+<p>The above shows how the item index is used to hide/show items. We also want to highlight the tag that's currently active. This is where the other map comes in:</p>
+
+{% highlight javascript %}
+var tags = {
+  soa: [a1, a8]
+}
+
+function show(tagName) {
+  toggleTags('');          // remove the 'active' class from the currently selected tags
+  toggleItems(items, 'none');
+  toggleItems(indexes[tagName], 'block');
+  currentTagName = tagName;
+  toggleTags('active');   // add the 'active' class to the newly selected tags
+}
+
+function toggleTags(className) {
+  var t = tags[currentTagName];
+  for (var i = 0, length = t.length; i < length; i++) {
+    t[i].className = className;
+  }
+}
+{% endhighlight %}
+
+<p>Nothing particularly fancy, but I rather like how it turned out. The real question though is, tricks such as obsfuscation aside, can you see any way to make it either smaller or faster? (the real javascript is at the bottom of the home page)</p>

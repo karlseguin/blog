@@ -1,0 +1,105 @@
+---
+layout: post
+date: 2014-12-08
+title: "Introduction to PostgreSQL Arrays"
+description: "A brief intro to PostgreSQL arrays"
+tags: [modeling]
+---
+<p>I'm getting the opportunity to play with arrays in PostgreSQL and thought that it might be useful to share what I've learnt so far (which is another way of saying this is not a comprehensive overview and possibly an incorrect one).</p>
+
+<p>We start by creating a <code>posts</code> table:</p>
+
+{% highlight sql %}
+-- uppercase SQL is lolz
+create table posts (
+  id serial primary key,
+  title text not null,
+  post text not null,
+  tags text[]
+);
+{% endhighlight %}
+
+<p>From the above, you can see the familiar syntax used to declare an array type. Here we declare <code>tags</code> as an array of text. You can create an array for any built-in or user-defined type.</p>
+
+<p>You insert an array using braces:</p>
+
+{% highlight sql %}
+insert into posts (title, post, tags)
+  values ('Teg is great', 'blah blah', '{"fact", "serious"}');
+{% endhighlight %}
+
+<p>The single and double quote syntax for text isn't great. For numbers and booleans, it's better: <code>{1,5,894,1}</code> and <code>{true, false, true, true, true}</code>.
+
+<p>Square brackets are used to access a specific index. &lt;blink&gt; indexes start at 1 &lt;/blink&gt;. When reading, <code>null</code> is returned for values outside of the array's length:</p>
+
+{% highlight sql %}
+-- return 1, 'fact'
+select id, tags[1] from posts;
+-- return 1, null
+select id, tags[1000] from posts;
+{% endhighlight %}
+
+<p>We can set to any index, which will increase the array's length automatically. However, there appears to be some optimizations for handling sparse arrays. For example, I have a table of 40 000 rows. Each row has a column with an bool[] and 8 values. The table size is 4.5MB. If I push a 9th value into the array, the table grows to 9MB. A 10th value pushes the size up to 14MB. But if I push diretly into <code>[100]</code> or even <code>[100000]</code> the growth is constant.</p>
+
+<p>It's possible to specify the size of an array when we create the column, but this isn't actually enforced. So we could have done <code>tags text[3]</code> but we'd still be able to set a value at any index.</p>
+
+<p>There are a number of handy functions and operators, such as <code>append</code> and <code>prepend</code>, the ability to get the <code>array_length</code> and <code>||</code> concat arrays together, or arrays to individual values.</p>
+
+<p>We can use <code>any</code> to find all posts that have a specific tag:</p>
+
+{% highlight sql %}
+select * from posts
+  where 'sand' = any(tags);
+{% endhighlight %}
+
+<p><code>all</code> can be used to find records where an array only contains a specific value (possibly multiple times).</p>
+
+<p>Neither <code>any</code> nor <code>all</code> leverage indexes. Thankfully, it's pretty easy to set things up so that we can use an index for a very common case: getting rows where a specific value is present within our array (like the <code>any</code> example above). First, we create a GIN index:</p>
+
+{% highlight sql %}
+create index posts_tags on posts using GIN(tags);
+{% endhighlight %}
+
+<p>Next, we use the contains operator:</p>
+
+{% highlight sql %}
+select * from posts where tags @> array['worm'];
+{% endhighlight %}
+
+<p>With a dummy posts table of only 10000 rows, <code>explain analyze</code> reported that the un-indexed query using <code>any</code> took 2.9ms vs the 0.491ms for the query using the index.</p>
+
+<p>The only way I know of doing a <em>not contains</em> is to use a <code>not in/exists</code>:</p>
+
+{% highlight sql %}
+select count(*)
+  from posts
+  where id not in (
+    select id
+      from posts
+      where tags @> array['spice']
+  );
+{% endhighlight %}
+
+
+<p>If you're going to be querying against specific array positions, you can always create a normal index on those positions:</p>
+
+{% highlight sql %}
+create index post_first_tag on posts((tags[1]));
+{% endhighlight %}
+
+<p>Which allows you to efficiently query the first element:</p>
+
+{% highlight sql %}
+select * from posts where tags[1] = 'spice';
+{% endhighlight %}
+
+<p>The most powerful function that I've used so far is <code>unnest</code> which turns an array into a result set. As a trivial example, this could let you flatten out a result:</p>
+
+{% highlight sql %}
+select id, unnest(tags) from posts
+{% endhighlight %}
+
+<p>It could also be used for more powerful purposes, such as being used in a join.</p>
+
+<p>Beyond this, it's worth saying that arrays can be multi-dimensional (<code>text[][]</code>) and, it's difficult (but not impossible) to remove specific value (either by index or by value).</p>
+

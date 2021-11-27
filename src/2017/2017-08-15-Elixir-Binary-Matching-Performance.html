@@ -1,0 +1,108 @@
+---
+layout: post
+date: 2017-08-15
+title: "Elixir's Binary Matching Performance"
+description: "Looking at how elixir does pattern matching and how to write pattern matches to get the best performance"
+tags: [elixir, performance]
+---
+
+<p>In a previous post, I <a href="/Pattern-Matching-In-Elixir">talked about Elixir's pattern matching</a> in general. Today, I want to focus on binary matching.</p>
+
+<p>Briefly, binary matching can have a number of uses, but the most obvious is when dealing with binary data from, say, a file or a socket. As an example, a PostgreSQL message generally takes the shape of 1 byte (to identify the type of message), followed by a 4-byte big-endian encoded length, followed by data. Assuming that we've read such a message from a socket, we could use binary pattern matching as such:</p>
+
+{% highlight elixir %}
+def process(<<?D, length::big-32, row::binary>>) do
+  # row represents a row of data
+end
+
+def process(<<?C, length::big-32, tag::binary>>) do
+  ## now more rows, command completed, tag has some meta
+  ## information on the result that was just returned
+end
+...
+{% endhighlight %}
+
+<p>(<code>?D</code> and <code>?C</code> returns the codepoint of the C and D characters; we could have just as easily used 68 and 67 respectively).</p>
+
+<p>The key to binary matching is being able to specify the size of each part. In the above code, we see three different ways to specify the size: an individual byte, a numeric encoding (big/little 16/32/64) and globbing
+up anything else via <code>::binary</code>. It's important to note that globbing can only happen at the end of the pattern, as we're doing here. That might seem like a huge limitation, but binary data typically follows some type of deterministically sized header followed by N bytes; so, in most cases, it shouldn't be a problem.</p>
+
+<p>Another common length specifier is <code>bytes-size(n)</code> which matches <code>n</code> bytes:
+
+{% highlight elixir %}
+<<x::bytes-size(2), rest::binary>> = <<1, 2, 3>>
+# x == <<1, 2>>
+# y == <<3>>
+{% endhighlight %}
+
+<p>Finally, you can match individual bits. For example, we could extract the two most significant bits from a byte with:
+
+{% highlight elixir %}
+<<a::2, _::6>> = <<200>>
+# a == 3
+{% endhighlight %}
+
+<p>Notice that we weren't able to gobble the rest of the data via the <code>::binary</code> specifier. Why? because the rest of the data <strong>isn't</strong> a binary: 6 bits does not a binary make.</p>
+
+<p>The type of code that relies on binary matching is often performance sensitive, how does all this perform? First, because globbing is only allowed at the end, the deterministic size of each part shouldn't (and doesn't appear to) add much/any overhead.</p>
+
+<p>The real performance implications come from how strings and substrings are handled. And, for a runtime not known for its raw performance, Erlang has a few nice tricks up its sleeve.</p>
+
+<p>First, and not really related, binaries larger than 64 bytes aren't stored on process heaps, but rather a shared space that processes can reference. Reference counting is used to garbage collect these.</p>
+
+<p>Very much related to our conversation about binary matching is the fact that Erlang can create sub binaries which, for anyone familiar with Go, are like slices. That is to say that creating one binary from another doesn't necessarily involve any copying. Erlang can take this a step further and defer the creation of sub binaries if it can tell that a sub binary will be created from a sub binary. This is common when parsing binary data which often happens in a loop or recursively. And, while sub binaries are very small and efficient (if Go's anything to go by, it's a pointer and a length), in a tight loop, creating 1 sub binary is obviously going to be faster than creating a thousand.</p>
+
+<p>Erlang isn't always able to optimize binary matching. Sometimes, that's fines. Sometimes, that'll be unavoidable. Still, it's always helpful to understand what's going on. To this end, we can pass the <code>ERL_COMPILER_OPTIONS=bin_opt_info</code> environment variable when compiling our code to get information about what is and isn't being optimized.</p>
+
+<p>Consider the following code:</p>
+
+{% highlight elixir %}
+defmodule Parser do
+  def parse(%{first: false}, <<type, length::big-32, data::binary>>) do
+    # ...
+  end
+end
+{% endhighlight %}
+
+<p>When compiled with the special environment variable, we'll get:</p>
+
+{% highlight text %}
+warning: INFO: matching anything else but a plain variable to the
+left of binary pattern will prevent delayed sub binary optimization; 
+SUGGEST changing argument order
+  sample.ex:12
+{% endhighlight %}
+
+<p>So, the first thing we learn is that we'll only get optimized binary matching if we have a simple variable being matched before our binary (or if the binary is the first parameter). In this case, we could just switch the parameter order.</p>
+
+<p>Consider this second case:</p>
+
+{% highlight elixir %}
+def parse(<<type, length::big-32, data::binary>>) do
+  case byte_size(data) == length do
+    true -> # we have enough data
+    false -> # we need more data
+  end
+end
+{% endhighlight %}
+
+<p>This will give us <code>NOT OPTIMIZED: sub binary is used or returned</code>. If you look at the code above, this should be obvious. The creation of the <code>data</code> sub binary can't be deferred because we need to know its length then and there. You could say that the call to <code>byte_size/1</code> actualizes the value.</p>
+
+<p>In this case, we can re-write our code easily enough:<p>
+
+{% highlight elixir %}
+def parse(<<type, length::big-32, data::binary>>) do
+  case data do
+    <<data::bytes-size(length), rest::binary>> ->
+       process(data) # we have enough data
+       # we should probably process the leftover data "rest" too
+    _ -> # we need more data
+  end
+end
+{% endhighlight %}
+
+<p>You can see here that the actual value of <code>data</code> doesn't need to be known. You might be thinking: <em>What does deferring buy us? At some point, we'll need to extract meaning from the data!</em>. But, if we can defer that until the point where we convert the binary data to, say, a boolean or integer or string, then we've potentially avoided creating intermediary sub binaries.</p>
+
+<p>If we stick with our PostgreSQL example, <code>data</code> which represents a row, would itself begin with an integer (representing the number of columns) and then for each of those columns there'd be more meta data embedded in the binary. Eventually we'll turn the data into a value, but the ability to do this while deferring object creation, and, much more significantly, avoiding copying data, is significant.</p>
+
+<p>The erlang documentation has a <a href="http://erlang.org/doc/efficiency_guide/binaryhandling.html">well-written section on binaries and matching</a> which is worth reading. And you can learn a lot by experimenting and while using the <code>ERL_COMPILER_OPTIONS</code> environment variable to see what is and isn't optimized and why.</p>

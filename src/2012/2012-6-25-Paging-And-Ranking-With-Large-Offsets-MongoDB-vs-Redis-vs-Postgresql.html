@@ -1,0 +1,185 @@
+---
+layout: post
+date: 2012-06-25
+title: "Paging & Ranking With Large Offsets: MongoDB vs Redis vs PostgreSQL"
+tags: [modeling, mongodb, redis]
+---
+
+<p>Hopefully you already know that paging with large offsets tends to be inefficient with most systems. Both the MongoDB and PostgreSQL documentation are clear that developers should avoid large offsets. But, how bad can it really be?</p>
+
+<p>In mogade we provide two features that are tied to paging/offset performance: leaderboard pages and ranks. Most users only care about the first or second pages of a leaderboard, meaning the offset is small. However, we provide a leaderboard view which jumps straight to the page containing the user. This results in a large offset. If we have 1 million scores, the average scenario will result in an offset of 500 000.</p>
+
+<h3>Paging</h3>
+<p>Testing the impact of large offsets is really simple. Assume we have some dummy data that looks like:</p>
+
+{% highlight text %}
+db.scores.find();
+{lid: ObjectId("4fe506dabb2bfa742d000001"), score: 1, name: 'user_1'}
+{lid: ObjectId("4fe506dabb2bfa742d000001"), score: 2, name: 'user_2'}
+{lid: ObjectId("4fe506dabb2bfa742d000001"), score: 3, name: 'user_3'}
+{lid: ObjectId("4fe506dabb2bfa742d000001"), score: 4, name: 'user_4'}
+{% endhighlight %}
+
+<p><code>lid</code> is the leaderboard id. Our test data is made up of 5 leaderboards, each containing 1 200 000 scores. There's an index on <code>lid</code> and <code>score</code>.</p>
+
+
+{% highlight ruby %}
+collection = Mongo::Connection.new.db('test').collection('scores')
+Benchmark.bmbm do |x|
+  x.report("mongo small") do
+    100.times do |i|
+      collection.find({:lid => lids.sample}, {:fields => {:_id => false, :score => true, :user => true}}).sort({:score => -1}).limit(20).skip(i * 20).to_a
+    end
+  end
+  x.report("mongo medium") do
+    100.times do |i|
+      collection.find({:lid => lids.sample}, {:fields => {:_id => false, :score => true, :user => true}}).sort({:score => -1}).limit(20).skip(i * 1000).to_a
+    end
+  end
+  x.report("mongo large") do
+    100.times do |i|
+      collection.find({:lid => lids.sample}, {:fields => {:_id => false, :score => true, :user => true}}).sort({:score => -1}).limit(20).skip(i * 10000).to_a
+    end
+  end
+end
+{% endhighlight %}
+
+<p>All three iterate 100 times, getting 20 records per iteration. The difference is with the offset. The first has a maximum offset of 1980, the second 99 000 and the last one 999 000. The results? 0.6 seconds, 17 seconds and 173 seconds.</p>
+
+<p>If we use Redis and store the results in a sorted set, we can rewrite our benchmark like so:</p>
+
+{% highlight ruby %}
+redis = Redis.new(:driver => :hiredis)
+Benchmark.bmbm do |x|
+  x.report("redis small") do
+    100.times do |i|
+      start = i * 20
+      redis.zrevrange(lids.sample, start, start + 20, :with_scores => true)
+    end
+  end
+  x.report("redis medium") do
+    100.times do |i|
+      start = i * 1000
+      redis.zrevrange(lids.sample, start, start + 20, :with_scores => true)
+    end
+  end
+  x.report("redis large") do
+    100.times do |i|
+      start = i * 10000
+      redis.zrevrange(lids.sample, start, start + 20, :with_scores => true)
+    end
+  end
+{% endhighlight %}
+
+<p>We end up with times of 0.028, 0.025 and 0.028 seconds.</p>
+
+<p>Modifying our MongoDB code to test PostgreSQL is trivial. The structure stays the same, the we create an index on <code>lid</code> and <code>score</code> and we benchmark simple selects:</p>
+
+{% highlight ruby %}
+  pg.exec("select score, u from scores where lid = $1 order by score limit 20 offset $2", [lids.sample, i * 10000]).to_a
+{% endhighlight %}
+
+<p>The results, with the same three groups of offsets is 1, 122 and 650 seconds.</p>
+
+<p>Comparing these we get:</p>
+
+{% highlight text %}
+mongo small   0.6
+mongo medium  17
+mongo large   173
+
+redis small   0.028
+redis medium  0.025
+redis large   0.028
+
+pg small      1
+pg medium     122
+pg large      650
+{% endhighlight %}
+
+<h3>Ranking</h3>
+<p>I <a href="http://openmymind.net/2011/5/8/Practical-NoSQL-Solving-a-Real-Problem-w-Mongo-Red/">talked about ranking</a> a while ago, but decided to repeat the experiment. Basically, in MongoDB or a relational database, if you want to get the rank of a score, you need to do:</p>
+
+
+{% highlight text %}
+  //sql
+  select count(*) from scores where lid = $1 and score > $2
+
+  //mongo
+  db.scores.find({lid: lid, score: {$gt: score}}).count()
+{% endhighlight %}
+
+<p>Given 1 000 000 scores, and average player will need to count through 500 000 records. How does each system perform? </p>
+
+{% highlight ruby %}
+  # scores have a random value of 0 - 10 000 000
+
+  Benchmark.bmbm do |x|
+  x.report("mongo top rank") do
+    1000.times do |i|
+      collection.find({:lid => olids.sample, :score => {'$gt' => 9999988 - i}}).count()
+    end
+  end
+
+  x.report("mongo average") do
+    10.times do |i|
+      collection.find({:lid => olids.sample, :score => {'$lt' => 5000000 - i}}).count()
+    end
+  end
+
+  x.report('redis top rank') do
+    1000.times do |i|
+      redis.zcount(lids.sample, 9999988 - i, 'inf')
+    end
+  end
+
+  x.report('redis average') do
+    1000.times do |i|
+      redis.zcount(lids.sample, 5000000 - i, 'inf')
+    end
+  end
+
+  x.report('pg top rank') do
+    1000.times do |i|
+      pg.exec("select count(1) from scores where lid = $1 and score > $2", [lids.sample, 9999988-i]).to_a
+    end
+  end
+
+  x.report('pg average') do
+    10.times do |i|
+      pg.exec("select count(1) from scores where lid = $1 and score > $2", [lids.sample, 5000000-i]).to_a
+    end
+  end
+end
+{% endhighlight %}
+
+<p>There's something <strong>very</strong> important in the above benchmark. The MongoDB and PostgreSQL versions for average ranked players only does 10 iteration. Redis does 1000. Why? Well, consider the results:</p>
+
+{% highlight text %}
+mongo top rank   1.155847
+mongo average    22.291007
+
+redis top rank   0.169442
+redis average    0.162205
+
+pg top rank      0.714144
+pg average       21.771570
+{% endhighlight %}
+
+<p>Redis is doing 100x the amount of work in less than 1/100th the amount of time.</p>
+
+<h3>Memory</h3>
+<p>I don't want to talk too much about memory. I mean, once you get to the point where it takes 2 seconds to get 20 documents, it really doesn't matter how much less memory you take...it just isn't usable. However, I am surprised that Redis and MongoDB take up roughly the same amount of memory (~900MB). Furthermore, the MongoDB version could be optimized by shrinking the field names and partitioning each leaderboard into its own collection (doing these two changes brings the total storage+index space to 675MB).</p>
+
+<p>Given that MongoDB stores an extra _id field, stores the field name with each document, and stores the leaderboard id with each document, I really expected Redis to have a considerably smaller memory footprint. Anyone know what gives? I'm so surprised that I'm thinking I did something wrong.</p>
+
+<h3>What Can You Do?</h3>
+<p>Rather than using a large offset, you might try to rewrite your query with an additional where filter. For example, if you knew the last id from the previous page, you could avoid the offset and do:</p>
+
+{% highlight javascript %}
+  db.scores.find({lid: lid, score: {$lt: last_score}}).sort({score: -1}).limit(20)
+{% endhighlight %}
+
+<p>This will perform very well (Redis will still be faster). However, it requires that you know the last page's last score (which we don't in the case of the jump to my page feature). If you do know it, it requires that you persist it and pass it around. And, if you have ties, you might end up skipping results.</p>
+
+<p>The moral of the story is: avoid large offset and counting over many records. When you can't, use Redis.</p>

@@ -1,0 +1,41 @@
+---
+layout: post
+date: 2016-12-11
+title: "Tests Are About Design"
+description: "Tests are first and foremost a design tool, not a correctness tool."
+tags: [design, testing]
+---
+
+<p>I've said this before, but it's worth repeating: tests are first and foremost a design tool. Code which is hard to test is likely hard to read, reason about and maintain.</p>
+
+<p>When a test is hard to write, when your a test is brittle (breaking often when the code changes), then you've probably written bad code. Tests are a code quality, not code correctness, metric. This is particularly true for newer programmers or those struggling to write maintainable code.</p>
+
+<p>Less importantly, tests also help with refactoring. Or, put differently, they act as a safety net for future correctness. If you have tests, you refactor. If you don't, you rewrite. Tests are the best tool you have to fight technical debt.</p>
+
+<p>Finally, tests have some value with respect to correctness. Out of every 100 tests I write, I might find a bug. It might be something as simple as an inverted condition. It's actually a rewarding feeling, but it's not, in any way, why tests are so valuable.</p>
+
+<p>I've been testing for a long time. My thoughts on it have continued to evolved, although a little less rapidly now that I've found some equilibrium. Here are some thoughts that may save you time.</p>
+
+<h3>Avoid Mocks and Stubs</h3>
+<p>I used to use a lot of mocks and stubs. Now I might use one for every 20 test (and that's generous, we have whole projects that have none). True, sometimes there's no good alternative (or even no bad alternative). Most of the errors I see in production are related to interactions between components (either within a system or with external dependencies).</p>
+
+<h3>Integration Tests Are Worthwhile</h3>
+<p>Obviously related to the above. Despite the extra effort they take to setup and their slowness, integration tests are almost always worthwhile. This one took me a long time to admit, but I just can't deny it any longer.</p>
+
+<h3>Test Should be Fast</h3>
+<p>Definitely hard to balance with my first two points, but programming is rhythmic and fast tests help keep you in the zone. If you have slower tests, make sure that they can be run separately, possibly even only on a pre-commit.</p>
+
+<h3>Flaky Tests are a Huge Problem</h3>
+<p>If you have tests that sometimes pass and sometimes fail, make it a priority to fix. There's no point in having tests if you don't have confidence in them.</p>
+
+<h3>Tests Save Time</h3>
+<p>People often say tests take too much time and they're always breaking. Anything that you're not good at is hard and takes time. It is very likely a symptom that there's something wrong with your code. Don't dismiss it, fix it. It takes a lot of practice to get good at, stick with it and try to pair with someone who has the experience to be a natural test-writer.</p>
+
+<h3>Fuzz Testing is Useful</h3>
+<p>This is a new one for me, but we started to write some fuzz tests. They throw random inputs at our code in a tight loop to see what happens. Like integration tests, it takes a bit more effort to setup, and they're quite a bit slower. A big reason we took this on was because we started using new tools and frameworks (elixir, phoenix) and it seemed like a good investment to make sure that we weren't doing anything critically wrong (the fuzz tests found a bunch of inputs that resulted in undesired behavior, it was quick to fix and it's been pretty green since that first batch).</p>
+
+<h3>Your Domain IS Testable</h3>
+<p>I often here people justify their lack of tests by claiming that tests are very hard to write for X. Where X is specific domain, like video games. For a long time I believed that. But when you look at the actual code, there's plenty which is straight forward, with no non-deterministic dependencies, waiting to be tested. The fact that they aren't willing to test what can be tested makes the untestable claim questionable.</p>
+
+<h3>For Correctness Rely on Logs</h3>
+<p>If you care about the quality of your product, then look to logging. Good production logging is easy to setup and is system/language agnostic (thus reusable for all of your system). For the small time and cost investment, is is overwhelmingly the single most important thing you aren't doing.</p>

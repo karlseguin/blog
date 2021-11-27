@@ -1,0 +1,72 @@
+---
+layout: post
+date: 2018-06-24
+title: "Elixir: Which Modules Are Using My Module"
+description: "How to get a list of modules that use another module"
+tags: [elixir]
+---
+
+<p>In Elixir, getting a list of modules that <code>use</code> a specific module is trickier than you'd think. It's caused me, and others, some grief.</p>
+
+<p>The naive approach is to mark the module (say, with a special function):</p>
+
+{% highlight elixir %}defmacro __using__(_opts) do
+  quote location: :keep do
+    def __my_module(), do: :ok
+  end
+end{% endhighlight %}
+
+<p>Then  iterate through the modules with something like <code>:code.all_loaded/0</code> and look for our special function. But in Elixir, modules are lazily loaded and, there's a good chance that at the time you call <code>:code.all_loaded/0</code> the modules that you're looking for haven't been loaded it.</p>
+
+<p>Idiomatically, I haven't found a great solution to this problem. The best seems to be to explicit pass the list of modules, either via configuration or as an argument to to a process. But this highlights a major pain point in Elixir: requiring a deep hierarchy of dependencies to be configured at the root app. <a href="https://www.youtube.com/watch?v=6U7cLUygMeI">Dave Thomas spoke about this problem</a>, as well as others, at EMPEX.</p>
+
+<p>At one point, we got pretty desperate to make this type of auto discovery work, and had our <code>__using__</code> write the caller's name to a DETS file, which could then be read at runtime. It worked, but it was ugly.</p>
+
+<p>More recently, I came up with a &lt;airquote&gt;better&lt;/airquote&gt; solution.<p>
+
+<p>First, we'll use <code>:application.loaded_applications/0</code> to get all the applications, then <code>:application.get_key/2</code> to get all the application's modules (which gives us all the names, even if they aren't loaded):</p>
+
+{% highlight elixir %}applications = :application.loaded_applications()
+modules = Enum.reduce(applications, [], fn {app, _desc, _version}, acc ->
+  {:ok, modules} = :application.get_key(app, :modules)
+  # TODO
+end){% endhighlight %}
+
+<p>Now, if we wanted to, we could just iterate through <code>modules</code> and call <code>Code.ensure_loaded</code> and look for our special function. This essentially circumvents Elixir's lazily loading:</p>
+
+{% highlight elixir %}Enum.reduce(modules, acc, fn module, acc ->
+  Code.ensure_loaded(module)
+  # Does this module export our special __prepared_statements/0 function?
+  case Keyword.get(module.__info__(:functions), :__prepared_statements) do
+    nil -> acc
+    0 -> [module | acc] # yes, it does, add it to the list
+  end
+end){% endhighlight %}
+
+<p>It would be nice if we could make this more surgical and minimize the amount of modules we have to force load. This part is a little ugly, but it isn't too bad. What I do is add a special module to the app/libary.. Only if this module is present are the modules loaded and probed.</p>
+
+{% highlight elixir %}applications = :application.loaded_applications()
+state = Enum.reduce(applications, [], fn {app, _desc, _version}, acc ->
+  {:ok, modules} = :application.get_key(app, :modules)
+
+  auto_registry? = Enum.any?(modules, fn m ->
+    String.starts_with?(to_string(m), "Elixir.Special.Registry.Auto.")
+  end)
+
+  case auto_registry? do
+    false -> acc
+    true -> scan_app(modules, acc) # same code as above
+  end
+end){% endhighlight %}
+
+<p>To make this work, you just need to drop an empty module in the app/library you want scanned. I use a macro to create this:</p>
+
+{% highlight elixir %}defmacro auto_discover() do
+  module = Module.concat(Special.Registry.Auto, __CALLER__.module)
+  quote do
+    defmodule unquote(module) do
+    end
+  end
+end{% endhighlight %}
+
+<p>Since I've seen this question asked a number of times, I hope this post will prove helpful. I also hope that future versions of Elixir address this problem.</p>

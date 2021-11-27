@@ -1,0 +1,143 @@
+---
+layout: post
+date: 2013-01-20
+title: "Introduction To Golang: Channels (Again)"
+tags: [concurrency, golang]
+---
+
+<p>It can take some time to wrap your head around channels. For this reason, I wanted to <a href="/Introduction-To-Go-Channels/">expand on the previous post</a> with another, more advanced, example. It's a bit complicated, but quite neat. The problem we are trying to solve is simple though. We have a reverse proxy, in Go, and we want to avoid having multiple threads fetch the same file at the same time. Instead, we'd like one of the threads to download it and block the other threads until the file is ready.</p>
+
+<p>For this example, our entry point will be the <code>Download</code> function. This will get called by multiple threads:</p>
+
+{% highlight go %}
+func Download(remotePath string, saveAs string) {
+
+}
+{% endhighlight %}
+
+<p>To solve this problem we'll create a map which'll map the remotePath to a downloader. If no thread is currently downloading the file we'll register ourselves as the downloader. If someone is already downloading it, we'll block until they are done:</p>
+
+
+{% highlight go %}
+import (
+  "time"
+)
+
+var downloaders = make(map[string] *downloader)
+type downloader struct {
+  saveAs string
+}
+
+func Download(remotePath string, saveAs string) {
+  d, ok := downloaders[remotePath]
+  if ok == false {
+    d = &downloader{saveAs}
+    downloaders[remotePath] = d
+    d.download(remotePath)
+  } else {
+    //TODO 1: need to figure out how to block until d is done
+  }
+}
+
+func (d *downloader) download(remotePath string) {
+  time.Sleep(5 * time.Second) //simuate downloading the file to disk
+  //the file is now available at d.saveAs
+  delete(downloaders, remotePath)
+
+  //TODO 2: need to signal all blocked threads
+}
+{% endhighlight %}
+
+<p>Our rough skeleton already has a major issue. It's completely possible for two threads to register themselves as a downloader for the same path at the same time. Access to <code>downloaders</code> must be synchronized. We can accomplish this with the synchronization primitives offered by the <code>sync</code> package, such as a mutex or, better yet, a read-write mutex. For this post we'll keep our code unsafe so we can focus on channel (we could also use channels to synchronize access, but the <code>sync</code> package is great for this type of simple stuff)</p>
+
+<p>We have two missing pieces: blocking the latecomers and letting them know when the file is ready. What we want here is an unbuffered channel. An unbuffered channel synchronizes communication; or, put differently, it blocks the sender until the receiver reads form it. We'll add this channel to our downloader:</p>
+
+{% highlight go %}
+type downloader struct {
+  saveAs string
+  observers chan bool
+}{% endhighlight %}
+
+<p>And change the code that creates our <code>downloaders</code>:</p>
+
+{% highlight go %}
+//old
+d = &downloader{saveAs}
+
+//new
+d = &downloader{saveAs, make(chan bool)}
+{% endhighlight %}
+
+<p>With our channel created, the simplest way to block our latecomers is to write to our channel. Todo 1 becomes:</p>
+
+{% highlight go %}
+} else {
+  d.observers <- true
+  //once we get here, d.saveAs will be set
+}
+{% endhighlight %}
+
+<p>Remember, that first line (writing to the channel) will block until the other end reads from. No where in our code are we doing that yet, so for now, it'll block forever. Before we skip to that part, there's at least one way we can improve this. We can make it timeout. The last thing we want is to have a bunch of threads blocked forever because something went wrong in the downloader.</p>
+
+<p>To do this, we'll use Go's <code>select</code> construct. <code>select</code> looks a lot like a switch statement, which can really throw you off at first. What select does, is that it selects a channel from a list. If no channel is ready, it blocks or executes <code>defualt</code> if it has been provided. If multiple channels are ready, it randomly picks one. Let's look at it:</p>
+
+{% highlight go %}
+select {
+  case d.observers <- true:
+    //d.saveAs is ready
+  default:
+    //handle the timeout (return an error or download the file yourself?)
+}
+{% endhighlight %}
+
+<p>This isn't very good. We know that the other end won't be reading from the channel until the download is done, so we'll immediate jump to the default, without blocking, and get an error. What we really want is to delay the execution of default. To do this we use the <code>time.After</code> function, which'll give us a channel after the specified time:</p>
+
+{% highlight go %}
+select {
+  case d.observers <- true:
+    //d.saveAs is ready
+  case <- time.After(5 * time.Second): //adjust the time as needed
+    //handle the timeout (return an error or download the file yourself?)
+}
+{% endhighlight %}
+
+<p>We'll go into select and block. We'll unblock under two conditions: our write to observers is read, or 5 seconds goes by and the channel created by <code>time.After</code> writes and unblocks us.</p>
+
+<p>The last part is Todo 2, which is to notify all our blocked latecomers. Now, since these are blocked waiting for a reader, we simply need to read from <code>observers</code>:</p>
+
+{% highlight go %}
+func (d *downloader) download(remotePath string) {
+  time.Sleep(5 * time.Second) //simuate downloading the file to disk
+  //the file is now available at d.saveAs
+  delete(downloaders, remotePath)
+
+  for _ := range d.observers {
+  }
+}
+{% endhighlight %}
+
+<p><code>range</code>, when applied to a channel, loops through and reads the channel (when applied to an array or a map, it loops through or reads the array/map). We don't actually care what we are reading, so we discard it by assigning it to <code>_</code>. The above code actually unblocks our latecomers, but it blocks this code. If we have 3 observers, we'll loop 3 times and set them free, but we'll block indefinitely. The solution? <code>select</code> again:</p>
+
+{% highlight go %}
+func (d *downloader) download(remotePath string) {
+  time.Sleep(5 * time.Second) //simuate downloading the file to disk
+  //the file is now available at d.saveAs
+  delete(downloaders, remotePath)
+  for {
+    select{
+      case <- d.observers:
+      default: return
+    }
+  }
+}
+{% endhighlight %}
+
+<p>This code will read all the values on d.observers and then, when there are no more values, it'll simply return.</p>
+
+<p>That's it. There's a bunch of improvements we could make. Access to <code>downloaders</code> needs to be safe. Our notification code (the last example we looked at), could be run in its own goroutine so that we don't block the delay it from returning.</p>
+
+<p>A more advanced version could download chunks of data and broadcast that to all the observers as the chunks become available. As-is, our solution blocks until the entire file is downloaded. However, depending on what you are doing, and how big the files are, maybe it's better to stream the data back as it becomes available.</p>
+
+<p>Hopefully this helps you understand how channels can be used and where some of Go's language constructs, like range and select fit.</p>
+
+

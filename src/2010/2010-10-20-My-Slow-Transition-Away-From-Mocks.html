@@ -1,0 +1,39 @@
+---
+permalink: "/2010/10/20/My-Slow-Transition-Away-From-Mocks/"
+layout: post
+date: 2010-10-20
+title: "My Slow Transition Away From Mocks/"
+tags: [testing]
+---
+<p>It looks like I'm late to the party, but lately I've been finding myself leaning less on mocked objects and more on real implementations. This was <a href="http://martinfowler.com/articles/mocksArentStubs.html#ClassicalAndMockistTesting">talked</a> <a href="http://codebetter.com/blogs/ian_cooper/archive/2008/02/04/classicist-vs-mockist-test-driven-development.aspx">about</a> <a href="http://codebetter.com/blogs/gregyoung/archive/2008/02/13/mocks-are-a-code-smell.aspx">back</a> in early 2008 (and likely before then), but I kinda let the conversation pass over me. Suddenly I'm finding that, despite my early concerns, hitting real implementations not only makes my test easier to write but, shockingly (to me), makes them far less brittle.</p>
+
+<p>When I first started using a mocking framework, I used strict semantics wherever possible. It didn't take very long to realize that such tests had a high maintenance cost due to tight coupling of the internal interaction. So I switched to looser style stubs and immediately saw benefits. But eventually I realized that, where possible, forgoing mocking at all brought that decoupling to the next level.</p>
+
+<p>I know, it sounds counter-intuitive, but hitting mocks can often tightly couple your test to the implementation more so than hitting the real object. Think about it for a second, if you are truly interested in testing a behavior, why are you having to spend a lot of code defining the internal implementation of said behavior? </p>
+
+<p>Let's look at an example. Say I have a <code>Message</code> which I wanna generate a hash for - in order to see if its a duplicate of a previously logged message:</p>
+
+{% highlight clike %}public class LoggingService
+{
+   private IEncrypt _encryptor;
+   public LoggingService(IEncrypt encryptor)
+   {
+      _encryptor = encryptor;
+   }
+
+   public string CalculateHash(Message message)
+   {
+      var hashKey = message.Body + message.Application.Id;
+      return _encryptor.Hash(hashKey)
+   }
+}{% endhighlight %}
+
+<p>How would you test this? A year ago I would have created a mock for <code>IEncrypt</code> and simply tested my code's interaction. But what does that really buy me? More importantly, what is it that I'm actually trying to test. Honestly, I don't care how the hash gets generated, how the encryptor is being used, all I care about is that I get the right hash. By using a real implementation of <code>IEncrypt</code> in my test, I not only free my test of knowing more than it should, I also, as a sweet little consequence, end up with more accurate tests.</p>
+
+<p><em>Wait a minute</em>, you say, <em>isn't that integration testing</em>? I've personally decided that, for myself, unit tests and integration tests have a lot more to do with what I'm trying to test than how I'm testing it. That is, a test of <code>CalculateHash</code> would be interested in specific behaviors - like calculating a hash. Integration tests are more concerned with how all the parts work together. I'd  argue that using a mock object is much more of an integration test, because you are specifically concerne with, dependent on, and detailing how your objects interact (or, you know, integrate) with each other.</p>
+
+<p><em>Wait another minute</em>, you say, <em>what about performance</em>? Sure, sometimes you rely on code that's slow, or for other reasons isn't practical to execute. The solution is simple, use a mock. The point isn't that I've stopped, or you should stop, using mocks (I haven't even come close to that), they just aren't my first choice. <strong>First try to use the real implementation, then try again a little harder, then use a mock.</strong></p>
+
+<p><em>Ok, but what about when you really do care about how your objects interact</em>? It happens sometimes where a behavior will be directly related to interaction. A trivial example that comes to mind is lazy-loading: you want to make sure that subsequent calls don't reload the object. Of course mocks are handy in this situation, but make that its own focused test.</p>
+
+<p>Its possible you aren't sold. That's fine. But I'll at least ask you to try and meet me half way. I urge you to make sure your mocks are as implementation ignorant as possible. Don't verify unless you actually have too. Don't use strict semantics. Don't care too much for specific inputs. Don't set expectations on occurrences (common for jMock programmers using the oneOf instead of allowing methods). Trust me, you won't regret it.</p>

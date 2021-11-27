@@ -1,0 +1,175 @@
+---
+permalink: "/2012/2/6/Lets-Build-Something-Using-Amazons-DynamoDB/"
+layout: post
+date: 2012-02-06
+title: "Let's Build Something Using Amazon's DynamoDB"
+tags: [tech]
+---
+
+<p>A couple weeks ago, Amazon released DynamoDB as part of AWS. DynamoDB is a NoSQL database with a focus on scalability, reliability and performance. DynamoDB has generated a lot of excitement, if for no other reason than the fact that Amazon is an authoritative figure in the NoSQL space. Their Dynamo paper, published in 2007, has been exceedingly influential.</p>
+
+<h3>DynanoDB At A Glance</h3>
+<p>The most important thing to understand about DynamoDB is that it doesn't support secondary indexes. Data can only be retrieved by the key. However, there are two types of  keys. The first is called a hash. It's a single value and it's what you would normally think of when you are talking about a key. The second is a composite of a hash and a range. This type of key lets you query data by either the hash component or the hash and range component. Additionally, records are automatically sorted by the range component.</p>
+
+<p>I know, that's pretty vague and it sounds a little crazy. If you've never dealt with this sort of system, you might think it far too limiting. You will have to model your data differently, but hopefully when we get our hands dirty, not only will it make sense, but it won't seem so odd.</p>
+
+<p>Beyond this technical point, the draw of DynamoDB is all about the infrastructure. You get fast and reliable performance (which has historically been a major shortcoming of storage solution using AWS/EBS), transparent scalability and reliability via replication. It essentially makes it possible to scale up to extreme levels without having to do anything special.</p>
+
+
+<h3>&lt;Application&gt;</h3>
+<p>The application that we are going to build is a simple API that can be used to store and retrieve change logs. A change log record would look something like: </p>
+
+{% highlight javascript %}
+{
+  user: 'leto',
+  asset: 'video-of-sand',
+  changes: [
+    {field: 'rating', old: 3, new: 10},
+    {field: 'author', old: 'paaul', new: 'paul'}
+  ]
+}
+{% endhighlight %}
+
+<p>Once saved, we'll be able to retrieve a change log item by id. We'll also be able to get all the change log items made by a user, or for an asset, or a combination of the two. If you think about it, it's the core of what we'd need if we were building an audit log for a system.</p>
+
+<p>We'll only look at the DynamoDB-related parts, but if you are interested, you can get the working example from <a href="https://github.com/karlseguin/auditor">github</a>. It's written using node.js + CoffeeScript along with a 3rd party DynamoDB driver which I've contributed to.</p>
+
+
+<h3>Saving Change Logs</h3>
+<p>The first thing we'll do is save a change log. To do that, we must first create a table in DynanoDB: </p>
+
+{% highlight ruby %}
+ddb.createTable 'logs', { hash: ['id', ddb.schemaTypes().string] }, {read: 10, write: 10} , ->
+{% endhighlight %}
+
+<p>The above code creates a table named <code>logs</code> which will use a hash key (as opposed to a hash+range key). We've named the key field <code>id</code> and said it'll be a <code>string</code>.  The <code>read</code> and <code>write</code> values have to do with how DynamoDB distributes workload and scales. It's the expected read and write capacity; measured by what Amazon calls a <em>capacity unit</em>, which is 1KB read or write per second. For the purpose of this post, it really doesn't matter.</p>
+
+<p>Now that our table is created, we can write new log records: </p>
+
+{% highlight ruby %}
+class Log
+  constructor: (@user, @asset, @changes) ->
+    @id = uuid.v4()
+    @created = new Date()
+
+  save: (callback) =>
+    ddb.putItem 'logs', this.serialize(), {}, callback
+
+  serialize: =>
+    {id: @id, user: @user, asset: @asset, created: @created.getTime(), changes: JSON.stringify(@changes)}
+{% endhighlight %}
+
+<p>The above code could be used like so: </p>
+
+{% highlight ruby %}
+app.post '/log', (req, res, next) ->
+  log = new Log(req.body.user, req.body.asset, req.body.changes)
+  log.save ->
+    location = config.api.locationRoot + 'log/' + log.id
+    res.writeHead(201, {'Content-Type': 'application/json', 'Location': location})
+    res.end(JSON.stringify(log))
+{% endhighlight %}
+
+<p>The most important line in all of that is <code>ddb.putItem('logs', this.serialize(), {}, callback)</code> which is where the data is actually sent to DynamoDB. <code>putItem</code> can be used to do inserts or upserts, which is what the 3rd parameter controls (we left it blank which makes it default to upsert).</p>
+
+<p>There are a couple things worth taking a good look at. First of all, DynamoDB only supports strings and numbers, which is where the <code>serialize</code> method comes into play. Our <code>created</code> date is converted to a number, and <code>changes</code> turned into a string (a real app might be interested in storing this as a compressed value). DynamoDB doesn't supported embedded objects like some other NoSQL solution, so <code>changes</code> can't be stored as-is. Besides this, all DynamoDB really cares about is that we provide a field with the name and type that we defined our table key as; which we do as the <code>id</code> field.</p>
+
+<h3>Getting a Change Log</h3>
+<p>Next we want to make it so that change logs can be retrieved by id. So, given the following code:</p>
+
+{% highlight ruby %}
+app.get '/log/:id', (req, res, next) ->
+  Log.load req.params.id, (err, log) ->
+    res.end(JSON.stringify(log))
+{% endhighlight %}
+
+<p>We'll write our <code>Log.load</code> method as:</p>
+
+{% highlight ruby %}
+class Log
+  ...
+
+  @load: (id, callback) =>
+    ddb.getItem 'logs', id, null, {}, (err, res) =>
+      callback(null, this.deserialize(res))
+
+  @deserialize: (data) =>
+    data.created = new Date(data.created)
+    data.changes = JSON.parse(data.changes)
+    return data
+{% endhighlight %}
+
+
+<p>The first parameter is the name of the table, next is the hash value we want to retrieve. The next two parameters are the range key value (which we'll never have with this table since it uses a hash key only) and an options parameters, to specify things such as which fields to get. Our <code>deserialize</code> method undoes the work <code>serialize</code> did when we first stored our record.</p>
+
+<h3>Searching</h3>
+<p>So far we've kept things simple. Creating a table involved identifying our key, inserting involved sending along a bunch of attributes, and to get a specific item we submitted its id. Few apps can be built with just that functionality. In fact, even for our simple demo app, it's unlikely that we'll ever want individual change logs. Rather, we'll want change logs belonging to an asset, or possibly a user.</p>
+
+<p>To achieve this, we need to maintain our own indexes. An index is nothing more than the value we are indexing and a reference to the record the value belongs to. We can achieve this by using another table. And, while we are at it, it makes sense to get change logs back ordered by creation date. Let's visualize what we are talking about: </p>
+
+{% highlight clike %}
+logs table:
+id   |   user   |  asset  |  created  |  changes
+1        leto      sand      4909449     ....
+2        leto      spice     4939494     ....
+3        paul      spice     5001001     ....
+
+logs_by_asset table:
+asset  |  created   |  id
+sand      4909449      1
+spice     4939494      2
+spice     5001001      3
+{% endhighlight %}
+
+<p>Now, if we set the key of <code>logs_by_asset</code> to be a hash on <code>asset</code> and a range  on <code>created</code> we'll be able to find change logs by asset. How? Well, first we'll get all the ids which belong to a certain asset via <code>logs_by_asset</code>, then we can retrieve those records by id in <code>logs</code>.</p>
+
+<p>First thing we need to do is create our new table:</p>
+{% highlight ruby %}
+ddb.createTable 'logs_by_asset', { hash: ['asset', ddb.schemaTypes().string], range: ['created', ddb.schemaTypes().number] }, {read: 10, write: 10} , ->
+{% endhighlight %}
+
+<p>Next we change our <code>save</code> method to also create the index:</p>
+
+{% highlight ruby %}
+save: (callback) =>
+  ddb.putItem 'logs', this.serialize(), {}, (err, res) =>
+    ddb.putItem 'logs_by_asset', {asset: @asset, created: @created.getTime(), id: @id}, {}, ->
+    callback(err, res)
+{% endhighlight %}
+
+<p>Finally, we can do our two-phase lookup:</p>
+
+{% highlight ruby %}
+@find: (asset, callback) =>
+  ddb.query 'logs_by_asset', asset, null, {attributesToGet: ['id']}, (err, res) =>
+    ids = (key.id for key in res.Items)
+    ddb.batchGetItem {table: 'logs', keys: ids}, (err, res) =>
+      items = []
+      for item in res.Items
+        items.push(this.deserialize(item))
+      callback(null, items)
+{% endhighlight %}
+
+<p>There's a bit going on here. First, we get all the ids for a specific asset. If we wanted to, we could also specify a created value (a table with a composite key can be queried by hash or hash and range). We transform those ids into an array because they come back looking like  <code>[{id: '1', id:'2', id:'3'}])</code> and we want to just query via <code>[1,2,3]</code>. Finally we use <code>batchGetItem</code> to get all the change logs that match the ids. As you can probably guess, <code>batchGetItem</code> works a lot like <code>getItem</code> except that it takes an array of keys (in fact, it can even batch get from multiple tables at once).</p>
+
+<h3>&lt;/Application&gt;</h3>
+<p>The real focus here is to introduce DynamoDB and show how to deal with the restrictions it imposes. Namely, how to create your own indexes to support more advanced queries. If you also want to query by <code>user</code> you'll need another table and if you want to query by <code>asset+user</code> you'll need yet another (in this case the hash key can be a <code>@asset + ':' + @user</code>). If you want a different sort, you guessed it, you'll need another table.</p>
+
+<p>There's more you can do with DynamoDB (like deleting), or even doing a linear scan for arbitrary fields (which is expensive and won't scale, so I'm not sure when you'd do it). But understanding that records are retrieved by hash key or hash+range key, and what that means with respect to modeling, is the best place to start.</p>
+
+<h3>My Thoughts on DynamoDB</h3>
+<p>From a infrastructure point of view, DynamoDB is a dream come true. Take everything you know about scaling a database and throw it out. Stop worrying about RAID, or worse, RAIDED EBS, replication, availability zones and so on. I generally like to manage all my own stuff and run my own servers, but there's something simply awesome about DynamoDB's potential.</p>
+
+<p>However, beyond the infrastructure, the actual storage engine leaves a lot to be desired. It's where a other NoSQL solutions were 1-2 years ago. Which is significant when you consider how fast the field has evolved. The lack of secondary indexes isn't a deal breaker for me, but it's an increasingly rare limitations.</p>
+
+<p>For me, paging records is always a good measure of how helpful a database wants to be. Paging records in SQL Server or Oracle, for example, feels a lot like being given the finger. DynamoDB doesn't fair any better. Commands that can return multiple items take a <code>Limit</code> option, which is good. But for an offset you need to provide a <code>ExclusiveStartKey</code>, which is the last key that you received. Worse, even when you don't provide a <code>limit</code> you might still get a partial result if the full result is too big (>1MB). DynamoDB will let you know this happened by also providing a <code>LastEvaluatedKey</code> in the reply. In other words, if you are hoping for a <code>limit</code> and <code>offset</code>, which I believe every database solution should strive to provide, you'll be as disappointed as I am.</p>
+
+<p>There's also the fact that it only supports strings and integers and doesn't support embedded objects. This isn't too uncommon, but I think we can agree more type support is better than less.</p>
+
+<p>Then there's the pricing. Billing per write and read compute units doesn't bother me. Sure, it's ambiguous at first, but I can see how it better reflects Amazon's actual cost than say, charging $X for Y RAM and Z HDD. They are essentially charging by I/O, which is probably a better all around measure of CPU, HDD and RAM usage. What does bother me though is that they round up to the nearest 1KB. Now, maybe in a real world app that would just be a blip. However, given that a high number of queries will likely go to a secondary index (and thus only return short ids), I have a feeling it really could add up. It kinda feels like they are providing an inferior experience (lack of secondary indexes), and forcing you to pay more because of it.</p>
+
+<p>My last point is about the communication protocol. Admittedly, this is something most devs won't have to worry/know. I'm quite familiar with the MongoDB and Redis protocols, and I can safely say that, in comparison, I <strong>hate</strong> the DynamoDB protocol. First of all, even though it's JSON, they've somehow made it feel like XML. Not only is it incredibly verbose, but whenever you send attributes over, you have to encode them as such: <code>{"S": "MyStringValue"}</code> or <code>{"N":"MyNumericalValue"}</code>. If only JSON had a built-in way to distinguish strings from numbers...There are also a couple inconsistencies, which is a shame to see in such a young protocol. These inconsistencies are quite evident in the way errors are handled. I tried build a <a href="https://github.com/karlseguin/alternator">local emulator backed by MongoDB</a> for development purposes, but abandoned the project after being frustrated with DynamoDB's error handling.</p>
+
+<p>Ultimately, I think the idea is great, but the execution is a couple years behind what's currently available. The real question is where do they plan on taking it and when do they plan on getting there.</p>
+
+<p>

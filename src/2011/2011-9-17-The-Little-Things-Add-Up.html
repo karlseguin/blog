@@ -1,0 +1,46 @@
+---
+permalink: "/2011/9/17/The-Little-Things-Add-Up/"
+layout: post
+date: 2011-09-17
+title: "The Little Things Add Up"
+tags: [other]
+---
+<p>Over time, developers get desensitized to the many idiosyncrasy (read: baggage) of their tools, languages and frameworks. There are many examples of this causing products (Microsoft's ASP.NET WebForms), or even entire portions of a community (Java), to become completely detached from the realities of modern software development. The closer you are to the product (like a language designer, or a core member of a framework), the greater the risk that you'll lose the necessary perspective. This is why it's so important to learn things outside your comfort zone. It's also why it's so hard to learn new things: you need to learn a bunch of new caveats.</p>
+
+<p>What I want to talk about though are the apologists. Specifically, the people who claim that <em>it's no big deal</em>. It's true that the type of thing I'm talking about tends to be trivial and easy to solve, but that doesn't mean it isn't a concern.</p>
+
+<p>First, and most obvious, it isn't a big deal only when you know about it. In fact, when you already know about it, it might not even seem like something weird. To anyone new though, trivial things can frustratingly consume hours of research. The situation is often exasperated by the fact that official documentation and sample applications conveniently avoid such awkwardness. Noobies are left scouring the web for any possible solution, unsure if what they have found is best-practice or how it's going to be testable (because kludges often aren't). </p>
+
+<p>Another problem is that these things add up. There's little more disheartening than having a minimal project which has as much utility and plumbing code than things which add value. Again, you end up constantly questioning whether or not you are doing it right, and looking back at the amount of wasted time.</p>
+
+<p>Finally, the problem with having everyone rely on a bunch of tricks is that it speaks of a disconnect between a project and the rest of the world. This is particularly evident in web-development which relies on a number of separate pieces to fit together. Once one piece starts falling behind, the whole suffers.</p>
+
+<p>You might be wondering what kind of kludges I'm talking about. Yesterday I started on my first project written in Play, which I can safely say inspired this post. I don't mean to pick on Play, my point is that all frameworks/languages have their own special thing, but I can safely say yesterday was not fun.</p>
+
+<p>A number of the challenges I ran into were caused by JSON not being a first-class citizen. This is an example of my third point, because the conclusion that I draw is that the core-Play developers are still building websites as though it's 2008. For example, while Play is happy to bind form parameters to a POJO, it can't (as far as I can tell) handle JSON input. This means that you need to define a <code>@Global</code> binder and, in every action, manually deserialize the body:</p>
+
+{% highlight clike %}
+User user = new Gson().fromJson(body, User.class);
+{% endhighlight %}
+
+<p>It took me a while to figure this out, and it also changed, slightly, how I had to write my tests. Another JSON example, is that, for whatever reason, the <code>renderJSON</code> method doesn't serialize the <code>List&lt;Error&gt;</code> which you get from validating a model. Again, I'm either missing something obvious, or people aren't building sites in Play using things like Backbone.js.</p>
+
+<p>These oversights, in addition to a few others, means that I have a <code>ExcludePasswordStrategy</code>, <code>FieldError</code>, <code>GsonBinder</code> and a <code>ObjectIdAdapter</code> in a <code>utils</code> package. I also created a <code>BaseController</code> with the following helper method:</p>
+
+{% highlight clike %}
+protected static void renderJSON(Object object, int status) {
+  GsonBuilder gson = new GsonBuilder().setExclusionStrategies(new ExcludePasswordStrategy());
+  gson.registerTypeAdapter(ObjectId.class, new ObjectIdAdapter());
+  response.contentType = "application/json";
+  response.status = status;
+  renderText(gson.create().toJson(object));
+}
+{% endhighlight %}
+
+<p>Finally, I had to create a handful of helpers for my functional and unit tests.</p>
+
+<p>And do you know what's crazy about all that? The only feature I have is registering a user. Obviously, all of the plumbing that I wrote is re-usable, so the ratio of valueless code to value-added code is going to improve, as will my efficiency. But all of this stuff should be baked into any modern web framework. If i wasn't so stubborn, I would have given up shortly after starting.</p>
+
+<p>Some of you are going to say I should stop complaining and roll up my sleeve and contribute. I'm comfortable enough with my OSS contribution to say that sometimes you want to contribute to an OSS framework/platform, and sometimes you want to build a product.</p>
+
+<p>So, what's the conclusion? Seems like a lot of these pain-points can be avoided by expanding your knowledge and common toolset. This goes for both users and developers of a framework. Frankly, web frameworks are a commodity, there's no reason to put up with things that go against the grain. </p>

@@ -1,0 +1,18 @@
+---
+layout: post
+date: 2013-09-11
+title: "Scaling? Focus On Raw Speed"
+description: "Despite all the architectural patterns to help you scale, raw performance is still king"
+tags: [design, performance]
+---
+<p>When web developers talk about scale, we're typically talking about supporting a greater number of users and requests. To achieve this, we want <em>more</em> threads, processes or hardware. Ideally, this type of horizontal scaling should allow you to grow linearly. If a single server can handle 5K requests per second, then two servers should be able to handle 10K requests per second. In other words, scale has become synonymous with the idea that we need <em>more</em>.</p>
+
+<p>While <em>more</em> is good, <em>less</em> is even better. Consider a request that takes 100ms to process. In a single threaded application, we can handle 10 requests per second. One way to support 40 requests per second, is to use more threads. Specifically, we'd need 3 more threads.</p>
+
+<p>As an alternative to adding <em>more</em> threads, we could also make our request take <em>less</em> time. To achieve the same 40 requests per second using our original thread, we'd need to cut the response time to 25ms.</p>
+
+<p>With the multithreaded approach, the minimum, average and maximum time to serve a request is 100ms. With the singlethreaded approach, the minimum time is 25ms, the average time is 62.5ms and the maximum time is 100ms.</p>
+
+<p>There's obviously a limit to how far you can take this. Eventually, you'll have no choice but to throw hardware at the problem. But raw speed should be the first thing you consider, and it should be something you strive to maintain, if not improve, as you move forward. Run tasks in the background, <a href="/Speedig-Up-Queries-Re-Imagining-Your-Data">denormalize your data</a>, <a href="/Caching-Your-Worst-Best-Friend">master your cache</a>, fix your broken serialization, fill every bit of RAM and leverage modern processors.</p>
+
+<p>Once live, system performance is the hardest feature you'll ever be asked to add.</p>

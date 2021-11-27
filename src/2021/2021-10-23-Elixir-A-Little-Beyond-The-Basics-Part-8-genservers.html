@@ -1,0 +1,224 @@
+---
+layout: post
+date: 2021-10-23
+title: "Elixir, A Little Beyond The Basics - Part 8: genservers"
+description: "Applying what we learnt about processes to better understand genservers"
+tags: [elixir]
+---
+
+<p>GenServers take what we've <a href=/Elixir-A-Little-Beyond-The-Basics-Part-6-processes/>already learnt about processes</a> and wrap it in a developer-friendly interface. To master GenServers, you must simply understand the fundamentals of processes, namely the mailbox and how processes interact with it. Still, looking at these fundamentals from the perspective of GenServers is a useful exercise.</p>
+
+<p>The first thing that stands about about GenServers is that we don't generally interact with the mailbox directly. Instead, to send a message to a GenServer we use <code>GenServer.cast/2</code> or <code>GenServer.call/2</code> and to receive, we implement the <code>handle_cast/2</code>, <code>handle_call/3</code> and, sometimes, <code>handle_info/2</code>. Here's a basic counter in action:</p>
+
+{% highlight elixir %}
+defmodule MyApp.Counter do
+  use GenServer
+  @name __MODULE__
+
+  def start_link(opts) do
+    GenServer.start_link(__MODULE__, opts, name: @name)
+  end
+
+  def increment(n) do
+    GenServer.call(@name, {:increment, n})
+  end
+
+  def init(_opts), do: {:ok, 0}
+
+  def handle_call({:increment, n}, _from, state) do
+    state = state + n
+    {:reply, state, state}
+  end
+end
+{% endhighlight %}
+
+<p>GenServers are usually started by Supervisors, which will call the GenServer's <code>start_link/0</code> or <code>start_link/1</code> function. The process will be spawned, and <code>init/1</code> will be called, this is where the initiate state of our process is set (the initial state of our counter is <code>0</code>). Internally, the GenServer will <code>receive</code> messages and call <code>handle_cast/2</code>, <code>handle_call/3</code> or <code>handle_info/2</code> depending on the received message. In pure-process terms, you can think of the last part as:</p>
+
+{% highlight elixir %}
+defp receive_loop(state) do
+  new_state =
+    receive do
+      msg -> handle_call(msg, state)
+    end
+  receive_loop(new_state)
+end
+{% endhighlight %}
+
+<p>We can better understand the interaction between the sender and the GenServer by looking at the different messages that <code>send/2</code>, <code>GenServer.cast/2</code> and <code>GenServer.call/2</code> generate (if you're surprised that we can use <code>call/2</code> and <code>cast/2</code> on a plain process id, remember, GenServers are just processes!):</p>
+
+{% highlight elixir %}
+pid = spawn fn ->
+  receive do msg -> IO.inspect(msg) end
+  receive do msg -> IO.inspect(msg) end
+  receive do msg -> IO.inspect(msg) end
+end
+send(pid, :hello)
+GenServer.cast(pid, :hello)
+GenServer.call(pid, :hello)
+{% endhighlight %}
+
+<p>The above will output something like:</p>
+
+{% highlight elixir %}
+# send
+:hello
+
+ # cast
+{:"$gen_cast", :hello}
+
+# call
+{ :"$gen_call",
+  {#PID<0.110.0>, [:alias | #Reference<0.426212949.4092919813.244647>]},
+  :hello
+}
+
+# what happened here?!
+** (exit) exited in: GenServer.call(#PID<0.116.0>, :hello, 5000)
+    ** (EXIT) normal
+    (elixir 1.12.0) lib/gen_server.ex:1024: GenServer.call/3
+{% endhighlight %}
+
+<p>If you forget about the error at the end, you can hopefully start to see how GenServers receive messages and route them to the correct <code>handle_XYZ</code> function. Something like:</p>
+
+{% highlight elixir %}
+defp receive_loop(state) do
+  new_state =
+    receive do
+      {:"$gen_cast", msg} -> handle_cast(msg, state)
+      { :"$gen_call", {_caller_pid, [:alias, ref]}, msg} -> handle_call(msg, ref, state)
+      msg -> handle_info(msg, state)
+    end
+  receive_loop(new_state)
+end
+{% endhighlight %}
+
+<p>What about that error when we used <code>GenServer.call/2</code>? We saw in part 6 that, for synchronous messages to work, we need to send an asynchronous message and then block waiting for an asynchronous message (as the reply). For this to work reliably, the caller monitors the process. In our above code, the spawned function exits after receiving the third message. This is detected by the caller (thanks to the monitor that <code>GenServer.call/2</code> set up) which then throws an exception. What if our process didn't exit after receiving the message?</p>
+
+{% highlight elixir %}
+pid = spawn fn ->
+  receive do msg -> IO.inspect(msg) end
+  :timer.sleep(:timer.minutes(1))
+end
+GenServer.call(pid, :hello)
+{% endhighlight %}
+
+<p>If you run the above and wait 5 seconds, you'll get a similar error:</p>
+
+{% highlight elixir %}
+** (exit) exited in: GenServer.call(#PID<0.115.0>, :hello, 5000)
+    ** (EXIT) time out
+    (elixir 1.12.0) lib/gen_server.ex:1024: GenServer.call/3
+{% endhighlight %}
+
+<p>Not only does our caller monitor the target process, it also sets a timeout (defaulting to 5 seconds) to receive the reply.</p>
+
+<h3>Phantom Reads</h3>
+<p>The timeout behavior of <code>GenServer.call/2</code> represents one of the most dangerous and leaky aspects of GenServers (and processes in general): mailboxes can accumulate unexpected messages. In its simplest form, you can just spawn a process which does some arbitrary (non-mailbox related) work, and send a messages to it:</p>
+
+{% highlight elixir %}
+pid = spawn fn ->
+  # do some work
+end
+
+send(pid, "i am")
+send(pid, :flooding)
+send(pid, "your mailbox")
+send(pid, 5555)
+{% endhighlight %}
+
+<p>When a process dies, its mailbox goes with it, so it's not a problem. But for long running processes, you have to be careful. You can accumulate an ever-growing list of message (we previously saw that monitoring the <code>message_queue_len</code> of processes is a good idea!). It's particularly problematic when calling a GenServer and getting a timeout. Here's a naive, but representative, version of what happens:</p>
+
+{% highlight elixir %}
+pid = spawn fn ->
+  receive do
+    {:add, pid, a, b} ->
+      :timer.sleep(1000)
+      send(pid, {:sum, a+b})
+  end
+end
+
+send(pid, {:add, self(), 8, 11})
+receive do
+  {:sum, n} -> IO.puts("sum: #{n}")
+after
+  100 -> IO.puts("timeout")
+end
+
+# what happens if we receive again here, without the timeout?
+{% endhighlight %}
+
+<p>The timeout is purely a behaviour of the caller. The spawned process knows nothing about the timeout, it gets the message and goes about processing it, eventually sending a reply which goes to the caller's mailbox. But the caller has moved on. If it uses <code>receive</code> in the future, it'll get the reply it decided had timed out.</p>
+
+<p>With GenServers, if <code>call/2</code> fails, the caller will crash (because it throws an error). In our above snippet, replace the <code>IO.puts("timeout")</code> with <code>throw :timeout</code> and you get a sense for what the GenServer will do. Messages sent to our now dead process are just discarded. But sometimes, you'll be tempted to put a try/catch around a <code>GenServer.call/2</code>, maybe specifically so that it doesn't crash on a timeout. In such cases, the caller's mailbox can get pretty messy. So only prevent the caller from crashing when you're sure of what you're doing..</p>
+
+<h3>Blocking Init</h3>
+<p>When we looked at supervisors, we mentioned that each child of the supervisor is initialized sequentially. This creates predictability and the ability for processes to depend on each other. But the downside is that if process A is slow to start, or crashes, the entire chain is blocked.</p>
+
+<p>The rule is: don't do anything slow or risky in your GenServer's <code>init</code> function. But that isn't always practical. GenServers have a reasonably elegant solution to this: <code>handle_continue/2</code>. We can change our <code>init</code> function to return <code>{:ok, INTIAL_STATE, {:continue, CONTINUE_TYPE}}</code> which will both unblock the initialization and guarantee that <code>handle_continue/2</code> is called before any other message is processed.</p>
+
+{% highlight elixir %}
+defmodule MyApp.Counter do
+  use GenServer
+  @name __MODULE__
+
+  def init(_opts), do: {:ok, nil, {:continue, :load}}
+
+  def handle_continue(:load, initial_state) do
+    # new_state = maybe load a saved state from the db?
+    {:noreply, new_state}
+  end
+end
+{% endhighlight %}
+
+<p>The value we return in <code>{:continue, VALUE}</code> is the value that's passed to <code>handle_continue/2</code> (<code>:load</code> in the above), allowing more complicated cases where we might have different <code>handle_continue</code> implementations</p>
+
+<h3>send / send_after</h3>
+<p>While we usually interact with GenServer's using <code>call/2</code> and <code>cast/2</code>, you can use <code>send/2</code> and <code>Process.send_after/3</code> as well. These messages get handled by <code>handle_info/2</code>. This is mostly useful with <code>send_after/3</code> within your own code. But you'll also run into libraries that use <code>send/2</code> since they don't want to assume that you're using a GenServer versus a plain process. The built-in <code>:gen_tcp</code> library comes to mind.</p>
+
+<h3>Concurrency</h3>
+<p>We covered process concurrency at length when talking about processes, in part 6, but let's see what this means from a GenServer's perspective.</p>
+
+{% highlight elixir %}
+defmodule MyApp.Counter do
+  use GenServer
+
+  # ...
+  # start_link, init
+  # ...
+
+  def get() do
+    GenServer.call(@name, :get)
+  end
+
+  def increment(n) do
+    GenServer.cast({:increment, n})
+  end
+
+  def handle_call(:get, _from, state) do
+    {:reply, state, state}
+  end
+
+  def handle_cast({:increment, n}, state) do
+    {:noreply, state + n}
+  end
+end
+{% endhighlight %}
+
+<p>Now let's pretend that we have a Phoenix web app which is using this GenServer. Of course, Phoenix can process requests concurrently. Is it a problem if 2 (or 3 or 1000) web requests access this GenServer "at the same time". Did you notice that one of these is synchronous (<code>call/2</code>) and one is asynchronous (<code>cast/2</code>)? Does that change anything?</p>
+
+<p>Absolutely not, and not only because our behavior is simple. A process, and by extension a GenServer, processes a single message at a time. In non-Elixir terms, the <code>state</code>, the value of our counter, is only ever read from or written to by a single thread. No exceptions.</p>
+
+<p>You will note that <code>handle_call/2</code> and <code>handle_cast/2</code> are public, so we could call these directly:</p>
+
+{% highlight elixir %}
+MyApp.Counter.handle_cast({:increment, n}, 10)
+{% endhighlight %}
+
+<p>This is just a normal function call and will execute within the process of the caller, not the GenServer. <code>state</code> is just the second argument that we pass, <code>10</code>. Calling it like this doesn't expose the state of the MyApp.Counter GenServer. The function returns <code>{:noreply, 20}</code>, but that's just a return value, it doesn't alter the state of the MyApp.Counter GenServer.</p>
+
+<p>Is it useful to call a <code>handle_call/cast/info</code> function directly like this? I think it can make sense in unit tests which are concerned with specific behavior of the function. This can focus test on specific behavior and significantly minimize the work needed to set everything up. A pretty big testing win in my book.</p>
+
+<div id=pager>
+  <a class=prev href=/Elixir-A-Little-Beyond-The-Basics-Part-7-supervisors/>supervisors</a>
+  <a class=next href=/Elixir-A-Little-Beyond-The-Basics-Part-9-erlang/>erlang</a>
+</div>

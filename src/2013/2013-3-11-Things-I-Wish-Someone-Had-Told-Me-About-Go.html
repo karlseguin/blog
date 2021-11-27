@@ -1,0 +1,121 @@
+---
+layout: post
+date: 2013-03-11
+title: "Things I Wish Someone Had Told Me About Golang"
+tags: [golang]
+---
+
+<h3>"Pointers"</h3>
+<p>Somehow I got it in my mind that Go had first-class support for pointers. Certainly, if you're coming from a language like Java or Ruby, pointers in Go have greater visibility. But, without pointer arithmetics or, despite many claims, pass-by-reference, Go's "pointers" feel like a more flexible form of Java/Ruby/Python/Node/....</p>
+
+<p>Consider the following code which prints "Leto" twice:</p>
+
+{% highlight go %}type User struct {
+  Name string
+}
+
+func main() {
+  u := &User{Name: "Leto"}
+  println(u.Name)
+  Modify(u)
+  println(u.Name)
+}
+
+func Modify(u *User) {
+  u = &User{Name: "Paul"}
+}{% endhighlight %}
+
+<p>(Since everyone has missed the point here, let me clarify. I'm saying that in a language that does pass by reference, the above *would* print Paul. I realize this isn't the norm, but it also isn't uncommon (C#). I had been under the impression that Go had taken this uncommon approach.)</p>
+
+<p>This is what wikipedia calls <em>call by sharing</em>. The main difference I can see that Go offers is the ability to <em>Call by Value</em>, which can be used to ensure immutability. This slightly modified example (note that we're now passing a copy of the value, rather than a copy of the pointer) will also print "Leto" twice:</p>
+
+{% highlight go %}type User struct {
+  Name string
+}
+
+func main() {
+  u := User{Name: "Leto"}
+  println(u.Name)
+  Modify(u)
+  println(u.Name)
+}
+
+func Modify(u User) {
+  u.Name = "Duncan"
+}{% endhighlight %}
+
+<p><strong>update</strong></p>
+<p>As has been pointed out, the above is possible in Go by doing:</p>
+{% highlight go %}func main() {
+  u := &User{Name: "Leto"}
+  fmt.Println(u.Name)
+  Modify(&u)
+  fmt.Println(u.Name)
+}
+
+func Modify(u **User) {
+ *u = &User{Name: "Bob"}
+}{% endhighlight %}
+
+<p>This is still not pass-by-reference. But, since you are able to dereference, you can achieve the same thing.</p>
+
+<h3>The GoWay or The Highway</h3>
+<p>I imagine a lot of newcomers are going to try to bend Go into their own vision of a properly organized system. The sooner you forget virtualenv, node_package or rubies, the quicker you can be productive. Set your $GOROOT and $GOPATH and create the <a href=http://golang.org/doc/code.html>recommended src/pkg/bin folders</a> under $GOPATH. Feels weird? Use symlinks to make it all transparent with how you probably organize the rest of your code.</p>
+
+<p>It doesn't stop at high level organization. It might feel wrong at first, but tests side-by-side with code will make your life easier. First, you get access to package-visible members. Second, you avoid any ugly circular dependencies.</p>
+
+<p>Also, my first reaction about Go was that its organizational structure wouldn't work well for large project. The solution is simple: adopt small, cohesive packages (just like Go's own libraries). One or two files per package is quite common. One way to monitor this is to track how many <code>NewXYZ</code> factories you have. Aiming for one, like <code>lazycache.New()</code> is much better than having multiple like <code>core.NewLazyCache()</code> and <code>core.NewProxy()</code>.</p>
+
+<h3>Tip Or Don't Bother</h3>
+<p>Go 1.0.3 is roughly 6 months old. There's a bunch of bug fixes and performance enhancements in tip. Maybe I'm jaded because our first Go system used the immature image libraries, but if there's actually a reason I think you shouldn't use Go, it's this. At this early stage, making critical fixes and enhancements available in a stable package should be given greater priority. On the flip side, we are using tip successfully.</p>
+
+<h3>Interface Pointers</h3>
+<p>Maybe it's just me, but it took me a while to understand this method from Go's net/http package:</p>
+
+{% highlight go %}func ServeHTTP(res http.ResponseWriter, req *http.Request) {
+  ...
+}{% endhighlight %}
+
+<p>Why is <code>req</code> passed as a reference, but <code>res</code> passed as a value? Why, I wondered, are they making me pay the performance penalty of passing a copy of an object?! That's not what's happening though. <code>http.ResponseWriter</code> is an interface and either a value-type or a reference-type can satisfy an interface. So, technically, you don't know whether the value being passed is a copy of a pointer or a copy of a value, but it's probably the former.</p>
+
+<p>Given an interface:</p>
+
+{% highlight go %}type CacheItem interface {
+  GetId() string
+}{% endhighlight %}
+
+<p>Both an <code>Application</code> value and a <code>User</code> reference satisfy the interface:</p>
+
+{% highlight go %}type Application struct {
+  id string
+}
+func (a Application) GetId() string {
+  return a.id
+}
+
+type User struct {
+  name string
+}
+func (u *User) GetId() string {
+  return u.name
+}{% endhighlight %}
+
+<p>And thus, both can be treated as a <code>CacheItem</code>:</p>
+
+{% highlight go %}func main() {
+  Store(&User{name: "Leto"})
+  Store(Application{id: "9001"})
+}
+
+func Store(item CacheItem) {
+  //do something with item.GetId()
+}{% endhighlight %}
+
+<p>So, as far as I know, you'll never see a pointer to an interface (i.e. <code>item *CacheItem</code>). I used to think the common Java pattern of a postfixing <code>Impl</code> or C#'s prefixing <code>I</code> was silly...now I'm not so sure.</p>
+
+<h3>Implicit Interfaces Lead To Good Design</h3>
+<p>Interface's in Go are implicitly bound. The above <code>User</code> only had to implement the <code>GetId() string</code> function in order to implement <code>CacheItem</code>. It's a cool feature. And it isn't as superficial as you (or I) might think.</p>
+
+<p>Go's interfaces tend to promote small and cohesive behavior. It's quite common to see interfaces with a single method. This is quite handy when dealing with Go library interfaces. Want to write to your own type from any <code>io.Reader</code>? Simply implement the <code>Write(p []byte) (n int, err error)</code> function and you can use <code>io.Copy</code>.</p>
+
+<p>You should use this techniques for your own types and functions. Passing a focused interface to a function helps ensure that you aren't doing too much. It's one of the best tools I've seen that reduces the amount of refactoring you have to do.</p>

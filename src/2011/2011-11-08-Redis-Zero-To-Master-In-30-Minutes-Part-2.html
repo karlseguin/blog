@@ -1,0 +1,121 @@
+---
+permalink: "/2011/11/8/Redis-Zero-To-Master-In-30-Minutes-Part-2/"
+layout: post
+date: 2011-11-08
+title: "Redis: Zero to Master in 30 minutes - Part 2"
+tags: [redis]
+---
+<style>
+h2{margin-bottom:0;font-size:20px;}
+</style>
+
+<p><a href="/2011/11/8/Redis-Zero-To-Master-In-30-Minutes-Part-1/">Part 1</a> introduced Redis, focusing largely on the 5 data structures and showing how you might use them. In this part we'll build a simple app backed by Redis.</p>
+
+<p>Before we start, you might have noticed that Redis' API isn't like most. Rather than having 4 generic CRUD methods, Redis has a number of specialized methods. So far we've only looked at a small percentage of them. Our application will only make use of a handful. This is a pretty common usage pattern. Some commands you might never use, some commands make you think <em>wow, that's exactly what I need</em> when you happen to be browsing through the online reference. Mastering Redis isn't about memorizing all the commands (not that there's an insane amount). It's about (a) understanding the 5 data structures, (b) understanding how to model data and query it using Redis and (c) combining a and b to easily tell whether Redis is a good fit.</p>
+
+<p>With that said, we'll be looking at the Redis portion of <a href="http://jobs.openmymind.net">jobs.openmymind.net</a>. All it does is collect programming jobs from various places, displays them and tweets them. The full source is available <a href="https://github.com/karlseguin/jobs.openmymind.net">on github</a>. I admit upfront that using a relational or document database would probably be more straightforward.</p>
+
+<h2>Saving Jobs</h2>
+<p>A background process runs and hits various json and RSS services to get current jobs. Our approach will be to hold each job in its own String value. The key format will be <code>job:SOURCE:SOURCE_ID</code>. So, if we give github a source of 1, then the job at http://jobs.github.com/positions/73c9e09a-09b0-11e1-9819-355783013ce0 will have a key of <code>job:1:73c9e09a-09b0-11e1-9819-355783013ce0</code>. The value for this key will be the job details.</p>
+
+<p>Assuming we've parsed our job into a hash, saving it into Redis will look something like:</p>
+
+{% highlight ruby %}def save(job)
+  key = "job:#{job[:source]}:#{job[:source_id]}"
+  redis.set(key, job.to_json)
+end{% endhighlight %}
+
+<p>Now, we simply want to display the jobs in reverse chronological order. We don't even do paging, we just display the last X jobs. We can't do that with the above code. We need keys to be sorted by date. My first attempt was to simply use a list, like we saw in part 1:</p>
+
+{% highlight ruby %}def save(job)
+  key = "job:#{job[:source]}:#{job[:source_id]}"
+  redis.multi do  #begins a transaction
+    redis.set(key, job.to_json)
+    redis.lpush('jobs', key)
+  end
+end{% endhighlight %}
+
+<p>But that doesn't really work because the time at which we insert a job into Redis doesn't necessarily map to when the job was posted. Using this approach jobs are sorted by date we process them, rather than we the jobs are posted. The solution? Use a sorted set instead of a list:</p>
+
+{% highlight ruby %}def save(job)
+  key = "job:#{job[:source]}:#{job[:source_id]}"
+  redis.multi do
+    redis.set(key, job.to_json)
+    redis.zadd('jobs', job[:created_at], key) # :created_at is already an integer (seconds since ..)
+  end
+end{% endhighlight %}
+
+<p>What happens if we've already stored the job? It turns out that this isn't a problem. We can simply re-set the our main job String (incase any of the job details have changed) and, since we are using a set, can re-add the key to our set.</p>
+
+<p>We'll come back to this in a bit, but for now, this is a good start.</p>
+
+<h2>Listing Jobs</h2>
+<p>We not only have the details of each job saved, but also a sorted list of job keys. From this, getting the jobs for display isn't difficult:</p>
+
+{% highlight ruby %}def get_latest_jobs
+  keys = redis.zrevrange('jobs', 0, 150)
+  jobs = redis.mget(*keys)
+  jobs.map do |j|
+    job = JSON.parse(j)
+    job['created_at'] = Time.at(job['created_at'])
+    job
+  end
+end{% endhighlight %}
+
+<p>Sorted sets are ordered from lowest score to highest. That means that more recent times will have a higher scores (more seconds have passed from 1970 to today than have passed from 1970 to 1980). If we grabbed the first 150 values (using <code>zrange</code>) we'd grab the oldest 150 jobs. We want to grab the 150 more recent jobs starting, which would have the highest scores. This is why we use <code>zrevrange</code> (rev for reverse).</p>
+
+<p>All we get from our set is an array of keys. We use <code>mget</code> to get the actually job values (which we then deserialize). If you aren't familiar with ruby, the splat operator (*) pretty much turns an array (which is what we have) into a varargs, which is what <code>mget</code> takes (in the Ruby driver anyways).</p>
+
+<p>That's really all there is to it</p>
+
+<h2>Cleaning Jobs</h2>
+<p>Since we only display the latest 150 jobs, there's no reason to keep a bunch of stale jobs around. Memory is money after all. What we want to do is grab stale jobs, delete the keys and remove them from our jobs sorted set. Let's look at the whole thing in one step:</p>
+
+{% highlight ruby %}redis.multi do
+  keys = redis.zrange('jobs', 0, -300)
+  redis.del(*keys)
+  redis.zrem('jobs', *keys)
+end
+{% endhighlight %}
+
+<p>Everything here is probably pretty clear, except for this -300 when we get the jobs. Notice here that we are using <code>zrange</code>, which means the lowest score (or oldest jobs since we are sorting by date) first. If we have 500 jobs, this will delete jobs 1 to 200 (500-300). Since we only display 150 jobs, we could use -150, but I decided to keep a buffer around for some reason.</p>
+
+<p>As an alternative, we could have used the <code>EXPIRE</code> key-command to let Redis automatically clean up old jobs (say, 10 days old). We'd still need to clean our sorted set though. You can't expire individual values, remember, things are very key-focused.</p>
+
+<h2>Twitter Integration</h2>
+<p>Redis has a nice publication and subscription API. And there are nice libraries like <a href="https://github.com/defunkt/resque">Resque</a> which lets you build robust queues on top of Redis. I went with a much more basic approach.</p>
+
+<p>When we have a new job, we'll add the key to a list. So, saving a job now looks like:</p>
+
+{% highlight ruby %}def save(job)
+  key = "job:#{job[:source]}:#{job[:source_id]}"
+  if !redis.exists(key)
+    redis.rpush('jobs:new', key)
+  end
+  redis.multi do
+    redis.set(key, job.to_json)
+    redis.zadd('jobs', job[:created_at], key)
+  end
+end{% endhighlight %}
+
+
+<p>We can then run a background task to <code>pop</code> jobs off and tweet them:</p>
+
+{% highlight ruby %}
+def get_new_job
+  key = redis.lpop('jobs:new')
+  key ? JSON.parse(redis.get(key)) : nil
+end{% endhighlight %}
+
+<p>Basic, not robust, but it's all I needed.</p>
+
+<h2>That's it</h2>
+<p>Maybe you don't feel like a master just yet. In truth, there is more to learn. Hopefully though you now have a good enough foundation to spend a bit of time and really get comfortable with Redis.</p>
+
+<p>There are various ways to install Redis. It can be found in most package managers (include brew), or you can <a href="http://redis.io/download">download the source</a>. Window users should grab <a href="https://github.com/dmajkic/redis/downloads">this port</a> (which I've never had any problem with during development). Once downloaded, you can start the server via <code>redis-server</code>, and start up a client via <code>redis-cli</code>. You can also <a href="http://redis.io/clients">download a client</a> for your favorite programming language.</p>
+
+<p>Alternatively, you can try the <a href="http://try.redis-db.com/">online interactive tutorial</a>.</p>
+
+<p>Finally, if you are interested in more Redis modeling discussions, you might be interested in these other two posts of mine: <a href="http://openmymind.net/2011/5/8/Practical-NoSQL-Solving-a-Real-Problem-w-Mongo-Red/">Practical NoSQL - Solving a Real Problem with MongoDB and Redis</a> and <a href="http://openmymind.net/2011/7/5/Rethink-your-Data-Model/">Rethink your Data Model</a>. If you are interested in a more complex real-world application, check out <a href="https://github.com/antirez/lamernews">LamerNews</a>.</p>
+
+

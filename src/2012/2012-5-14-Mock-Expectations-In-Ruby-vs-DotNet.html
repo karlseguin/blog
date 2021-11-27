@@ -1,0 +1,40 @@
+---
+permalink: "/2012/5/14/Mock-Expectations-In-Ruby-vs-DotNet/"
+layout: post
+date: 2012-05-14
+title: "Mock Expectations in .NET vs Ruby"
+tags: [c#, ruby, testing]
+---
+
+<p>I recently mentioned how useful it can be to use blocks when mocking with RSpec. For example, rather than doing:</p>
+
+{% highlight ruby %}
+  HttpClient.should_receive(:get).with('/messages').and_return({:ok => true}.to_json)
+{% endhighlight %}
+
+<p>You can do: </p>
+
+{% highlight ruby %}
+  HttpClient.should_receive(:get) do |url|
+    url.should == '/messages'
+    return {:ok => true}.to_json
+  end
+{% endhighlight %}
+
+<p>For a simple example like this, it isn't that useful, but when your parameter(s) require deeper inspection, or you want to evaluate something at execution time, it's a really clean syntax. In addition, the block's return value becomes our method's return value.</p>
+
+<p>On any other day, that would be that. However, today I happened to end up doing a bit of .NET and wanted to do something similar. Granted, one of the many .NET mocking frameworks might have cleaner syntax, but this is essentially what you end up with:</p>
+
+{% highlight clike %}
+  client.Setup(c => c.Get(It.Is<string>(s => s == "/messages")))
+{% endhighlight %}
+
+<p>Again, in this simple case, you could just use the simpler syntax. But when the simpler syntax doesn't work out, this type of matching is a real pain. It isn't just the verbosity around setting up the matcher (though that certainly is annoying). What's really aggravating is that it's setup as a predicate, which can make it hard to know exactly what part of your matcher failed. Your matcher is essentially a black box which either passes or fails, with little (no?) insight into why it failed. On top of that, it doesn't help us with our return value. If we want some type of dynamic return, we need to do:</p>
+
+{% highlight clike %}
+  client.Setup(c => c.Get("/mesages")).Returns((string m) => .....)
+{% endhighlight %}
+
+<p>Which isn't horrible, but I maintain that it isn't great either.</p>
+
+<p>There's probably a good case to be made for smelly tests or code if you need to leverage this often. However, when you do need it, and I maintain that there are legitimate cases, it's n example of why I think Ruby is such a better language.</p>

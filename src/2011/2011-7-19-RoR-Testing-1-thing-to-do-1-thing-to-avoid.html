@@ -1,0 +1,44 @@
+---
+permalink: "/2011/7/19/RoR-Testing-1-thing-to-do-1-thing-to-avoid/"
+layout: post
+date: 2011-07-19
+title: "RoR Testing - One Thing To Do (I think) And One Thing Not To Do (I'm Sure)"
+tags: [testing]
+---
+<p>This is gonna be quick. I've come across two patterns in my Ruby/Rails testing that I think are worth mentioning.</p>
+
+<p>The first, which I think (but have some doubts) is good, revolves around testing with dependencies and their return values. As a simple example, we might have the following code:</p>
+
+{% highlight ruby %}
+def index
+ user = User.find_by_id(params[:id])
+ render :json => {:user => user}
+end
+{% endhighlight %}
+
+<p>Now, I'm still a believer that when we are dealing with interactions between modules, it is vital to minimize the brittleness by not over specifying details. If we write a test to verify that we output the proper result, I believe it is OK to lean on ruby's dynamism:</p>
+
+{% highlight ruby %}
+it "should return the found user" do
+  User.stub!(:find_by_id).and_return("dynamic typing is over 9000!")
+  get :index
+  json = ActiveSupport::JSON.decode(response.body)
+  json['user'].should == 'dynamic typing is over 9000!'
+end
+{% endhighlight %}
+
+<p>See what I did? I leveraged the fact that <code>find_by_id</code> can return any type, and just kept my test simple. Now, this might not be the best example, because testing that a user instance properly serializes isn't a bad idea. But hopefully you get the picture. This might not be the normal way that you write tests, but I think it has a place when used judiciously.</p>
+
+<p>The other thing, which has caused me a bit of hassle, is to test Rails controllers and passing non-string parameters. Sticking with the above example, I might do:</p>
+
+{% highlight ruby %}
+get :index, {:id => 9002}
+{% endhighlight %}
+
+but I really should be doing:
+
+{% highlight ruby %}
+get :index, {:id => '9002'}
+{% endhighlight %}
+
+<p>This is a very bad oversight, and it's worth using some type of helper to make sure you are only passing in string values.</p>

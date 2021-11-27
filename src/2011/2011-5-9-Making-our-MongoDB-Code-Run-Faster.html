@@ -1,0 +1,61 @@
+---
+permalink: "/2011/5/9/Making-our-MongoDB-Code-Run-Faster/"
+layout: post
+date: 2011-05-09
+title: "Making our MongoDB Code Run Faster"
+tags: [mongodb, performance]
+---
+<p>Yesterday I talked about the work I was doing in <a href="http://openmymind.net/2011/5/8/Practical-NoSQL-Solving-a-Real-Problem-w-Mongo-Red">improving the performance</a> around mogade's ranking functionality. Basically, we denormalized our data and leaned on Redis for its built-in sorted set data structure.</p>
+
+<p>When you're working closely with code, trying to improve specific aspects of it, all types of smaller things jump out at you trying to get your attention. Today I wanted to run a some benchmarks and see if any of improvements I briefly considered yesterday would actually be worth implementing.</p>
+
+<p>As a recap, we're dealing with scores/leaderboards. Our structure looks something like:</p>
+
+{% highlight clike %}
+|leaderboard_id	|	name	|	unique			|	created_at			|	points	|
+|	1			|	leto	|	device-1-leto	|	2011/04/11 10:32	|	100000	|
+|	1			|	paul	|	device-1-paul	|	2011/04/12 09:22	|	200000	|
+|	2			|	duke	|	device-3-duke	|	2011/04/12 18:34	|	200000	|
+|	1			|	jess	|	device-2-jess	|	2011/04/13 21:44	|	300000	|
+{% endhighlight %}
+
+<p>We only track a player's best score.</p>
+
+<h2>Idea 1 - Reducing Index Memory</h2>
+<p>In order to efficiently get leaderboard pages, there's a composite index on <code>leaderboard_id</code>, <code>created_at</code> and <code>points</code>. If we want today's leaderboard, we end up doing the MongoDB equivalent of <code>where leaderboard_id = 1 and created_at &gt;= '2011/05/09 00:00' order by points desc</code> (assuming today is May 9th). So our index is pretty solid.</p>
+
+<p>For 500,000 scores, this index takes ~26MB. My idea? Rather than storing the absolute date the score was entered, store the time as an offset in days from a certain point (say Jan 1st 2011). For example, our first document's date would change from 2011/04/11 10:32 to 100.  I know, I know...people hate this type of date messing up..but I wanted to try it out.</p>
+
+<p>The reason for this madness? I wanted to know what impact indexing a 32bit field (an int) rather than a 64bit (a date) field would have on memory. You'd think that at a mere 26MB, I shouldn't care...but I can't help it. As I probably could have guessed, given that this index is made up of 3 fields, and cutting the storage requirement of one field by 1/2, resulted in an approximate memory savings of 1/6th. Not a compelling improvement.</p>
+
+<h2>Idea 2 - Improve Paging Performance</h2>
+<p>Although my main interest with the above change was to reduce memory footprint, I couldn't help but wonder what impact it might have on fetching leaderboards. Rather than finding all scores where the <code>date &gt;= XYZ</code> we're able to use a straight up equality operator (because all scores for today will have the same date value).</p>
+
+<p>Using the original approach, grabbing a couple thousand random pages of scores took about 25 seconds. Using the new approach took 5 seconds. Wow, hold on a minute, a 5 times improvement? This is something I'm interested in.</p>
+
+<p>Two things changed here though, first we're using an equality rather than a greater than or equal. Second, we're compare an int versus a date. I suspected that the performance gain was coming from the equality check. I rolled back my date change and tried again. The same 5 time speed improvement.</p>
+
+<p>This means if we store our date without hours we can still get our 5 times performance improvement without making our data all fugly and weird.</p>
+
+<h2>Idea 3 - Rename fields</h2>
+<p>In MongoDB every field name is stored in every document. This leads to developers who start to try to cheat some characters out of field names. Using the full names our 500K documents took around 80MB. Renaming the fields to things like <code>lid</code>, <code>n</code>, <code>u</code>, <code>cat</code> and <code>p</code> reduced this to 62MB. Not bad.
+
+<p>In v2 we are [stupidly] using our own thin mapping layer between our models and the MongoDB ruby driver. The code takes care of this aliasing for us, so there's no reason not to use it. Hopefully though, this is something MongoDB will support natively one day. Also, our data is pretty small, so the ratio of field name length to data is significant. You might not get the same results.</p>
+
+<h2>Idea 4 - Removing an Index</h2>
+<p>There's a 3rd index (I say 3rd, because I'm also counting the default (and unremovable) index on _id) in our scores table. It's on the <code>leaderboard_id</code> and <code>unique</code> fields. This is the index used when finding or updating a specific player's score for a leaderboard. Since <code>unique</code> is a string (a sha1 hash), this index is as big as the other two indexes combined, and over 1/2 the size of our data. If I'm really interested in reducing memory usage, this seems like an ideal candidate</p>
+
+<p>If you didn't read yesterday's post, you'll need to understand that we actually have 3 scores collections. One for the daily, weekly and overall scores. Also, yesterday we introduced a <code>high_scores</code> collection which tracks player's best score. This is duplicate data from what's available in our 3 scores collections, but we can get to it with a single read, rather than 3.</p>
+
+<p>My idea is to store the <code>_id</code> of the daily, weekly and overall scores within the <code>high_scores</code> collection (in addition to the points which we are already storing). Since we are already reading and writing from <code>high_scores</code> when saving a new score, it isn't too much work to bring back an few more bytes. Rather than updating by <code>leaderboard_id</code> and <code>unique</code>, we can update directly against <code>_id</code>.</p>
+
+<p>This doesn't only mean we get to drop our index, we actually get to remove the <code>unique</code> field since that's all it is being used for. Within <code>high_scores</code> we'll still have an index on <code>leaderboard_id</code> and <code>unique</code>, but we'll have this in a single collection rather than 3 collection. This should reduce that indexes memory footprint by 2/3s (plus 2/3s of whatever space is taken up by the <code>unique</code> field, which itself won't be small potatoes).</p>
+
+<h2>Conclusion</h2>
+<p>I think the most surprising outcome from this was the raw performance gain I saw when moving from <code>&gt;=</code> to <code>==</code>. Obviously I need to brush up on my B-Tree knowledge (the structure MongoDB uses for indexes). I'm also  excited about the memory savings we'll get by removing the 3rd index (our production DB has more than 500K records). This is one of those things that, in retrospect, should have been obvious a long time ago.</p>
+
+<p>For what it's worth, I enjoy doing premature optimization. You can think it's evil, but I find it fun. If I'm coding on my own time, and not having fun, something's not right. Beyond that though, I really think that there are legitimate and important reasons for premature optimization.</p>
+
+<p>First, it is a great way to learn some fundamental stuff that you probably wouldn't consider looking at otherwise. I don't care if you've never had slow SQL, I think every developer should understand a bit about B-Trees, should know how to read query plans, and make sense of the various join approaches a database might take. As more and more gets abstracted away, it becomes increasing important to go out of our way to understand how, once fundamental things like memory allocation, work. Optimizing code is a good, practical way to get a hands on feel for this stuff.</p>
+
+<p>Secondly, performance is a feature. A really important feature. Often times, you simply don't know how slow, or fast, something is until you start playing with it. Was my date to int change stupid? Sure. Could I have used my little brain to figure out that I'd get a 1/6 saving? Eh..perhaps. Should I have stopped once I realized I was talking about 26MB? Probably. But now I know. Plus, in exploring that memory improvement, I found a 5x performance improvement which I will be rolling out. And I won't only be rolling it out, I'm going to try to get a better understanding as to why it's really 5x faster, and apply that knowledge, wherever appropriate, moving forward.</p>

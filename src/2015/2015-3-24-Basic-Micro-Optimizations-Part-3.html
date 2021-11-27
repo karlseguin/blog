@@ -1,0 +1,106 @@
+---
+layout: post
+date: 2015-03-24
+title: "Basic Micro-Optimizations Part 3"
+tags: [performance]
+description: "When linear scans (brute force) is good enough"
+---
+
+<p>This intersects various things I've previously written about micro-optimization and my most recent overview of the specialized integer set. It's ok if you haven't already read those other posts. All you need to do is understand this function:</p>
+
+{% highlight go %}
+func exists(haystack []int, needle int) bool {
+  l := len(haystack)
+  for i := 0; i < l; i++ {
+    if haystack[i] == needle {
+      return true
+    }
+  }
+  return false
+}
+{% endhighlight %}
+
+<p>This code is looking to see if a value exists within an array. Its performance depends on a number of factor. The most important is the size of our haystack. It also depends on where (and if) we expect to find the needle. A huge haystack won't have a negative impact if the needle is always at the beginning. Still, if we assume a random distribution, we get the following numbers (with the size of the haystack in parenthesis) :</p>
+
+{% highlight text %}
+linear  (16)   100000000   24.1 ns/op
+linear  (32)   50000000    35.2 ns/op
+linear  (512)  10000000    194 ns/op
+linear  (4096) 1000000     1367 ns/op
+{% endhighlight %}
+
+<p>The most common way to try and make this better is to have the values in our array sorted. We'll ignore the cost of keeping our values sorted: these are read-heavy data structures and while we'll want to make sure our insertion cost doesn't become unbearable, we'll first see if its even worth it.</p>
+
+<p>The first thing we can do is a binary search. Go's <code>sort</code> package does this for us, so the code becomes:</p>
+
+{% highlight go %}
+func exists(haystack []int, needle int) (int, bool) {
+  index := sort.SearchInts(haystack, needle)
+  return index, haystack[index] == needle
+}
+{% endhighlight %}
+
+<p>The return value has changed a bit. We not only return if it exists, but where it exists (or ought to exist). This is information insert/delete would need (we could have an even more optimized version of <code>exists</code> only for lookups, but one thing at a time). The numbers:</p>
+
+{% highlight text %}
+binary  (16)   50000000    37.6 ns/op
+binary  (32)   30000000    44.0 ns/op
+binary  (512)  20000000    100 ns/op
+binary  (4096) 10000000    115 ns/op
+{% endhighlight %}
+
+<p>The binary search shines with a large haystack. It's important to take note of the fact that, for a small haystack, the performance is worse. Why? The smaller the input size, the more significant, proportionally speaking, the constant time of an algorithm. Binary searching requires more comparisons and should benefit less from CPU caches.</p>
+
+<p>With sorted data, the other option is to do a linear search and exit early. Consider:</p>
+
+{% highlight go %}
+func early(haystack []int, needle int) (int, bool) {
+  l := len(haystack)
+  for i := 0; i < l; i++ {
+    value := haystack[i]
+    if value < needle {
+      continue
+    }
+    return i, value == needle
+  }
+  return l, false
+}
+{% endhighlight %}
+
+<p>The results aren't surprising. At any size, it's an improvement over the simplest linear solution:</p>
+
+{% highlight text %}
+linear-exit  (16)   100000000     21.1 ns/op
+linear-exit  (32)   50000000      28.5 ns/op
+linear-exit  (512)  10000000      152 ns/op
+linear-exit  (4096) 2000000       988 ns/op
+{% endhighlight %}
+
+
+<p>Can we do more? Well, linear-exit, like linear, is biased towards values at the beginning of the array. When the array is sorted, couldn't be conditionally scan forwards or backwards? Something like:</p>
+
+{% highlight go %}
+func exists(haystack []int, needle int) (int, bool) {
+  l := len(haystack)
+  if l == 0 {
+    return 0, false
+  }
+  if needle <= haystack[l/2] {
+    return existsForward(haystack, needle)
+  }
+  return existsBackward(haystack, needle)
+}
+{% endhighlight %}
+
+<p>Which gives the following performance:</p>
+
+{% highlight go %}
+linear-bi  (16)   100000000    21.6 ns/op
+linear-bi  (32)   50000000     24.8 ns/op
+linear-bi  (512)  20000000     105 ns/op
+linear-bi  (4096) 2000000      620 ns/op
+{% endhighlight %}
+
+<p>The above code looks promising, but in reality, it's just cutting our input in half. In the case of IntSet, we specify a target haystack size, so it's more efficient to get a smaller size upfront versus introducing the overhead of an extra comparison and division per call.</p>
+
+<p>So, did we learn anything? It comes down to trade offs. If we expect to have large haystacks, we'll probably have to burden our inserts to preserve ordering and use binary search. If we expect smaller haystacks, which is already very fast as a linear search, we need to decide if a 25% gain is worth it.</p>

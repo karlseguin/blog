@@ -1,0 +1,77 @@
+---
+layout: post
+date: 2017-03-23
+title: "Learning Elixir's GenServer - Part 2"
+description: "An introduction to Elixir's GenServers and concurrent programming"
+tags: [concurrency, elixir]
+---
+
+<p>In <a href="/Learning-Elixir-GenServer-Part-1/">Part 1, we introduced GenServers</a> by looking at a simple example that exposed a shared id map (string to integer). We'll expand on that example by having our in-memory id map periodically refreshed. This is the reason that we didn't use an Agent in the first place.</p>
+
+<p>Our original implementation doesn't require much change. First, we'll add a <code>schedule_refresh</code> function and call it in <code>init</code></p>
+
+{% highlight elixir %}defmodule Goku.IdMap do
+  use GenServer
+
+  def start_link() do
+    GenServer.start_link(Goku.IdMap, nil, name: "idmap")
+  end
+
+  def init(nil) do
+    schedule_refresh()
+    {:ok, load()}
+  end
+
+  defp schedule_refresh() do
+    # 60 seconds
+    Process.send_after(self(), :refresh, 1000 * 60)
+  end
+
+  defp load() do
+    %{"goku" => 1, "gohan" => 2}
+  end
+end
+{% endhighlight %}
+
+<p><code>Process.send_after</code> sends the specified message, <code>:refresh</code> here, to the specified process. We use <code>self()</code> to get the current running process id. Remember, <code>init</code> is invoked by <code>GenServer.start_link</code> and running in our newly created GenServer process. So, the above is the GenServer sending a message to itself, 60 seconds from now.</p>
+
+<p>Much like we used <code>hande_call</code> to respond to <code>GenServer.call</code> requests, we use <code>handle_info</code> to handle messages sent in the above fasion:</p>
+
+{% highlight elixir %}def handle_info(:refresh, _currnet_state) do
+  schedule_refresh()
+  new_state = load()
+  {:noreply, new_state}
+end
+{% endhighlight %}
+
+<p>Our <code>handle_info</code> matches the argument passed (<code>:refresh</code>) and receives the current data/state of the GenServer process (which we won't use, here). All we have to do is schedule the next refresh (using the same <code>schedule_refresh</code>), reload the data and return that as our new state.</p>
+
+<p>That's really all we need to make this work. However, there's an opportunity to improve this and further expose the concurrency model we talked about in the previous part. Specifically, our <code>handle_info</code> code is being processed by our module's GenServer process. So while this code is executing, calls to <code>get</code> will block until <code>handle_info</code> is done and the process can fulfill pending <code>call</code>'s. Remember, <code>get</code> uses <code>GenServer.call</code> which is synchronous and blocks until it receives a reply. If <code>load</code> is slow, you'll see noticeable latency spikes every 60 seconds. What can we do?</p>
+
+<p>What if we spawned a process specifically to load the new state? That would get us half way there, but that process wouldn't be able to update our GenServer's state (nothing can touch the data, for reading or writing, except the GenServer process itself). But is that really a problem? We've already seen that we can easily communicate with a GenServer. So, consider:</p>
+
+{% highlight elixir %}def handle_info(:refresh, state) do
+  schedule_refresh()
+  spawn fn -> GenServer.cast(@name, {:refreshed, load()}) end
+  # doesn't wait for the above to finish
+  # so doesn't block the GenServer process from servicing other requests
+  {:noreply, state}
+end
+{% endhighlight %}
+
+<p>Our <code>handle_info</code> still schedules a refresh 60 seconds from now, but instead of loading the new state directly, it spawns a process to do the loading. That new process will pass the newly loaded state back to the GenServer via the <code>GenServer.cast</code> function, which is the asynchronous equivalent to <code>call</code> (we could use <code>call</code>, but since we don't care for a reply, <code>cast</code> is more appropriate). Also, note that <code>handle_info</code> now uses the <code>state</code> parameter as part of the return value. That's because by the time we return from this function we're still using the same old state.</p>
+
+<p>Finally, we have to handle the <code>cast</code> call. This is done through <code>handle_cast</code>:</p>
+
+{% highlight elixir %}def handle_cast({:refreshed, new_state}, _old_state) do
+  {:noreply, new_state}
+end
+{% endhighlight %}
+
+<p>Hopefully you guessed that the above function would be this simple. It fits the GenServer patterns we've seen so far. In the end, we've minimized the complexity of the code running in our single process; much like we'd minimize the surface area of a mutex. But, there's zero risk that we've introduced a concurrency bug by making things too granular.</p>
+
+<p>Put differently, we spawn a new process to do the expensive loading, freeing our GenServer process to keep servicing requests. Once that loading is done, we pass the data back to the GenServer. At this point, the GenServer updates its state.</p>
+
+<p>Recapping, there are 4 functions that run in a GenServer process: <code>init</code>, <code>handle_call</code>, <code>handle_cast</code> and <code>handle_info</code>. <code>init</code> is the only that's required (to set the initial state), but you'll have at least one of the other ones (else, your GenServer can do nothing) and will often have a mix of them (we're using all three here). You'll also often have multiple version of the <code>handle_*</code> functions (pattern matching the first argument).</p>
+
+<p>And that's how GenServer's are used and a bit of how they work. At the risk of sounding like a broken record, I think there are two important things to understand. First, at first glance, it can seem more daunting than it is. Second, the strict ownership of data by the GenServer process is different than many other concurrent programming paradigms. It's easier to reason about, and thus harder to screw up, because there are no moving parts (more accurately, moving data) and never any shared access.</p>

@@ -1,0 +1,41 @@
+---
+permalink: "/2011/5/3/Dealing-with-Now-and-why-i-am-almost-done-C-and-J/"
+layout: post
+date: 2011-05-03
+title: "Dealing with Now and why I'm almost done with C# and Java"
+tags: [testing]
+---
+<p>It's a common scenario to have to use the current time within code. A good example is timestamping an audit trail. As part of your code to create an <code>Audit</code> object, you might do something like:</p>
+
+{% highlight clike %}
+var audit = new Audit
+{
+	UserName = user.Name,
+	Dated = DateTime.Now,
+	//...
+};
+{% endhighlight %}
+
+<p>The problem with the above code is that it's hard to test. Personally, I think testing that the proper time is used for your audit record is important. Depending on what field you're in, your lawyers might think so too. However, if we wrote a very specific test, we might be in for a surprise. Can you spot the problem?</p>
+
+{% highlight clike %}
+public void ItSetsTheAuditTimeToRightNow()
+{
+	var audit = CreateAuditItem(new User{Name = "Leto"});
+	audit.Dated.ShouldEqual(DateTime.Now);
+}
+{% endhighlight %}
+
+<p>Sometimes such a test will pass, sometimes it won't. Why? Because between setting DateTime.Now in the code and then verifying it in the test, the time might have changed.</p>
+
+<p>What solution do we use? Well, when all you have is a hammer...That's right, I've seen this problem "solved" by injecting an abstract dependency into objects. Now we can mock and fully control the creation of time.</p>
+
+<p>And you know what? That's just stupid. Getting the current time shouldn't need abstraction nor decoupling. I want to use DateTime.Now in my code and I want it to be testable. When a language or framework or whatever makes you jump through hoops to get the current time then something is broken.</p>
+
+<p>In Ruby, you use Time.now. Why? Because Time in Ruby is an object. In C# or Java it'd be a class. But in Ruby, as well as most (all?) dynamic languages, it's an actual object. So we can just change it to do/be/return whatever we want whenever we want (like at runtime).</p>
+
+<p>I don't think C++ developers who've spent 10+ years dealing with memory management have any concept of how much energy/productivity they spend on memory management. I don't think C#/Java developers have any concept of how much energy/productivity they spend on decoupling. Worse, I think many C#/Java developers don't understand that DI, interface-based programming, and fear of statics, is result of language limitations. Developers just think it's how you code - regardless of the language.</p>
+
+<p>Not too long ago that was me...IoC, mocking, interfacing out the wazoo. I didn't realize that how I coded was really just a by-product of how my language required me to code. I think this was one of those fundamental eye openers for me. I've had a handful in my career and I always treasure them when they happen. </p>
+
+<p>I do want to point out that C#'s lambdas largely solve this simple case. I don't need anyone to post a comment including <code>Func&lt;DateTime&gt;</code>. It isn't perfect, but it's certainly more than close enough for me. However, move to something just a little more complicated, and you're back at writing infrastructure and architecture rather than adding business value.</p>

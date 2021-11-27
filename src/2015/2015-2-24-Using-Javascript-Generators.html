@@ -1,0 +1,159 @@
+---
+layout: post
+date: 2015-02-24
+title: "Using Javascript Generators"
+description: "Introduction to using Javascript Generators (as well as other ES6) features for building real node.js applications"
+tags: [node.js]
+---
+
+<p>If you've checked other posts about ES6, you've probably seen Generators explained with the help of code that looks something like:</p>
+
+{% highlight javascript %}
+function task() {
+  yield 1;
+  yield 2;
+  yield 3;
+}
+
+var iterator = task();
+console.log(iterator.next().value);
+console.log(iterator.next().value);
+console.log(iterator.next().value);
+{% endhighlight %}
+
+<p>It's hard to see how the above can be used to eliminate nesting.</p>
+
+<p>Generators don't magically make asynchronous code synchronous. All they do is return an iterator which can be used to step through a function (which is what the above code shows). For a real code, we need something that understands and automatically executes iterators. Popular libraries are <a href="https://github.com/tj/co">co</a>, <a href="https://github.com/kriskowal/q">Q</a> and <a href="https://github.com/jmar777/suspend">suspend</a>. If you're using <a href="http://koajs.com/">Koa</a> (or some other generator-aware framework) this should all be setup for you; your code will already be running within a generator-aware control flow pipeline.</p>
+
+<p>The other thing to understand is that Generators work in conjunction with, not as a replacement for, promises. While this isn't a strict rule, it's how non-trivial examples work. Understanding how the two work together was my <em>aha moment</em>. Specifically, yielding to a promise stops execution until said promise is resolved.</p>
+
+<p>Back to our goal: connecting to a database and querying it. Ideally, our target code looks something like:</p>
+
+{% highlight coffeescript %}
+query = (sql, params) ->
+  conn = connect()
+  result = conn.query(sql, params)
+  conn.close()
+  return result
+{% endhighlight %}
+
+<p>Of course, we know that <code>connect</code> and <code>conn.query</code> are asynchronous. The first step is to make this code leverage promises (I'm going to do this the long way first). Let's do <code>connect</code>:</p>
+
+{% highlight coffeescript %}
+# cs
+connect = ->
+  new Promise (resolve, reject) ->
+    pg.connect connectionString, (err, conn) -> resolve(conn)
+{% endhighlight %}
+
+{% highlight javascript %}
+// js
+function connect() {
+  return new Promise(function(resolve, reject){
+    pg.connect(connectionString, function(err, conn){
+      resolve(conn);
+    });
+  });
+}
+{% endhighlight %}
+
+<p>Using the above, we end up with:</p>
+
+{% highlight coffeescript %}
+query = (sql, params) ->
+  connect().then (conn) ->
+    result = conn.query(sql, params)
+    conn.close()
+    return result
+{% endhighlight %}
+
+<p>The next step is turning the above function into a generator. In CoffeeScript, a function that yields is a generator. In JavaScript the function would need to be declared with <code>*</code>: <code>function* query(sql, params) {...}</code>.</p>
+
+{% highlight coffeescript %}
+# cs
+query = (sql, params) ->
+  conn = yield connect()
+  result = conn.query(sql, params)
+  conn.close()
+  return result
+{% endhighlight %}
+
+{% highlight coffeescript %}
+// js
+function* query(sql, params) {
+  var conn = yield connect();
+  var result = conn.query(sql, params);
+  var conn.close();
+  return result;
+}
+{% endhighlight %}
+
+<p>Again, the <em>aha momenet</em> is understanding that <code>yield</code> waits for our promise to be resolved. Furthermore, while resolve gets assigned, reject gets raised:</p>
+
+{% highlight coffeescript %}
+connect = ->
+  new Promise (resolve, reject) ->
+    pg.connect connectionString, (err, conn) ->
+      return reject(err) if err?
+      resolve(conn)
+
+query = (sql, params) ->
+  try
+    conn = yield connect()
+    ...
+  catch err
+{% endhighlight %}
+
+<p>Before we do the same change to <code>conn.query</code>, let's clean up our promise code by switching from the native ES6 Promise to <a href="https://github.com/petkaantonov/bluebird">Bluebird</a>. With bluebird, we can easily create promises for an objects methods via <code>promisifyAll</code>:</p>
+
+{% highlight coffeescript %}
+pg = Promise.promisifyAll(require('pg'))
+Promise.promisifyAll(pg.Client.prototype)
+
+connect: ->
+  pg.connectAsync(connectionString).spread (conn, close) ->
+    conn.close = close
+    conn
+
+query: (sql, params) ->
+  conn = yield connect()
+  result = yield conn.queryAsync(sql, params)
+  conn.close()
+  return result
+{% endhighlight %}
+
+<p>The first lines generates an <code>*Async</code> version of every method exposed directly by <code>pg</code> (Async methods return promises). The second line does the same thing for all instance methods of the <code>Client</code> object.</p>
+
+
+<p>That's kind of all there is to it. You do end up using <code>yield</code> in a lot of places, but it does wipe out all nesting (something we couldn't quite get done with Promises alone). It also brings back more conventional exception handling, which again, never felt 100% right with promises.</p>
+
+<p>To get a better feel for things, here's some code you can play with. It's a bit more standalone.</p>
+
+{% highlight javascript %}
+// npm install co
+// you'll need to be running an engine that supports ES6 (io.js or node with harmony enabled)
+
+var fs = require('fs');
+var co = require('co');
+
+function readFile(path) {
+  return new Promise(function(resolve, reject){
+    fs.readFile(path, 'utf-8', function(err, text) {
+      err ? reject(err) : resolve(text);
+    });
+  });
+}
+
+// can use Q or suspend. Using co is what makes it so we don't need to
+// manually iterate our generator and makes it all promise-aware.
+// In a framework like Koa, the fact that your code is running inside
+// a similar pipeline is completely transparent.
+co(function*() {
+  try {
+    contents = yield readFile('test');
+    console.log(contents);
+  } catch(err) {
+    console.log(err);
+  }
+});
+{% endhighlight %}

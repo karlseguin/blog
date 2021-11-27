@@ -1,0 +1,26 @@
+---
+permalink: "/2010/7/20/noobgaming-my-rails-and-gaming-passions-combined/"
+layout: post
+date: 2010-07-20
+title: "noobgaming : my rails and gaming passions combined"
+tags: [tech]
+---
+<p>At the start of my extended vacation, I vowed to release a website using Rails. With the help of my friend Aaron Pepper (creator of the excellent feed reader <a href="http://feedingo.com/">feedingo.com</a>), yesterday we released <a href="http://noobgaming.com/">a website to share simple game tips</a>. What hopefully sets it apart is the focus on simple, spoiler-free, tips - it isn't where you go to for a walkthrough or strategy, its where you go to for the very basics.</p>
+
+<p>In following posts I'm going to talk in more detail about the individual pieces, but for now I want to give an overview. Here's a list of core technologies:</p>
+<ul>
+   <li>Rails 3 Beta 4,</li>
+   <li><a href="http://www.rubyenterpriseedition.com/">Ruby 1.8.7 Enterprise Edition</a>, </li>
+   <li><a href="http://wiki.nginx.org/Main">nginx</a> web server with <a href="http://www.modrails.com/">Phusion Passenger</a>,</li>
+   <li><a href="http://www.mongodb.org/">MongoDB 1.4.4</a> and <a href="http://mongomapper.com/">MongoMapper</a>,</li>
+   <li><a href="http://postmarkapp.com/">PostMark</a> for mail delivery,</li>
+   <li>Hosted on a <a href="http://linode.com/">Linode VPS</a> and running <a href="http://www.ubuntu.com/">Ubuntu 10.04</a></li>
+</ul>
+
+<p>I was originally using a release candidate of Ruby 1.9.2 but ran into problems with some native gems. Except for a new hash syntax, 1.8.7 and 1.9.2 seem fully compatible (for what I was doing anyways), so switching wasn't a problem. The switch was especially easy since I'm using <a href="http://rvm.beginrescueend.com/">Ruby Version Manager</a> (RVM). Basically it lets you install different versions of ruby side-by-side, each one isolated from the other. Once you install RVM, you can grab 1.8.7 by running <code>rvm install 1.8.7</code> and 1.9.2 by running <code>rvm install 1.9.2</code>. Once these are installed, you can switch your current ruby by doing <code>rvm 1.8.7</code> or <code>rvm 1.9.2</code>. RVM takes care of changing your PATH and you're good to go. Tools like RVM continue to show that, in a lot of cases, the command line is a better option for developers.</p>
+
+<p>Nginx and passenger are great together. <a href="http://openmymind.net/2010/7/1/Installing-Nginx-with-Passenger-on-Linux">I've blogged</a> about setting them up already - using the long manual way (passenger actually has an easier way to set it all up). Nginx continues to impress me - its stupid fast, efficient and has a bunch of useful modules. When I talk about the importance of Linux for all web developers, Nginx is at the top of my list. I <a href="http://codebetter.com/blogs/karlseguin/archive/2010/01/13/asp-net-performance-part-5-nginx.aspx">wrote about it</a> a while ago, and I strongly suggest you familiarize yourself with it and what it does (reverse proxy, load balancing, hardening, rewriting, and so on).</p>
+
+<p>I also <a href="http://codebetter.com/blogs/karlseguin/archive/2010/03/29/nosql-for-the-rest-of-us.aspx">blogged about NoSQL/MongoDB</a> in the past. I'm a huge believer - the benefits are massive and I have no doubt NoSQL will become mainstream. The truth though is that MongoDB with a static language like C# has much more impact that a dynamic language like Ruby. Ruby's dynamism with Rail's ActiveRecord and Migrations makes dealing with relational databases pretty painless...so the jump to MongoDB isn't as big a deal. With C#'s rigidness though MongoDB is a dream come true. Its hard to explain until you've used MongoDB.</p>
+
+<p>So that's briefly it. In the coming days I'll delve deeper into each topic. In the mean time, feedback or content submissions to <a href="http://noobgaming.com">noobgaming.com</a> are much appreciated.</p>

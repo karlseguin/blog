@@ -1,0 +1,134 @@
+---
+layout: post
+date: 2013-01-07
+title: "Introduction To Golang: Structures, Data and Instances"
+tags: [golang]
+---
+
+<p>Go has an elegant type system accompanied by a simple syntax. The first part involves creating a custom structure: </p>
+
+{% highlight go %}
+type Unicorn struct {
+  Name string
+  Age int
+  weight int
+}
+{% endhighlight %}
+
+<p>In Go, types (functions, structures, variables, ...) are exported based on the casing of the first letter. In our example not only is <code>Unicorn</code> accessible from outside, but so too are its <code>Name</code> and <code>Age</code> members. <code>weight</code> on the other hand, is not.</p>
+
+<p>When creating an instance of a type, we need to decide if we want a pointer or the actual value. Most of the time you'll probably want a pointer, but it's important to understand the difference. We'll get to that in a second. First, let's look at how we can create either one.</p>
+
+<p>To create a value we use the <code>var</code> keyword with a type:</p>
+
+{% highlight go %}
+var larry Unicorn
+{% endhighlight %}
+
+<p>In the case where the type can be inferred by an assignment, we can leave out the type:</p>
+
+{% highlight go %}
+var count = 1
+// same as
+var count int = 1
+{% endhighlight %}
+
+<p>The syntax to create a pointer is only slightly different:</p>
+
+{% highlight go %}
+var larry *Unicorn
+larry = new(Unicorn)
+{% endhighlight %}
+
+<p>This is quite verbose for code you'll be writing a lot. What you'll actually want to do is use the <code>:=</code> operator to define and create your pointer (using this approach also lets you omit <code>var</code>):</p>
+
+{% highlight go %}
+larry := new(Unicorn)
+{% endhighlight %}
+
+<p>There's one final tweak. If you want to create an instance and assign values, you can use yet another  syntax</p>
+
+{% highlight go %}
+larry := &Unicorn{
+  Name: "Larry",
+  Age: 240,
+}
+// same as
+larry := new(Unicorn)
+larry.Name = "Larry"
+larry.Age = 240
+{% endhighlight %}
+
+<p>To recap, most of the time you'll use:</p>
+
+{% highlight go %}
+// create an instance pointer
+larry := new(Unicorn)
+
+// create an instance pointer and initialize some members
+larry := &Unicorn{
+  Member1: value1,
+  MemberN: valueN,
+}
+
+// create a value type
+var vampires = 43
+{% endhighlight %}
+
+<p>So far we've only dealt with data fields. What about methods? Go lets us attach methods to our structures with a simple syntax:</p>
+
+{% highlight go %}
+func (u *Unicorn) Sleep(years int) (ok bool) {
+
+}
+{% endhighlight %}
+
+<p>The parts of this deceleration are a little different than what you are probably used to. First though, note that functions follow the same casing convention. Therefore, this function will be visible outside the package (in other word, it's public). About the order, the return value is at the end, the arguments in the middle, and the type it's attached to at the start.</p>
+
+<p>It's possible (and common) to declare a function that isn't attached to a specific type or doesn't return a value:</p>
+
+{% highlight go %}
+func blink(times int) {
+
+}
+{% endhighlight %}
+
+<p>Back to our first function. Notice that this behaves on a pointer type (<code>*Unicorn</code>). The function could be attached to a value type:</p>
+
+{% highlight go %}
+func (u Unicorn) Sleep(years int) (ok bool) {
+}
+{% endhighlight %}
+
+<p>Similarly, the functions arguments could be either value or pointer types. The benefits and drawbacks of pointers vs values are the same whether we are talking about arguments or the type being attached. These are the same advantages and disadvantages you see in almost every other languages. A change to a pointer made within the function will be visible outside the function. Furthermore, passing pointers around, especially for large types, is more efficient. On the flip side, if you don't want changes made to the instance within the function to change the original, you definitely don't want to pass a pointer:</p>
+
+{% highlight go %}
+func (u Unicorn) Rename(name string) {
+  u.Name = name
+}
+....
+larry := &Unicorn{
+  Name: "Larry",
+}
+larry.Rename("sally")
+
+// What's larry.Name ?
+{% endhighlight %}
+
+<p>After calling <code>Rename</code>, <code>larry.Name</code> remains <em>Larry</em> because only a copy of our structure was passed. As is, <code>Rename</code> is useless and should declared as <code>(u *Unicorn)</code></p>
+
+<p>A final, slightly off topic, note. Earlier we saw that our return value was named. This is optional, but useful. In the above example, the <code>ok</code> variable is available for us to assign to without having to declare it explicitly within the function. On top of that, Go supports multiple return values:</p>
+
+{% highlight go %}
+func png(file *os.File) (width int, height int) {
+  bytes := make([]byte, 8)
+  file.ReadAt(bytes, 16)
+  width = int(bytes[0]) << 24 | int(bytes[1]) << 16 | int(bytes[2]) << 8 | int(bytes[3])
+  height = int(bytes[4]) << 24 | int(bytes[5]) << 16 | int(bytes[6]) << 8 | int(bytes[7])
+  return
+}
+{% endhighlight %}
+
+<p>So there's a lot of options around creating instances. For the most part though, you'll use <code>x := new(Something)</code> or <code>x := &Something{...}</code>...anything else you might use is pretty standard stuff.</p>
+
+<p>More Go goodness to come</p>

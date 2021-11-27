@@ -1,0 +1,101 @@
+---
+layout: post
+date: 2015-12-26
+title: "An Introduction To OpenResty - Part 2 - Concepts"
+tags: [lua, performance]
+description: "Exploring basic OpenResty concepts and lua-nginx usage"
+---
+
+<p>With <a href="/An-Introduction-To-OpenResty-Nginx-Lua/">OpenResty installed and configured</a> from Part 1, it's time to dive a little deeper into how things work.</p>
+
+<h2>Process and Threading Model</h2>
+<p>If you've used nginx at all, you're probably familiar with its <code>worker_processes</code> directive. These processes are what actually service incoming requests. The directive tells nginx how many it should spawn and is commonly set to the number of CPU cores. This is in contrast to the single master process which is largely responsible for launching and maintaining the workers.</p>
+
+<p>The Lua code that you write runs directly within these worker processes. This is one of the reasons its so fast. Of course, since we're talking about individual processes, sharing data between them isn't trivial. I'll revisit this topic (at the end of this post and in a following one), for now, I'll assume that the benefits and implications are obvious since it's a common model.</p>
+
+<p>Where things get more interesting is how each worker deals with concurrency. So far, my take on it is that it's like node minus callbacks. For example, if we're running with <code>worker_processes  1;</code>, then given the following code:</p>
+
+{% highlight lua %}
+location /one {
+  content_by_lua_block {
+    while true do
+      -- endless loop
+    end
+  }
+}
+
+location /two {
+  echo 'two';
+}
+{% endhighlight %}
+
+<p>A request to <code>/one</code> in one tab, will block a following request to <code>/two</code> in another.</p>
+
+<p>However, the beauty of nginx lua is that is uses and manages coroutines (light weight green threads) for you. What this means is that if you use one of the many available libraries (or write your own leveraging available building blocks, such as ngx_lua sockets), you get non blocking code. For example, we can look at a more realistic example:</p>
+
+{% highlight lua %}
+location /(.*)/(.*) {
+  content_by_lua_block {
+    -- in Lua arrays have 1-based indexes
+    local res, err = redis:hget(ngx.var[1], ngx.var[2])
+    -- todo: handle err and cases where res == nil
+    ngx.say("it's over " .. res)
+  }
+}
+{% endhighlight %}
+
+<p>In this case, making a request to <code>/goku/power</code> returns <code>it's over 9000</code>. More importantly, while the data is being fetched from Redis (or postgres, or an external api, or ...), the worker is free to handle other requests.</p>
+
+<p>Everything in the lua-nginx ecosystem that can be non-blocking, is. And, from the looks of it, it's a rich ecosystem, based on understandable building blocks, so you'll probably never run into problems. Still, to re-iterate, if you call <code>os.execute('sleep 5')</code> then you <em>will</em> block the worker for 5 seconds because <code>os.execute</code> isn't lua-nginx aware.</p>
+
+<h2>Phases</h2>
+<p>If you've ever dug a little into nginx, you probably know that <em>phases</em> are an important aspect of how requests are handled. Each request goes through a sequences of phases, such as the rewrite, access and content phases (there are more).</p>
+
+<p>You've already seen me make use of the <code>content_by_lua_block</code> directive. As you can guess, this executes the lua block when the request reaches the content phase and is meant to produce a response. How do you decide if your code should be run in <code>content_*</code> or <code>access_*</code> or the other phases? To be honest, I'm not sure. However, what I do know, is that nginx can only have 1 content handler per location. So, if you want to use a content handler such as <code>proxy_pass</code>, you'll want to put your lua code in the <code>access_*</code> content handlers.</p>
+
+<p>That said, some of the phases are pretty obvious. <code>init_*</code> and <code>init_worker_*</code> are execute when the master is started and when each worker is started respectively. The <code>body_filter_*</code> and <code>header_filter_*</code> directives let you modify the the body and headers before returning it to the client (after the content phase).</p>
+
+<p>You might be wondering why I've been using the <code>*_by_block</code> directives rather than the seemingly nicer <code>*_by_file</code> alternative. The reason is that it doesn't listen to the <code>lua_package_path</code> directive that we setup in part 1. Whereas <code>*_by_block</code>, lets me use <code>require</code> which <em>does</em> listen to the directive. For me, this is pretty important to having cleanly organized code that'll work just as well on my computer, or a corworkers, or production.</p>
+
+<h2>Modules</h2>
+<p>I don't want to spend a lot of time talking about Lua, but a brief overview of Lua modules is worthwhile. We already know that when we require a module, the <code>lua_package_path</code> is searched. However, what you might not know is that the required module is only loaded once per worker (the first time it's required). Also, the module can export anything: a scalar, a function, a table. It's <em>a lot</em> like how node works.</p>
+
+<p>Consider the following and try to guess what the output is going to be:</p>
+
+{% highlight lua %}
+-- proj1.conf
+location / {
+  content_by_lua_block {
+    local increment = require('handler')
+    ngx.say(increment())
+  }
+}
+
+-- handler.lua
+local count = 0
+return function()
+  count = count + 1
+  return count
+end
+{% endhighlight %}
+
+<p>The first time you access <code>/</code> you'll see <code>1</code>, but the output will increment on each subsequent requests. What does this tell us about lua-nginx and modules? First, it confirms the fact that the module is only loaded once. Subsequent requests do no reset <code>count</code> to <code>0</code>. Secondly, it tells us that state is preserved from one request to another. If you think about it, this should make sense. You might be thinking this is terrible (or awesome), but the reality is that you won't be writing code like this. Your modules will export functions that create variables scoped to said functions (but it's great way to share read-only data without constantly having to reload it).</code>
+
+<p>As a fun exercise, change the <code>worker_proces</code> directive from 1 to 10 and try reloading the page a few times. Hopefully you understand why you're getting the output that you are.</p>
+
+<p>To be absolutely clear, the module is loaded once per worker process. Not once per location.</p>
+
+<h2>How Does It Compare To Go / Java / etc.</h2>
+<p>Personally, I think there's much less overlap between OpenResty and Go than most people seem to think. Part of the reason is because I'm a firm believer than dynamic languages are considerably more productive. I find this especially true for most web applications and APIs which are dealing with user input, databases and outputting html or json. There's such a high degree short-lived fluid data, that I need a compelling reason to pay the price of using a static language. This is especially true for Go, which has a weak type system and poor reflection capabilities.</p>
+
+<p>Where I love Go is when I either have to do a lot of byte manipulations (such as socket programming) or when I want to share memory across multiple cores. Duplicating memory per process isn't only expensive (10GB of memory on a 24 core machine requires 240GB) but it leads to synchronization issues. For example, if I wanted to hold a large trie in memory and have it scale across as many cores as possible, I'd pick Go.</p>
+
+<p>If you're building a lot of middleware type code, I think OpenResty is a better choice than Go if the middleware is request-focused (like authentication, logging, and so on). Again, if it involves sharing data across requests (like a cache), Go's probably a better choice.</p>
+
+<p>Is there anything besides my love of dynamic languages that makes me say OpenResty is a better choice? Probably the biggest thing I can point to is that I always run my Go code behind nginx anyways. There are just too many useful built-in and 3rd party modules for nginx. So, if you're gonna run nginx anyways, it simplifies your stack to put everything there.</p>
+
+<p>I did do a benchmark. My code was rather focused so I ended up testing the underlying crypto libraries more than anything. They appear to be roughly in the same ballpark, with a clear advantage going to OpenResty when requests have to go through nginx to reach Go.</p>
+
+<p>As far as I'm concerned, the interesting question is actually how does it compare to Node or Ruby or Python or PHP where I think there's a great deal of overlap. So far, it feels like OpenResty is massively under hyped. It's considerably faster and has a straightforward programming paradigm. The only downside that I see is Lua: it does a lot of stupid things, such as (but certainly not limited to) having arrays start at 1.</p>
+
+<p>I haven't used it, but I want to direct your attention to Lapis: <a href="http://leafo.net/lapis/">a web framework for OpenResty</a>. It looks pretty sweet.</p>

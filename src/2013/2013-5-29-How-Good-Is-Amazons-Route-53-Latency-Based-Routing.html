@@ -1,0 +1,141 @@
+---
+layout: post
+date: 2013-05-29
+title: "How Good Is Amazon's Route 53 Latency Based Routing?"
+description: "A look at how well Amazon's Route 53 Latency Based Routing directs traffic to the best location"
+tags: [devops, performance]
+---
+
+<p>At <a href="http://www.viki.com">Viki</a> we use Amazon's Route 53 to do Latency Based Routing (LBR) to one of 4 locations. We don't use EC2, but our 4 locations map well to AWS regions: Washington DC to US-East-1, Los Angeles to US-West-1, France to EU-West-1 and Singapore to AP-Southeast-1 (also in Singapore). We're quite curious to know how well the routing works. (Washington DC is hosted at Softlayer which peers with US-East-1, and latency within tiny Singapore tends to be ~ 5ms)</p>
+
+<p>Collecting and aggregating the data is trivial. For each request, we collect the IP address and the server/location handling the request. Once we have enough data we use an IP to Country database to map each IP to a country group the data. The following shows, as a percentage, where requests from a country ended up:</p>
+
+{% highlight text %}
+COUNTRY                             US-East    US-West    Europe     SEA
+------------------------------------------------------------------------
+Algeria                             3          2          96         0
+Anonymous Proxy                     26         40         33         0
+Argentina                           98         1          2          0
+Australia                           4          79         0          16
+Belgium                             7          0          93         0
+Bosnia and Herzegovina              10         0          90         0
+Brazil                              99         0          0          0
+Canada                              54         46         0          0
+Chile                               68         32         0          0
+China                               74         13         0          14
+Colombia                            100        0          0          0
+Costa Rica                          99         1          0          0
+Croatia                             2          0          98         0
+Ecuador                             100        0          0          0
+Egypt                               10         0          90         0
+France                              1          0          99         0
+Germany                             6          0          94         0
+Greece                              2          0          98         0
+Guam                                9          91         0          0
+Hong Kong                           15         5          0          80
+India                               19         0          7          74
+Indonesia                           15         0          1          84
+Iraq                                12         0          88         0
+Israel                              2          0          97         2
+Italy                               4          0          96         0
+Japan                               16         3          29         51
+Korea, Republic of                  9          32         0          58
+Kuwait                              8          0          55         37
+Malaysia                            7          0          0          92
+Mexico                              24         75         1          0
+Morocco                             3          0          95         2
+Netherlands                         3          0          97         0
+New Zealand                         3          93         0          4
+Pakistan                            13         1          80         6
+Panama                              99         1          0          0
+Peru                                99         0          1          0
+Philippines                         5          54         0          41
+Poland                              6          0          94         0
+Puerto Rico                         100        0          0          0
+Qatar                               3          0          0          97
+Romania                             2          0          98         0
+Russian Federation                  51         0          46         3
+Saudi Arabia                        7          0          93         0
+Serbia                              3          0          97         0
+Singapore                           6          0          0          94
+Spain                               7          0          93         0
+Sweden                              4          0          96         0
+Taiwan, Province of China           22         15         0          63
+Thailand                            25         0          1          75
+Tunisia                             2          4          94         0
+Turkey                              6          0          94         0
+United Arab Emirates                8          0          11         81
+United Kingdom                      8          0          92         0
+United States                       52         46         1          1
+Venezuela                           100        0          0          0
+Vietnam                             33         17         0          51
+unknown                             26         3          22         50
+{% endhighlight %}
+
+<p>Any country with less than 5000 requests was removed (in most cases the sample is quite a bit larger than this). At first glance, the results aren't great. Why do 4% Australian requests go to Washington DC instead of LA or Singapore? Worse, why aren't 100% of requests from Singapore handled in Singapore? Some data is downright concerning. Like 51% of Russian and 32% of Vietnam requests being handled by Washington DC rather than France and Singapore respectively. How can 80% of UAE requests go to Singapore while none from Iraq go there?</p>
+
+<h3>Duplicate Ids</h3>
+<p>The above table was generated with duplicate IDs. What if we remove dupes (and lower the threshold to 250 requests):</p>
+
+{% highlight text %}
+COUNTRY                      US-East    US-West    Europe     SEA
+------------------------------------------------------------------------
+Anonymous Proxy                     33         38         29         0
+Argentina                           97         1          2          0
+Australia                           5          77         0          18
+Brazil                              99         1          0          0
+Canada                              54         46         0          0
+Chile                               68         32         0          0
+China                               41         17         0          42
+Colombia                            100        0          0          0
+Egypt                               16         0          84         0
+France                              4          0          96         0
+Germany                             7          0          93         0
+Greece                              4          0          96         0
+Hong Kong                           12         3          0          84
+India                               21         0          6          73
+Indonesia                           16         0          1          83
+Israel                              3          0          97         0
+Italy                               6          0          94         0
+Japan                               4          2          5          89
+Korea, Republic of                  9          34         0          56
+Malaysia                            8          0          0          92
+Mexico                              22         77         0          0
+Morocco                             4          0          95         0
+New Zealand                         6          90         0          4
+Pakistan                            17         3          75         5
+Peru                                99         0          0          0
+Philippines                         5          55         0          40
+Puerto Rico                         99         1          0          0
+Romania                             3          0          97         0
+Russian Federation                  66         0          33         1
+Saudi Arabia                        9          0          91         0
+Serbia                              3          0          97         0
+Singapore                           14         1          0          85
+Spain                               8          0          92         0
+Thailand                            27         1          0          72
+Turkey                              11         0          89         0
+United Arab Emirates                8          0          13         79
+United Kingdom                      9          0          90         0
+United States                       42         58         0          0
+Vietnam                             41         17         0          42
+unknown                             10         4          20         66
+{% endhighlight %}
+
+<p>To be honest, I'm not sure which of the two is more relevant. Maybe proxy servers with shared IPs is a common setup in Russia (for example), in which case discarding duplicates doesn't seem right. Either way, for the most part, the results aren't significantly different. In both cases, US-East-1 appears to get more traffic than it ought to.</p>
+
+<h3>Maybe the IP-To-Country Database Is Wrong?</h3>
+<p>One thing that could explain the less-than-stellar results is the country lookup. Maybe the requests going to US-East-1 aren't really from Singapore like we think they are? The database we used is <a href="http://dev.maxmind.com/geoip/legacy/geolite">MaxMind's GeoLite City</a>.</p>
+
+<p>To see if the problem might be with the country lookup rather than the routing, a random sample of odd cases were manually tested. For example, if the IP <code>59.189.27.129</code> resolved to Singapore but was served by Washington DC, we'd ping it from all 4 locations.</p>
+
+<p>Although we only tested a small sample, every single one confirmed the the IP to Country database was right (or at least very close). Every IP that resolved to Singapore that we tested had better latency to Singapore (1.5-50ms) than to th US-East (280ms-350ms). Similarly, all UAE requests handled by Singapore had much better latency to France (in fact, Singapore appears to be a particularly bad routing choice for UAE requests, averaging roughly 500ms (and peaking at over 1200ms) vs Frances 135ms, US-East's 220ms and US-West's 290ms).</p>
+
+<h3>What Now?</h3>
+<p>First, it's worth mentioning that this is consistent with what we've observed more directly. At one point we had image servers in EC2 US-East-1 and AP-Southeast-1 and our Singapore office was being routed to US-East-1. We had to open a ticket with Amazon and wait a couple weeks until the issue was resolved.</p>
+
+<p>It'd be great if we could try the same test with different DNS providers. The results aren't great, but maybe they are typical - especially when you consider the popularity of Google DNS and OpenDNS. We could also try a different IP to Country database, but I feel pretty confident that the country mapping is accurate.</p>
+
+<p>Since the Americas represent large amount of our traffic, we'll definitely be looking more thoroughly at the US-East vs US-West routing. It was expected that 100% of Canadian and US traffic would be routed to US servers, but is the routing correct on a state/province level? Also, as a not to self, maybe it's time for us to look at servers in South America.</p>
+
+<p>I don't feel like we've come up with any answers. But this is just a start. Maybe we can come up with a way to effectively test a different provider. Maybe Amazon's support can shed some light on the situation. Stay tuned.</p>

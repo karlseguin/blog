@@ -1,0 +1,195 @@
+---
+layout: post
+date: 2021-11-13
+title: "Rust Ownership, Move and Borrow - Part 2"
+description: "A more detailed look at Rust's ownership and inherited mutability"
+tags: [rust]
+---
+
+<p>The rules that govern borrowing with respect to mutability are straightforward: we can have multiple immutable borrows, or one mutable borrow. To gain a better understanding though, consider what happens when dealing with nested data. In this example, our <code>User</code> has a nested <code>Config</code> as well as a list of <code>bookmarks</code>:</p>
+
+{% highlight rust %}
+// #[derive(Debug)] instructs the compiler to auto-generate the code needed to
+// satisfy the Debug trait (think interface). We need this to be able to print
+// out the values
+
+#[derive(Debug)]
+struct Config {
+  max_bookmarks: usize,
+}
+
+#[derive(Debug)]
+struct User {
+  config: Config,
+  bookmarks: Vec<String>,
+}
+
+fn main() {
+  let mut user = User{
+    bookmarks: vec![],
+    config: Config{max_bookmarks: 1000},
+  };
+
+  let config = user.config;
+  println!("{:?} {:?}", user, config);
+}
+{% endhighlight %}
+
+<p>The above code moves <code>user.config</code> to a new owner, the <code>config</code> variable. When we try to print <code>user</code> and <code>config</code>, the compiler tells us that <code>user</code> has been "partially moved" and cannot be used. If we change the last line to print <code>user.bookmarks</code> instead of <code>user</code>, the code works:</p>
+
+{% highlight rust %}
+println!("{:?} {:?}", user.bookmarks, config);
+{% endhighlight %}
+
+<p>We can see from these examples that Rust allows nested fields to be moved (and borrowed) independently, but doing so invalidates the whole (<code>user</code> in this case). This makes sense: <code>user</code> is no longer valid as a whole, its <code>config</code> is no longer valid (it's been moved to a different owner).</p>
+
+<p>While we're able to partially move and borrow, mutability is, by default, "inherited". We cannot control the mutability of individual fields. If we don't declare our <code>user</code> as mutable, then <code>bookmarks</code> isn't mutable:</p>
+
+{% highlight rust %}
+fn main() {
+  let user = User{
+    bookmarks: vec![],
+    config: Config{max_bookmarks: 1000},
+  };
+
+  // will not work as user isn't mutable
+  user.bookmarks.push("https://www.openmymind.net".to_owned());
+}
+{% endhighlight %}
+
+<p>However, when we move, we can change mutability. The following will work:</p>
+
+{% highlight rust %}
+fn add(mut user: User) {
+  user.bookmarks.push("https://www.openmymind.net".to_owned());
+}
+
+fn main() {
+  let user = User{
+    bookmarks: vec![],
+    config: Config{max_bookmarks: 1000},
+  };
+  add(user)
+}
+{% endhighlight %}
+
+<p>This is important: it isn't the data which is or isn't mutable, it's the binding.</p>
+
+<p>As a final example, consider the following:</p>
+
+{% highlight rust %}
+fn main() {
+  let name: Option<String> = Some("Leto".to_owned());
+  match name {
+    None => println!("no name"),
+    Some(name) => println!("we have a name: {}", name),
+  }
+  println!("{:?}", name)
+}
+{% endhighlight %}
+
+<p>The compiler will tell us that our last line is invalid because <code>name</code> has been partially moved. Note that <code>name</code> is an <code>Option&lt;String&gt;</code>, and we can think of the actual string value, "Leto", as a nested field. The second arm of our match takes ownership of the the string value. The result is that <code>name</code>, the <code>Option&lt;String&gt;</code>, is no longer valid since part of its data has been moved. We can solve this by matching against a borrow:</p>
+
+{% highlight rust %}
+fn main() {
+  let name: Option<String> = Some("Leto".to_owned());
+  match &name {
+    None => println!("no name"),
+    Some(name) => println!("we have a name: {}", name),
+  }
+  println!("{:?}", name)
+}
+{% endhighlight %}
+
+<p>It's worth remembering that in addition to moving and borrowing, there's also copying. If we replace our <code>Option&lt;String&gt;</code> with an <code>Option&lt;T&gt;</code> where T implements copying, our initial borrow-free version works at the "cost" of copying the value:</p>
+
+{% highlight rust %}
+fn main() {
+  let id: Option<i32> = Some(9001);
+  match id {
+    None => println!("no id"),
+    Some(id) => println!("we have a id: {}", id),
+  }
+  println!("{:?}", id)
+}
+{% endhighlight %}
+
+<p>(I say "'cost' of copying the value' because, the Copy trait is typically implemented on types where copying isn't only cheap, but also expected.)</p>
+
+<h3>Why?</h3>
+
+<p>Understanding the problems solved by this ownership model, even just conceptually, should help better understand the practical implications.</p>
+
+<h4>Why? - Safety</h4>
+<p>The main reason all of this is necessary is to have guaranteed compile-time safety without the overhead of a garbage collector. If, like me, you've spent most (or all) of your programming life with a garbage collector, you'll need to make a difficult adjustment to your perspective.  We're used to the runtime keeping track of what is and isn't used and cleaning things up as needed. No more. This code, thankfully, won't compile:</p>
+
+{% highlight rust %}
+#[derive(Debug)]
+struct User {
+  id: i32
+}
+
+fn main() {
+  let mut users = vec![User{id: 1}, User{id: 2}];
+  let last1 = users.last();
+  users.remove(1);
+  print!("last1 {:?}\n", last1);
+}
+{% endhighlight %}
+
+<p><code>last</code> borrows the value from our <code>users</code> vector which is then mutated via <code>remove</code>. Does <code>last</code> still point to valid data? In this specific case we're removing the last item, the same one returned by <code>last()</code>. If we had to manage our own memory <code>remove</code> probably would have been implement to <code>free</code> the removed memory; resulting in <code>last1</code> pointing to freed memory. What if instead of <code>remove(1)</code> we'd had pushed a new value onto the vector? The vector might have needed to grow, moving all data to new memory. In that case <code>last1</code> would be left pointing to the old freed location.</p>
+
+<p>Even in this trivial case, without explicit ownership, we don't know who is responsible for freeing data. Start making this code more complex, with functions calling functions and third party libraries, and even the most diligent teams won't always know when data should be freed or when it has already been freed.</p>
+
+<p>Rust's ownership model unambiguously answers the question of who is responsible for data. And, because the answer is based on a set of verifiable rules, we don't need to rely on fallible approaches, such as conventions and programmer diligence. Instead, the compiler can ensure correctness and insert code to free memory where needed.</p>
+
+<h4>Why? - Optimizations</h4>
+<p>The ownership model is both information we give to the compiler as well as a set of constraint about what is and isn't allowed. The compiler can leverage this to better optimize our code. Here's an example taken from <a href="https://doc.rust-lang.org/nomicon/aliasing.html">The Rustonomicon</a>:</p>
+
+{% highlight rust %}
+fn compute(input: &u32, output: &mut u32) {
+  if *input > 10 {
+    *output = 1;
+  }
+  if *input > 5 {
+    *output *= 2;
+  }
+}
+{% endhighlight %}
+
+<p>Ideally, we'd like to store <code>*input</code> in a local variable so that we didn't have to dereference it twice. At a quick glance, you might think this should be safe, but what if <code>input</code> and <code>output</code> reference the same value?:</p>
+
+{% highlight rust %}
+compute(&x, &mut x)
+{% endhighlight %}
+
+<p>Languages that allow this cannot safely optimize the <code>compute</code> function. In Rust, this isn't valid, we can't immutably borrow while mutably borrowing, so the code can be optimized.</p>
+
+<h4>Why? - Simplicity</h4>
+<p>It might seem a bit silly to say the the ownership model is about simplicity, but hear me out. When you start, you'll probably look at basic examples or try to write simple programs. These often look and feel needlessly complicated. And you might think to yourself: what am I not getting? Like our very first example in Part 1 , couldn't the compiler just compile this and run:</p>
+
+{% highlight rust %}
+fn main() {
+  let u1 = User{id: 9000};
+
+  let u2 = u1;
+  print!("{:?}", u2);
+
+  // this is an error
+  print!("{:?}", u1);
+}
+{% endhighlight %}
+
+
+<p>Maybe I'm wrong, but I believe the answer is: Yes, the compiler could compile this and run it with 100% safety. But that would turn the explicit and consistent nature of ownership into something fluid. Simple cases would become simpler, but complex cases would become more complicated. Sometimes assignments would move and invalidate the original, and sometimes it wouldn't. Either way, you'd still have to understand ownership, it's just that we'd introduce a second ownership mode. No thanks! (not to mention that it would make the compiler more complicated too).</p>
+
+
+<h3>Conclusion</h3>
+<p>Part 3 will conclude this introduction on ownership with a brief summary of everything we discovered and talked about so far. However, since this is such a fundamental aspect of Rust, we'll continue to revisit ownership while exploring other topics.</p>
+
+<p>As a final word of encouragement, if you still feel overwhelmed, don't worry about it. Start small and try your best. Be persistent, but also consider asking the community for help. In particular, I've found people in the <a href="https://users.rust-lang.org/">official rust forums</a> incredibly friendly, helpful and fast.</p>
+
+<div id=pager>
+  <a class=prev href=/Rust-Ownership-Move-and-Borrow-part-1/>ownership - part 1</a>
+  <a class=next href=/Rust-Ownership-Move-and-Borrow-part-3/>ownership - part 3</a>
+</div>

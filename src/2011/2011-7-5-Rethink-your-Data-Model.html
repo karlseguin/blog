@@ -1,0 +1,65 @@
+---
+permalink: "/2011/7/5/Rethink-your-Data-Model/"
+layout: post
+date: 2011-07-05
+title: "Rethink your Data Model"
+tags: [modeling, redis]
+---
+<p>It's unfortunate that the first thing many developers think of when they hear NoSQL is <em>performance at scale</em>. It's unfortunate because, for most of us, performance at the scale which NoSQL is associated with simply isn't all that relevant. It's also unfortunate because NoSQL solutions have other benefits of equal or greater value for a wider range of application/developers, but they aren't talked about as much.</p>
+
+<p>To me, NoSQL is about being open and aware of alternative, existing and additional patterns and tools for managing your data. This includes everything from file stores and relational databases, to graph databases and non-persisted storage. Basically, rather than lean exclusively on a single data storage engine you should use the best tool for the job; sometimes, specific features within a system will be a better fit for different solutions. (I really do consider RDBMS to be part of the NoSQL umbrella. However, what's changed in my mind is that document-oriented databases are a far better choice for general-purpose work, and RDBMS' are specialized solutions.)</p>
+
+<p>In chapter 4 of the [free] <a href="http://openmymind.net/2011/3/28/The-Little-MongoDB-Book">Little MongoDB Book</a>, I talk about the differences between modeling in MongoDB versus relational databases. The differences are all pretty minor - which is one of the reasons I advocate learning a document-database (like MongoDB or CouchDB) as your first step into NoSQL. However, this isn't true for all types of NoSQL solutions.</p>
+
+<p>Fundamentally rethinking how you model data is actually a really fun thing to do. Modeling data for a relational database is such second nature, that you constantly have to stop your brain from doing what comes naturally. Why would you want to do that, you might ask? Because we've been modeling more or less the same way for decades, it's time we challenged ourselves, experimented and learned.</p>
+
+<p>Let's look at an example. Let's say that we want to build a service that tracks all the buy requests for a stock market. We then want to make this data available based on a given symbol and a date range. In a relational, or document world (again, these two are really similar), we'd do something like:</p>
+
+{% highlight clike %}
+|   symbol   |   date  |   amount    |   volume  |  more data |
+{% endhighlight %}
+
+<p>We could now get to the data we want by doing a simple select, something like <code>where Symbol = 'GOOG' and Date > '2011/07/05 12:57:49' and Date < '2011/07/05 12:58:12'</code>.</p>
+
+<p>Now, what I like to do for fun is answer the question <em>How would I do this in Redis?</em> (and one day I'll learn Cassandra or some other column-oriented database and ask myself how I'd do it in that).</p>
+
+<p>The first thing many NoSQL solutions do, which can be quite jarring at first, is limit how you can query your data. In the relational (or document oriented world) you can filter on any column/field. Redis though is very key-focused, so you can more or less only select on a single value. This also means that all the fields that you don't select on can simply be thrown together into a single value blob.</p>
+
+<p>My first attempt at solving this problem in Redis was really stupid. It was so stupid I gave up on it within a couple seconds. But I think it's worth looking at it. I was thinking that for each buy order, we'd create a key in the format of <code>symbol:date</code> with the value being some type of serialization of amount/volume/more data. (Technically, multiple buys for the same symbol at the exact same data do happen, but that's an implementation detail which doesn't really change how we GET our data (it just changes how we store it)).Leveraging complex keys like this is really common on Redis - in fact, it's pretty much how you get anything done.</p>
+
+<p>So, a key might look something like <code>GOOG:20110705125802</code>. The problem is, how do you get a specific range? I was thinking you could get all the keys that match something like <code>GOOG:2011070512*</code> (yes, redis lets you get matching keys like this), but that starts to get really messy, really fast when seconds turn over to minutes, minutes to days, days to weeks, weeks to months and months to years. At the worst case, if you want all the orders between Dec 31st 2011, 23:59:55 and Jan 1st 2012, 00:00:05, you'd end up selecting a bunch of extra keys and having to re-filter them on the client. Like I said, this was a really bad idea. Heck, just figuring out where to put your wildcard is tricky.</p>
+
+<p>So I abandoned that thought and was pretty clueless for a couple minutes. Then I thought, what if we leverage Redis' sorted sets and treat this entire thing as a type of ranking system where the score is a timestamp. So now our key is simply the symbol name, say GOOG or MSFT. However, we store a sorted set at this key, which lets us assign a "score" to each value. Our score can be the unix timestamp (number of seconds in Jan 1 1970) of our data. How exactly does this look?:
+
+{% highlight clike %}
+  GOOG
+     1309870679 VALUE_BLOB
+     1309870679 VALUE_BLOB
+     1309870680 VALUE_BLOB
+     1309870681 VALUE_BLOB
+     1309870682 VALUE_BLOB
+     1309870682 VALUE_BLOB
+{% endhighlight %}
+
+<p>The first "score" is the unix timestamp of 2011/7/5, 12:57:58 (and the rest go up by 1 second, or happen at the same time). With this, we can ask Redis to return all the values where the "scores" are between any two values - thus allowing us to get values based on a date range.</p>
+
+<p>It's a pretty different way to store and to think about our data. Whether we decide that it's worth it or not really isn't the point. The point is to flex your brain and to think differently.</p>
+
+<p>Now, even though the point is to have fun and to try a different perspective, I do want to give some reasons why the above solution might be better. First and foremost, the API is really easy:</p>
+
+{% highlight ruby %}
+redis = Redis.new #connects to localhost by default
+
+redis.zadd('GOOG', Time.now.utc.to_i, "this would be our value..can be anything, I picked a string")
+redis.zadd('GOOG', Time.now.utc.to_i, "see above")
+redis.zadd('GOOG', Time.now.utc.to_i, "see above 2x")
+redis.zadd('GOOG', Time.now.utc.to_i, "It's OVER 9000!!")
+
+redis.zrangebyscore('GOOG', (time.now.utc - 5).to_i, time.now.utc.to_i)
+{% endhighlight %}
+
+<p>The point? It's 2 method calls. You aren't opening connections, creating commands, binding parameters and writing in a different language (SQL). You can literally learn Redis by the time it'll take to write all the boilerplate code you'll need to get this working with a relational database. Also, <code>zadd</code> is log(N) and <code>zrangebyscore</code> is log(N) + M (where M is the number of results you'll get back). In other words, it's fast (but you'll need to do some benchmarking to see if it's faster than the relational database, I haven't!).<p>
+
+<p>Why might you not want to use this approach? First, Redis (more or less, but let's just say it does for now) requires that your data fits into memory. Whereas, a relational database, or a document database, could better deal with only having your index and/or working set in memory. Also, if you ever want to allow additional filtering, say where the volume in greater than X, you'll need to rethink your approach - basically by filtering within the calling code (there are other possible solutions though).</p>
+
+<p>I've already said it, but the point is really just to not be afraid of approaching NoSQL because it can require you to change how you perceive your data. Like anything else, it's something you get better at the more you do it, and most of us are still at the early stages of learning what works and doesn't. If it's difficult for you, like it is for me, to break from the relational viewpoint you should be concerned (like I was). Knowing something so well that you can't see any other solution is not a good position to find yourself in.</p>

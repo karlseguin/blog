@@ -1,0 +1,296 @@
+---
+layout: post
+date: 2014-10-16
+title: "How unreliable is UDP?"
+tags: [learning]
+description: "Unlike TCP, UDP doesn't provide any delivery or ordering guarantees. Put into practice, just how bad, or good, is UDP?"
+---
+<style>
+table{width:100%;border-collapse:collapse;margin-bottom:25px;}
+td,th{text-align:center;padding:10px;border:1px solid #f0f0f0;}
+th{background:#f6f6f6;font-weight:bold;width:100px;}
+.heading{font-size:80%;color:#666;left;margin:0;}
+</style>
+<p>I realized something recently: I know virtually nothing about UDP. Oh, I know it's connectionless, has no handshaking and thus doesn't provide any guarantees about delivery or ordering. But, in practice, what does that actually mean?</p>
+
+<p>I setup 5 VPS to send each other a few UDP packets over a 7 hour period. I didn't send much traffic (though that's certainly worth trying). Each server, every 9-11 second, randomly picked a target and sent 5-10 packets ranging from 16 to 1016 bytes.</p>
+
+<p>2 servers were in the same data center in New Jersey. 1 each in LA, Amsterdam and Tokyo.</p>
+
+<h3>[Un]Reliability</h3>
+<p>The first thing I wanted to know was how unreliable UDP was. Are we talking about a delivery rate of 25%? 50%? 75%?</p>
+
+<p class=heading>Packets Received - click table to toggle %</p>
+<table>
+  <tr>
+    <td rowspan=2></td>
+    <th colspan=6>Receiver</th>
+  </tr>
+  <tr>
+    <th>NJ 1</th>
+    <th>NJ 2</th>
+    <th>LA</th>
+    <th>NLD</th>
+    <th>JPN</th>
+  <tr>
+  <tr>
+    <th>NJ 1</th>
+    <td>-</td>
+    <td data-alt="100">2981/2981</td>
+    <td data-alt="99.97">2888/2889</td>
+    <td data-alt="100">2964/2964</td>
+    <td data-alt="99.97">3053/3054</td>
+  </tr>
+  <tr>
+    <th>NJ 2</th>
+    <td data-alt="100">3016/3016</td>
+    <td>-</td>
+    <td data-alt="99.97">3100/3101</td>
+    <td data-alt="99.97">2734/2735</td>
+    <td data-alt="100">3054/3054</td>
+  </tr>
+  <tr>
+    <th>LA</th>
+    <td data-alt="98.64">2901/2941</td>
+    <td data-alt="98.55">2932/2975</td>
+    <td>-</td>
+    <td data-alt="99.86">2938/2942</td>
+    <td data-alt="100">2712/2712</td>
+  </tr>
+  <tr>
+    <th>NLD</th>
+    <td data-alt="100">3038/3038</td>
+    <td data-alt="99.97">2771/2772</td>
+    <td data-alt="100">2724/2724</td>
+    <td>-</td>
+    <td data-alt="100">2791/2791</td>
+  </tr>
+  <tr>
+    <th>JPN</th>
+    <td data-alt="99.96">2551/2552</td>
+    <td data-alt="100">2886/2886</td>
+    <td data-alt="100">2836/2838</td>
+    <td data-alt="100">2887/2887</td>
+    <td>-</td>
+  </tr>
+</table>
+
+
+<p>These numbers were better than what I had expected. I was specifically thinking NLD &lt;-> JPN would see above normal loss, but there was none. Data being sent out of LA, specifically to the two servers in NJ, seems to have struggled some. Was there a pattern?</p>
+
+<p>First, I thought maybe the size of the packet would be an issue. Admittedly, I kept them small (16 byte header, 0-1000 byte payload):</p>
+
+<p class=heading>Packet Loss Per Size (bytes)</p>
+<table>
+  <tr>
+    <td>0-115</td>
+    <td>116-215</td>
+    <td>216-315</td>
+    <td>316-515</td>
+    <td>516-715</td>
+    <td>716-915</td>
+  </tr>
+  <tr>
+    <td>13</td>
+    <td>11</td>
+    <td>12</td>
+    <td>13</td>
+    <td>23</td>
+    <td>23</td>
+  </tr>
+</table>
+
+<p>Nothing obvious there. Did the packet loss happen around the same time? Unfortunately, I didn't keep timestamps (why?!), but I did keep a counter per pair. If you look at the 43 packets that failed to make it from LA to NJ2, 29 were lost during 2 ~1 minute periods. The NJ1 packet loss also largely happened during 2 short periods.</p>
+
+<h3>Ordering</h3>
+<p>The other thing I was interested int was ordering.</p>
+
+<p>The first way I looked at this was to measure the <a href="http://en.wikipedia.org/wiki/Inversion_(discrete_mathematics)">inversion</a> of the array. Essentially, that's the number of pairs that are out of order. If you have an array with the values <code>10, 8, 3, 7, 4</code>, you end up having to do 8 swaps ((10, 8), (10, 3), (10, 7), (10, 4), (8, 3), (8, 7), (8, 4), (7, 4)).</p>
+
+<p class=heading>Inversions</p>
+<table>
+  <tr>
+    <td></td>
+    <th>NJ 1</th>
+    <th>NJ 2</th>
+    <th>LA</th>
+    <th>NLD</th>
+    <th>JPN</th>
+  <tr>
+  <tr>
+    <th>NJ 1</th>
+    <td>-</td>
+    <td>0</td>
+    <td>2994</td>
+    <td>2581</td>
+    <td>4658</td>
+  </tr>
+  <tr>
+    <th>NJ 2</th>
+    <td>0</td>
+    <td>-</td>
+    <td>3147</td>
+    <td>2459</td>
+    <td>4645</td>
+  </tr>
+  <tr>
+    <th>LA</th>
+    <td>3980</td>
+    <td>3861</td>
+    <td>-</td>
+    <td>3237</td>
+    <td>4010</td>
+  </tr>
+  <tr>
+    <th>NLD</th>
+    <td>3125</td>
+    <td>1826</td>
+    <td>3133</td>
+    <td>-</td>
+    <td>4189</td>
+  </tr>
+  <tr>
+    <th>JPN</th>
+    <td>3920</td>
+    <td>4417</td>
+    <td>4147</td>
+    <td>4425</td>
+    <td>-</td>
+  </tr>
+</table>
+
+<p>Don't know about you, but I'm not sure I find that useful. It sure <em>seems</em> high. Of course, one of the reasons to use UDP is when you're able to discard some packets. If you send 10 000 packets, and they're all ordered, except that the last one is somehow first, you can just discard it rather than doing 9999 swaps.</p>
+
+<p>What if we discard any packet that come after a later packet we've already processed (later meaning the counter is great)? For example, if we get <code>1, 5, 4, 3, 6, 7</code>, we'd discard 4 and 3 since we've already seen 5. How many "good" packets would that leave?</p>
+
+<p class=heading># of ordered packets - click table to toggle %</p>
+<table>
+  <tr>
+    <td></td>
+    <th>NJ 1</th>
+    <th>NJ 2</th>
+    <th>LA</th>
+    <th>NLD</th>
+    <th>JPN</th>
+  <tr>
+  <tr>
+    <th>NJ 1</th>
+    <td>-</td>
+    <td data-alt="100">2981</td>
+    <td data-alt="52.40">1514</td>
+    <td data-alt="55.94">1658</td>
+    <td data-alt="36.77">1123</td>
+  </tr>
+  <tr>
+    <th>NJ 2</th>
+    <td data-alt="100">3016</td>
+    <td>-</td>
+    <td data-alt="52.47">1627</td>
+    <td data-alt="54.22">1483</td>
+    <td data-alt="38.02">1161</td>
+  </tr>
+  <tr>
+    <th>LA</th>
+    <td data-alt="41.72">1227</td>
+    <td data-alt="42.32">1259</td>
+    <td>-</td>
+    <td data-alt="50.48">1485</td>
+    <td data-alt="39.34">1067</td>
+  </tr>
+  <tr>
+    <th>NLD</th>
+    <td data-alt="46.32">1407</td>
+    <td data-alt="59.34">1645</td>
+    <td data-alt="44.79">1220</td>
+    <td>-</td>
+    <td data-alt="39.27">1096</td>
+  </tr>
+  <tr>
+    <th>JPN</th>
+    <td data-alt="38.40">980</td>
+    <td data-alt="37.53">1083</td>
+    <td data-alt="40.20">1141</td>
+    <td data-alt="37.65">1087</td>
+    <td>-</td>
+  </tr>
+</table>
+
+<p>As a slight tweak, what if we group 5 packets together, sort them, then re-apply the above discarding code:</p>
+
+<p class=heading># of ordered packets (with grouping) - click table to toggle %</p>
+<table>
+  <tr>
+    <td></td>
+    <th>NJ 1</th>
+    <th>NJ 2</th>
+    <th>LA</th>
+    <th>NLD</th>
+    <th>JPN</th>
+  <tr>
+  <tr>
+    <th>NJ 1</th>
+    <td>-</td>
+    <td data-alt="100">2981</td>
+    <td data-alt="71.34">2061</td>
+    <td data-alt="75.40">2235</td>
+    <td data-alt="59.17">1807</td>
+  </tr>
+  <tr>
+    <th>NJ 2</th>
+    <td data-alt="100">3016</td>
+    <td>-</td>
+    <td data-alt="71.40">2214</td>
+    <td data-alt="74.63">2041</td>
+    <td data-alt="61.85">1889</td>
+  </tr>
+  <tr>
+    <th>LA</th>
+    <td data-alt="63.52">1868</td>
+    <td data-alt="62.96">1873</td>
+    <td>-</td>
+    <td data-alt="70.22">2066</td>
+    <td data-alt="63.42">1720</td>
+  </tr>
+  <tr>
+    <th>NLD</th>
+    <td data-alt="72.42">2200</td>
+    <td data-alt="82.00">2273</td>
+    <td data-alt="70.48">1920</td>
+    <td>-</td>
+    <td data-alt="61.34">1712</td>
+  </tr>
+  <tr>
+    <th>JPN</th>
+    <td data-alt="60.38">1541</td>
+    <td data-alt="62.51">1804</td>
+    <td data-alt="61.13">1735</td>
+    <td data-alt="59.99">1732</td>
+    <td>-</td>
+  </tr>
+</table>
+
+<h3>Conclusion</h3>
+<p>It's hard to draw any conclusions without running this for longer and with more data. Still, it seems that UDP reliability is pretty good. Distance usually involves more hops and each hop increases the risk or something going bad, but if things are normally ok, then distance doesn't seem to be an issue.</p>
+
+<p>What <em>is</em> an issue is ordering. Here, distance does appear to play a bigger factor. By grouping the packets we see a substantial and expected improvement. In a lot of cases, ordering might not matter. Unless you're streaming, it's possible that simply keeping a timestamp and re-ordering on the receiving side would work.</p>
+
+<p>I'd like to test more things. More data for a longer period of time and more locations. I'd also like to compare the performance to TCP. But, overall, I feel that the better-than-I-expected reliability makes UDP something I should keep in my toolbox.
+
+<script>
+var tables = document.getElementsByTagName('table');
+for (var i = 0; i < tables.length; i++) {
+ setup(tables[i]);
+}
+function setup(table) {
+  table.onclick = function() {
+    var tds = table.getElementsByTagName('td');
+    for (var i = 0; i < tds.length; i++) {
+      var td = tds[i];
+      var alt = td.getAttribute('data-alt');
+      if (alt == null) { continue; }
+      td.setAttribute('data-alt', td.innerHTML);
+      td.innerHTML = alt;
+    }
+  }
+}
+</script>

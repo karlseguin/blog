@@ -1,0 +1,43 @@
+---
+permalink: "/2011/4/29/Automatically-Processing-Emails/"
+layout: post
+date: 2011-04-29
+title: "Automatically Processing Emails"
+tags: [ruby]
+---
+<p>I recently had the need to automatically parse emails. Specifically, I wanted to associate email replies with an original document. The common case for this is a ticketing system where users can reply to an email in order to have the ticket updated.</p>
+
+<p>I had no idea how to do this, but it turned out to be a 5 minute job. The approach that I took was to make it so that each email was sent from a distinct address, say <em>support-1234@openmymind.net</em>. 1234 is actually the associated document id. But generating a smart from address is one thing, how do you actually go about receiving this and running code?</p>
+
+<p>There are two pieces to this puzzle. The first is <a href="https://github.com/titanous/mailman">Mailman</a>, which is a dead simple mail processing microframework. For my simple case, all I really need to do was:</p>
+
+{% highlight ruby %}
+Mailman::Application.run do
+	to '%user%@blah.com' do
+		parts = params[:user].split('-', 2)
+		return unless parts.length == 2
+
+		id = parts[1]
+		#todo update the document with an _id of id with message.body
+	end
+end
+{% endhighlight %}
+
+<p>Here we are routing based on the <code>to</code> field and a automatic capture named <code>user</code>. Mailman supports routing on additional fields (subject, body, ...) and more advanced regular expression matching. The email is available in a variable named <code>message</code>.</p>
+
+<p>But how do we actually get our emails? Mailman supports different types of receivers, but the simplest to use is POP3 with a Google Apps account configured with a catch-all email. I'm not going to go over how to setup a Google Apps account. However, once you do have it set up, we simply add the following code before our previous example:</p>
+
+{% highlight ruby %}
+Mailman.config.poll_interval = 30 # check the pop3 server every 30 seconds
+Mailman.config.ignore_stdin = true
+
+Mailman.config.pop3 = {
+  :username => 'support@blah.com', #the address the catch-all forwards to
+  :password => 'blahblahblah',
+  :server   => 'pop.gmail.com',
+  :port     => 995,
+  :ssl      => true
+}
+{% endhighlight %}
+
+<p>And that's really all there is to that.</p>

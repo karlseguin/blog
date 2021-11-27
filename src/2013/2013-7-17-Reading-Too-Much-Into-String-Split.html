@@ -1,0 +1,72 @@
+---
+layout: post
+date: 2013-07-17
+title: "Reading too much into String.Split"
+description: "The reliance of string libraries is making your code slow"
+tags: [performance]
+---
+
+<p>It's no great revelation that abstraction tends to come at the cost of efficiency. However, if there's one class of abstraction that stands out as being particularly offensive, it has to be string manipulation libraries. Like most things, it isn't the libraries themselves which are inefficient, but rather the way developers use and abuse them.</p>
+
+<p>I assume, but am not sure, that when developers see a string, they visualize a character array. This is the critical way to think of strings since almost any operation happens linearly across the string, one character at a time. If you want to find the index of a space within a string, you start at the first character and compare each character one at a time until you find a match: </p>
+
+{% highlight go %}
+for i := 0; i < len(haystack); i++ {
+  if haystack[i] == needle { return i }
+}
+return -1
+{% endhighlight %}
+
+<p>On their own, built-in string functions are efficient. However, as building blocks for more advanced manipulation, they just won't cooperate properly. In other words, each operation tends to require its own.</p>
+
+<p>For example, let's say that we're parsing a response from memcache and the presence of "END" was of great importance to us. Here's a real example: </p>
+
+{% highlight javascript %}
+if (buffer.indexOf('END') != -1) {
+  first_line_len = buffer.indexOf(crlf) + crlf_len;
+  var end_indicator_start = buffer.indexOf('END');
+  ....
+}
+{% endhighlight %}
+
+<p>The above code scans the string 3 times. The string might be tens of thousands of characters long and as code that's meant to parse memcache replies, I think it's reasonable for this code to focus on performance at the cost of readability:</p>
+
+{% highlight javascript %}
+var first_line_len = -1
+var end_indicator_start = -1
+for (var i = 0, length = buffer.length; i < length; ++i) {
+  var c = buffer[i]
+  if (c == '\r') {
+    if (first_line_len == -1 && buffer[i+1] == '\n') {
+      first_line_len = i + 2
+    }
+  } else if (c == 'E' && buffer[i+1] == 'N' && buffer[i+2] == 'D' && end_indicator_start == -1) {
+    end_indicator_start = i
+    ...
+  }
+}
+{% endhighlight %}
+
+<p>A lot of string parsing can be done within a single scan, so long as you're willing to maintain state in local variables. Built-in functions can't help since the state is application specific. Yes, the above is much uglier, but that ugliness can be wrapped (note, not abstracted) into a meaningfully named function.</p>
+
+<p>In addition to turning what ought to be an O(1) operation into an O(N), there's one particular string function which I often see horribly abused: <code>string.split</code>. Splitting a string, on a separator, only to extract a specific part is so lazy. For example:</p>
+
+{% highlight ruby %}
+File.readlines('logs.txt').each do |line|
+  ip = line.strip.split(' ')[-1]
+  ...
+end
+{% endhighlight %}
+
+<p>This has got to be the mother of all inefficiencies. Not only is the above code scanning the entire string from left to right (even though we only want the end), but it's modifying the string (<code>strip</code>) and allocating, then discarding, an array. Splitting a string should only be used when you need multiple parts and those parts should never just be located at the start and/or end. The above is better written as:</p>
+
+{% highlight ruby %}
+File.readlines('logs.txt').each do |line|
+  ip = line[line.rindex(' ')..-2]
+  ...
+end
+{% endhighlight %}
+
+<p>Even for medium sized inputs (either in terms of total lines, or line sizes), the performance difference is not trivial.</p>
+
+<p>Of course it all comes down to the specific case and what you're willing to gain and give up. Readability and time to ship versus code efficiency. Code with high throughput or dealing with large data will have different operational requirement than some low traffic web controller. Still, it never hurts to be conscious about what's actually going on under the covers. With respect to strings, what's typically going on are N linear scans through the string and more often than not there is an O(1) solution available.</p>

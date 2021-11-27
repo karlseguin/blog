@@ -1,0 +1,39 @@
+---
+layout: post
+date: 2017-07-22
+title: "Learning Elixir's ETS - Part 2"
+description: "Erlang's write_concurrency and read_concurrency flags demystified"
+tags: [concurrency, elixir]
+---
+
+<p>In <a href="/Learning-Elixir-ETS/">Part 1</a> we introduced Erlang's ETS capabilities. Personally, I find that once you get past the weird matching syntax, it's a pretty intuitive library to use.</p>
+
+<p>Still, I did want to do a short follow up and look at two additional options that can be used when creating the ETS table: <code>write_concurrency</code> and <code>read_concurrency</code>:</p>
+
+{% highlight elixir %}
+opts = [:set, :public, :named_table, write_concurrency: true, read_concurrency: true]
+:ets.new(:players, opts)
+{% endhighlight %}
+
+<p>The documentation isn't specific about what these do, aside from improving write and read concurrency respectively.</p>
+
+<p>It took a while to figure out, but the <code>write_concurrency</code> flag enables bucketing. This means that rather than having a single read-write lock covering the entire table, the table is broken up into 16 (from what I can tell) sub-tables, each with its own lock. Therefore, assuming good distribution of values (based on a hash of the item key), it should allow for up to 16 concurrent ETS operations.</p>
+
+<p>The <code>read_concurrency</code> flag switches the type of lock from a write-preferring to a read-preferring mutex. That is to say that reads are prioritized over writes.</p>
+
+<p>Enabling both flags means that 16 read-preferring mutexes are used.</p>
+
+<p>I'm not going to show any benchmarks because it's going to be very workload dependent, but, it feels like for most cases, you'll want both on. (They both default to off/false, which I can only see making sense if you have an absurd number of reads vs writes such as static configuration).</p>
+
+<p>Maybe it isn't the best thing to jam at the end of this little explanation on these two flags, but when using ETS, do be mindful that the ETS memory is held in its own process. This is important because most data shared between processes involves a copy. So:</p>
+
+{% highlight elixir %}:ets.lookup(@my_table, 43){% endhighlight %}
+
+<p>involves copying the value from the ETS process into the calling process. For this reason, there will be cases where using a GenServer might be faster. Specifically, if the data owned by the GenServer will only be used by said process (and not fetched and thus copied to another process). You'll have to pick between the cost of copying vs the bottleneck of having a single process use the data.</p>
+
+<p>All of this is getting pretty advanced. And, we haven't even mentioned that some data <em>can</em> be shared between processes without a copy (I know of binaries larger than 64K and constants). Therefore, my advice from part 1 hasn't changed: use processes (GenServer, Agent, ...) unless you know they aren't the right solution. But do explore and play with ETS because it's pretty convenient!</p>
+
+<div id=pager>
+  <a class=prev href=/Learning-Elixir-ETS/>part 1</a>
+  <a class=next></a>
+</div>

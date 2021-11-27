@@ -1,0 +1,21 @@
+---
+permalink: "/2012/1/12/Reading-From-TCP-Streams/"
+layout: post
+date: 2012-01-12
+title: "Reading from TCP streams"
+tags: [tech]
+---
+
+<p>Over the last couple days I wrote a Redis <a href="https://github.com/karlseguin/redispy-web">monitoring tools</a> which leveraged a <a href="https://github.com/karlseguin/redispy">redis monitoring stream parser</a> I also wrote. They aren't particularly complicated or even useful projects, but it did involve writing code I've written a number of times before: TCP stream parsing.</p>
+
+<p>You see, the first time most people read data from a TCP stream they probably try to read (or write) it like a file. So they think that if the other end outputs 3 writes, than they'll need to do 3 reads. Unfortunately, when you are doing local development, that's probably going to be true. It's unfortunate because it doesn't mirror what happens in the real world.</p>
+
+<p>TCP is a stream protocol which means that those 3 writes might come in via a single read, or  via 10 reads. It has no concept of your message boundaries. Issuing three writes, ending with new line characters is meaningless...it's all just a stream of continuous bytes. What's a developer to do?</p>
+
+<p>There are two common approaches to this problem. The first is to prefix each message with a length (say a 32bit integer). The other is to include delimiters (like those new line characters). In the first case, once you've read the length you know just how many bytes you need to read to get the complete message. This also has the benefit of letting you pre-allocate a byte array of the correct size (assuming you want to load the whole thing into memory). In the second case, you need to scan the message byte by byte looking for your special delimiters. They are both commonly used. For example, MongoDB uses the first approach while Redis uses the second one.</p>
+
+<p>Every time you read you have to deal with three possible situations. First, that you didn't read enough (either because you knew how much to expect, or because you didn't hit the delimiters). In this case you need to store your partial message and issue another read. Second, you might read the perfect amount. Finally, you might read multiple messages, which means the message needs to be properly split and the rest of the message re-processed as though it was a new message. You can get any combination of these, you might not read a complete message followed by reading the rest of it plus 2 messages and a half.</p>
+
+<p>What I find particularly interesting is that either your length prefix or your delimiters themselves might be cut up. For example, say you prefix each of your message with a 32bit integer. It's entirely possible that your first read will only return 1, 2, or 3 of the 4 bytes you need. Same thing can happen with multi-byte delimiters (which is used to avoid conflicts). <a href="https://github.com/karlseguin/redispy/blob/master/lib/reader.coffee">Here's the basic solution</a> I came up with for newline terminated messages in redispy and <a href="https://gist.github.com/1598236">here's a solution</a> for length-prefixed messages.</p>
+
+<p>None of it is particularly difficult to deal with. You pretty much just need to keep some context/state around as you read from the socket. This could lead to a DOS-type attack (sending multiple partial messages to eat up server memory), though for most apps a reasonable timeout will be sufficient.

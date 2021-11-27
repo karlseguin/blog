@@ -1,0 +1,20 @@
+---
+permalink: "/2010/8/17/Write-testable-code-even-if-you-dont-write-tests/"
+layout: post
+date: 2010-08-17
+title: "Write testable code even if you don't write tests"
+tags: [design, testing]
+---
+<p>Testability is a misunderstood concept in software development. Most developers who don't practice it assume that its dependent on actually testing your code - say by writing unit tests. The truth is that its just a metric; much like how you might write maintainable code without actually having to maintain it. The difference between testability and more generalized quality metrics like <em>maintainability</em> is that <em>testability</em> is easy to measure.</p>
+
+<p>If you're code isn't testable, then your code isn't good. It doesn't matter if you actually write tests or not. What is testable code? First and foremost, its loosely coupled, taking advantage of dependency injection (and auto-wiring), composition and interface-programming. Testable code is also readable - meaning it leverages single responsibility principle and Liskov substitution principle.</p>
+
+<p>Isn't testable code just well designed code? Yes, but it also specifies a way to validate the design of your code: by writing tests. Its great to say that you should write <em>maintainable</em> code, but how do you verify that its actually <em>maintainable</em>? By maintaining it? Not very pro-active.</p>
+
+<p>So doesn't that mean that testability <strong>is</strong> about writing tests? Yes and no (but mostly no). Someone who knows how to write testable code doesn't have to write tests. But initially, yes, you'll need to write tests. You should write tests to learn about flaws in your design and to learn how to be a better programmer. Trust me, you'll learn very quickly, and painfully, how to write quality code. Once you do, you'll know whether a class, method or behavior is testable just by looking at it.</p>
+
+<p>There are other, very good reasons to write unit tests. But that's an entirely different discussion. We can flip the conversation around, and instead state that <em>unit testing isn't just about testing that your code works, its also about testing that your design works</em>. Either way, the point is the same.</p>
+
+<p>For the first half decade of my career I often wondered if I was any good, and whether or not I was programming the right way. Hopefully you have too, because <a href="http://finance.yahoo.com/q/hp?s=MSFT&a=00&b=1&c=2000&d=07&e=17&f=2010&g=m">there's nothing worse than thinking you're doing it right</a>. My advice to someone who finds themselves in that same position is to <strong>write tests</strong> and to learn from the mistakes that make your code untestable.</p>
+
+<p>Honestly, making your code testable (by writing tests) might be the best advice you'll ever get on how to become a better programmer.</p>

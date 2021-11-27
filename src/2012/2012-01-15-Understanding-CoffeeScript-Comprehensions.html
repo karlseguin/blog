@@ -1,0 +1,93 @@
+---
+permalink: "/2012/1/15/Understanding-CoffeeScript-Comprehensions/"
+layout: post
+date: 2012-01-15
+title: "Understanding CoffeeScript Comprehensions"
+tags: [node.js]
+---
+<p>If there's anything better than CoffeeScript, it's the amazing quality of documentation available. The main homepage, <a href="http://coffeescript.org/">coffeescript.org</a> is a stellar example many projects should be copying. And then there's the <a href="http://arcturo.github.com/library/coffeescript/">The Little Book on CoffeeScript</a> which I have nothing but praise for (as a Little Book author myself!).</p>
+
+<p>Nevertheless, I find that most resources don't properly explain CoffeeScript comprehensions. So, what's a comprehension? .NET readers would find it similar to LINQ...it's essentially a way to loop over and act on values in arrays or hashes.</p>
+
+<p>Even though that sounds simple, I had a hard time grasping the syntax. I don't know what it was. Most of the resources show JavaScript code along with the corresponding CoffeeScript version. What helped me really understand comprehensions though was was breaking them down and first looking at the plain way to write them</p>
+
+<p>In CoffeeScript, if you want to loop through an array, you use <code>for in</code>. To loop through hashes/objects you use <code>for of</code>. For example:</p>
+
+{% highlight ruby %}
+  heroes = ['leto', 'duncan', 'goku']
+
+  for hero in heroes
+    console.log(hero)
+
+  # Or, including the index
+  for hero, index in heroes
+    console.log('The hero at index %d is %s', index, hero)
+
+
+  likes =
+    leto: 'spice'
+    paul: 'chani'
+    duncan: 'murbella'
+
+  for key of likes
+    console.log(key)
+
+  # Or, including the value
+  for key, value of likes
+    console.log('%s likes %s', key, value)
+{% endhighlight %}
+
+<p>Now, that's pretty basic and understandable. I understood the syntax around comprehensions when I recognized the similarities to statement modifiers. Statement modifiers are a neat and useful way in CoffeeScript and in Ruby to execute an <code>if</code> (or <code>unless</code>) statement.</p>
+
+{% highlight ruby %}
+  # instead of
+  if x == 0
+    x = 1
+
+  # we ca do
+  x = 1 if x == 0
+{% endhighlight %}
+
+<p>If you aren't used to these, it might seem like pretty useless syntactical sugar, but I believe that they contribute enough to code readability to make them worth using. Anyways, even though most people are used to thinking of code executing from left to right, I think the above statement modifiers (which first check the condition on the right) are easy enough to understand.</p>
+
+<p>Being familiar with this type of syntactical trick, we can go back to our loops fancy them up:</p>
+
+{% highlight ruby %}
+  heroes = ['leto', 'duncan', 'goku']
+
+  console.log(hero) for hero in heroes
+
+
+  likes =
+    leto: 'spice'
+    paul: 'chani'
+    duncan: 'murbella'
+
+  console.log('%s likes %s', key, value) for key, value of likes
+{% endhighlight %}
+
+<p>Comprehensions allows for conditions via <code>when</code>, so we do:</p>
+
+{% highlight ruby %}
+  heroes = ['leto', 'duncan', 'goku']
+
+  # boring
+  for hero, index in heroes
+    if index % 2 == 0
+      console.log(hero)
+
+  # cool
+  console.log hero for hero, index in heroes when index % 2 == 0
+{% endhighlight %}
+
+
+<p>Notice also that I dropped the parenthesis around the <code>console.log</code>. In CoffeeScript parenthesis are often optional and people tend to not use them while writing comprehensions.</p>
+
+<p>There are other things you can do with compressions. For example, you won't always want to execute some code (like <code>console.log</code>) on each item. Instead you might want to select or map the results into another variable:</p>
+
+{% highlight ruby %}
+  evenHeroes = (hero for hero, index in heroes when index % 2 == 0)
+{% endhighlight %}
+
+<p>The parenthesis in the above code are critical. Without them, only the last value of our comprehension ('goku') will be assigned. With them, the filtered array is assigned. The very first <code>hero</code> in the above code is what's being selected from our compression.</p>
+

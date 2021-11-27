@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<title>Karl Seguin</title>
+<meta charset="utf-8">
+<meta name=referrer content=origin>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<meta name=description content="Elixir, Go, Node, Testing, Design and Performance">
+<link href=atom.xml rel=alternate type=application/atom+xml>
+
+<style>
+*{padding:0;margin:0;}
+body{font-family:sans-serif;font-size: 22px;padding: 0 20px}
+ul{list-style:none;padding:0;}
+a{text-decoration:none;color:#111;}
+a:hover{text-decoration:underline;color:#000;}
+
+#l{display:block; float:right;background:#f6f6f6;border-radius: 0 0 5px 5px}
+#l li{float:left;font-size: 85%}
+#l a{padding: 10px 25px;border-right:1px solid #fff;display: inline-block;}
+#l a:hover{background:#d6d6d6;}
+#l li:first-of-type a:hover{border-bottom-left-radius: 5px}
+#l li:last-of-type a:hover{border-bottom-right-radius: 5px}
+
+h1{color:#000; width: 800px; margin: 0 auto;}
+main{margin-top: 10px; width: 800px; margin: 0 auto;}
+main a {display: block;padding: 10px 0 5px;margin-top: 20px}
+main b {display: block;font-weight: normal;font-size: 90%;color: #555}
+
+@media screen and (max-width: 800px) {
+	#l a{padding: 10px;}
+	main{width: 100%; padding: 0}
+}
+</style>
+<ul id=l><li><a href=atom.xml>rss</a><li><li><a href=mailto:blog@karlseguin.com>contact</a><li><li><a href=https://www.whysolazy.com>free apis</a><li><a href=https://twitter.com/karlseguin>twitter</a></ul>
+<h1><a href=#>Hi</a></h1>
+<main>
+{% assign posts = collections.all | public | reverse %}
+{%- for post in posts -%}<a href={{ post.url }}>{{ post.data.title }}</a><b>{{ post.date | date: "%d %b %y" }} - {% if post.data.tags %}{{ post.data.tags | join: ', ' }} {% endif %}</b>{%- endfor -%}
+</main>

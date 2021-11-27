@@ -1,0 +1,41 @@
+---
+permalink: "/2011/1/25/jQuery-DateRange-Picker/"
+layout: post
+date: 2011-01-25
+title: "jQuery DateRange Picker"
+tags: [ui]
+---
+<script src="/assets/jquery.1.11.2.js"></script>
+<p>jQuery is great. It provides solid core features that let you do magic while serving as the foundation for the simplest or most complex plugin. It's no surprise then that there are countless plugins out there, for free, which are supposed to save you time and headaches. I gotta say though that I've never gone wrong in rewriting my own plugin from scratch to meet my specific needs. Why? Because most jQuery plugins try to do too much - they take too many options, support too many use cases, and, as a consequence, are bloated, slow and hard to change.</p>
+
+<p>I'm not saying these plugins are bad (the official jQuery UI or any other). No doubt they handle a bunch of things that I haven't even considered, including accessibility, cross browser support, multiple languages and so on. But oftentimes you don't need all that stuff, or at least not most of it. A plugin that supports 45 languages and is fully accessible isn't worth much to me if its painfully slow and I just care about english.</p>
+
+<p>This is why I don't generally make my plugins available, unless I'm specifically asked. For me, plugin development is fun and relatively easy..so why not spend 3 hours building the perfect grid specifically for my system if the outcome is massive performance increases on some of our clients low end desktops?</p>
+
+<p>There's 1 plugin type I told myself I'd never write: date picker. But I needed something to pick a range for the reporting UI of mogade, and I thought to myself, I might as well try and write it myself (in the past I've used and been happy with <a href="http://www.eyecon.ro/datepicker/">this one</a>). It ended up being easier than i thought for my very simple needs. It works in Chrome, Firefox and IE 8. Does it work in IE 6, 7 or 9? I don't know nor do I care. Does it support X or Y or Z? No.</p>
+
+<p>What it does do is provide the most basic components of a date range picker. To me, this is how plugins should be. Rather than add every feature imaginable and making it difficult for developers to change the behavior to meet their needs, build a smaller and more focused core and let developers add to it as needed. A visual plugin, to me, is like a design pattern...it should be a start.</p>
+
+<p>So the datePicker is available on <a href="https://github.com/karlseguin/jquery.dateRange/">github</a>. And here's what it looks like:</p>
+
+   <link href="/assets/forposts/dateRange/dateRange.css" media="screen" rel="stylesheet" type="text/css" />
+   <script src="/assets/forposts/dateRange/dateRange.js"></script>
+
+<p><input type="text" id="example" /></p>
+
+<script type="text/javascript">
+$(document).ready(function() {
+  console.log($('#example'))
+  $('#example').dateRange({
+     selected: function(dates) {
+        var from = dates[0];
+        var to = dates[1];
+        //do something special
+     }
+  });
+});
+</script>
+
+<p>I did want to share some things I discovered while writing this. First, one of the things that made this easier to write than I thought it would be was the fact that javascript's <code>Date</code> constructor is clever about things like day 0 or month 12. So if you are on month 11 (December, 0 based) and you want to get the 1st of the next month, you can just do new <code>Date(currentDate.getFullYear(), currentDate.getMonth()+1, 1);</code> and the year will roll over. Getting the last day of a month is as simple as: <code>Date(currentDate.getFullYear(), currentDate.getMonth()+1, 0)</code>. Also, I forgot that IE doesn't let you set the <code>innerHTML</code> of table/tr/td elements. That's just stupid. And, for the first time ever, I had a jQuery selector not work in IE but work fine in all browsers: <code>td:not([colspan])</code> always returns an empty set in IE...I saw other posts which seem to confirm the issue.</p>
+
+<p>Anyways, enjoy, and remember, favor plugins that let you add the features you want rather than those which tried to anticipate your every need.</p>

@@ -1,0 +1,49 @@
+---
+permalink: "/2012/4/13/Piping-Basics/"
+layout: post
+date: 2012-04-13
+title: "Piping Basics"
+tags: [devops]
+---
+
+<p>In a UNIX environment, if you wanted to find all files last modified in April, you might do: </p>
+
+{% highlight clike %}
+   ls -l | grep Apr
+{% endhighlight %}
+
+<p>The first part of this command, <code>ls -l</code> returns a listing like:</p>
+
+{% highlight clike %}
+-rw-r--r--  1 karl  us   2573 Jan 20 09:44 2011-1-10-Why-Markdown-And-Why-Not-Word.html
+-rw-r--r--  1 karl  us   8119 Mar 30 16:52 2011-7-5-Rethink-your-Data-Model.html
+-rw-r--r--  1 karl  us   3594 Mar 30 16:49 2012-02-03-Node-Require-and-Exports.html
+-rw-r--r--  1 karl  us   2816 Apr  3 18:32 2012-4-2-Is-Kindle-The-Next-Rim.html
+-rw-r--r--  1 karl  us   3504 Apr  4 19:04 2012-4-4-You-Really-Should-Log-Client-Side-Error.html
+{% endhighlight %}
+
+<p>The second part, <code>grep Apr</code> will filter out lines passed into its standard input (think doing a Console.ReadLine from code) based on the provided pattern (in this case <code>Apr</code>). The pipe operator <code>|</code> redirects the output of one command into the input of the other. Therefore, the above output from <code>ls</code> becomes the input for <code>grep</code>.</p>
+
+<p>To better understand this, let's look at something that won't work. Say you wanted to delete all markdown files. You might be tempted to try: </p>
+
+{% highlight clike %}
+  find . -iname "*.md" | rm
+{% endhighlight %}
+
+<p>The first part does what we expect it to do, it finds all files with a markdown extension. However, piping find's output to <code>rm</code> doesn't do anything other than display the help message for <code>rm</code>. Why is that? Remember, pipe redirects a program's output to another program's input. <code>rm</code> however does not work via standard input. It works via the command-line.  In C#, that's the difference between <code>Console.ReadLine()</code> and using the <code>args[]</code> parameter.</p>
+
+<p>The solution to this problem is to use a special utility which converts standard input into a command-line. This is what <code>xargs</code> does. Unfortunately, <code>xargs</code> can be quite different from platform to platform, but all we need right now is the simplest thing:</p>
+
+{% highlight clike %}
+  find . -iname "*.md" | xargs rm
+{% endhighlight %}
+
+<p>If you've been following along, you can guess that <code>xargs</code> takes data from the standard input (hence data can be piped to it) and converts that to command-line parameters for whatever program you specify (<code>rm</code> in this case).</p>
+
+<p>How do you know if a program takes data from standard input vs the command-line? Well, if you look at the help message from <code>grep</code>, you'll see that it takes its input from <code>[FILE]</code>, whereas <code>rm</code> takes it from <code>file</code>. It's a subtle difference.
+
+<p>To wrap it up, we can also look at the redirection operator <code>&gt;</code>. Rather than sending standard output to standard input like pipe, the redirection operator sends the standard output to a file, overwriting any previous values (you can append using <code>&gt;&gt;</code>). If we wanted to save the list of markdown files (rather than delete them), we'd do:</p>
+
+{% highlight clike %}
+  find . -iname "*.md" > markdown.list
+{% endhighlight %}

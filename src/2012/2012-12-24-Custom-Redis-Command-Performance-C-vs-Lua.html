@@ -1,0 +1,98 @@
+---
+layout: post
+date: 2012-12-24
+title: "Custom Redis Command: Performance of C vs Lua"
+tags: [lua, performance, redis]
+---
+
+<p>Over the last <a href="/Writing-A-Custom-Redis-Command-In-C-Part-1">few</a> <a href="/Writing-A-Custom-Redis-Command-In-C-Part-2">days</a>, we've been writing a custom Redis command in C. The command, <code>xdiff</code>, is tailored to a specific use-case: diff'ing a set from a sorted set with an offset and count. A reasonable question is: why not just write it in Lua?</p>
+
+<p>Keeping in mind the dangers of such synthetic benchmarks, I decided to compare the C implementation to one written in Lua. The full C implementation can be <a href="/Writing-A-Custom-Redis-Command-In-C-Part-2">seen at the end of part 2</a>. Here's the Lua version:</p>
+
+{% highlight c %}
+  local zset = KEYS[1]
+  local diff = KEYS[2]
+  local from = ARGV[1]
+  local to = tonumber(ARGV[2])
+  local count = to - from
+  local results = {}
+
+  while true do
+    local values = redis.call('zrevrange', zset, from, to)
+    if #values == 0 then
+      return results
+    end
+
+    for index,value in ipairs(values) do
+      if redis.call('sismember', diff, value) == 0 then
+        table.insert(results, value)
+        if #results == count then
+          return results
+        end
+      end
+    end
+    from = to + 1
+    to = from + count
+  end
+{% endhighlight %}
+
+<p>Here's our benchmark:</p>
+
+{% highlight ruby %}
+require 'redis'
+require 'benchmark'
+
+r = Redis.new
+r.select(10)
+r.flushdb()
+
+script = <<-eos
+  #...the lua version
+eos
+
+sha = r.script :load, script
+
+values = Array.new(100000) {|i| "value:#{i}"}
+r.zadd 'zset', Array.new(100000) {|i| [i, values[i]] }
+r.sadd '1percent', values.sample(1000)
+r.sadd '25percent', values.sample(25000)
+r.sadd '50percent', values.sample(50000)
+r.sadd '75percent', values.sample(75000)
+
+sets = ['1percent', '25percent', '50percent', '75percent']
+
+Benchmark.bmbm(15) do |x|
+  sets.each do |set|
+    x.report "c - #{set}" do
+      1000.times { r.xdiff 'zset', set, rand(50000), rand(500) + 100 }
+    end
+  end
+  sets.each do |set|
+    x.report "lua - #{set}" do
+      1000.times do
+        from = rand(50000)
+        to = from + rand(500) + 100
+        r.evalsha sha, ['zset', set],  [from, to]
+      end
+    end
+  end
+end
+{% endhighlight %}
+
+<p>Essentially, I'm interested in finding out how each performs based on the number of similarities between our sorted set and our set. The more they have in common, the more work is involved (since we need to find X that exist in <code>zset</code> which don't exist in our set).</p>
+
+<p>On my somewhat underpowered laptop, the result is:</p>
+
+{% highlight text %}
+                      user     system      total        real
+c - 1percent      4.130000   0.460000   4.590000 (  4.321763)
+c - 25percent     3.990000   0.410000   4.400000 (  4.910855)
+c - 50percent     3.910000   0.350000   4.260000 (  4.995748)
+c - 75percent     4.020000   0.380000   4.400000 (  5.493845)
+lua - 1percent    4.000000   0.360000   4.360000 (  6.992061)
+lua - 25percent   4.010000   0.350000   4.360000 (  7.670618)
+lua - 50percent   4.080000   0.390000   4.470000 (  9.089831)
+lua - 75percent   4.050000   0.370000   4.420000 ( 12.835829)
+{% endhighlight %}
+
+<p>Unsurprisingly, the C implementation is faster and is much better at dealing with a large overlap. The Lua version is still plenty fast though. The exact performance difference will depend on what you're doing. Simple queries aren't likely to gain much from being written in C. For a complex query though, we've seen more than a 2x performance improvement (but we still favor Lua in all but extreme cases).</p>

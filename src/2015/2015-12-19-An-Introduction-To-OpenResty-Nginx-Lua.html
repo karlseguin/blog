@@ -1,0 +1,174 @@
+---
+layout: post
+date: 2015-12-19
+title: "An Introduction To OpenResty (nginx + lua) - Part 1"
+tags: [lua, performance]
+description: "Getting OpenResty compiled, running, setting up project structure and learning the basics"
+---
+
+<h2>Overview</h2>
+<p>Last week, I started moving middleware code out of a Go application and directly into nginx via the lua-nginx-module. This was simple code, but I'm using it as an stepping-stone for possibly writing/moving more code like this.</p>
+
+<p><a href="https://github.com/openresty/lua-nginx-module">lua-nginx-module</a> is an nginx module which makes it possible to handle http request directly in nginx using Lua. This is a powerful combination granting you great performance and the productivity of a dynamic language. Furthermore, because we normally run our Go servers behind nginx, this simplifies our stack.</p>
+
+<h2>Installation</h2>
+<p>It's possible to install lua-nginx-module by compiling it into nginx. However, I suggest you  install <a href="http://openresty.org/">OpenResty</a>; the parent project of lua-nginx-module. This is nginx bundled with lua-nginx-module as well as other popular nginx/lua-nginx modules.</p>
+
+<p>Installing OpenResty is pretty much the same as install nginx. In other words, it can be as simple as running <code>./configure && make && make install</code>. Personally though, I like to configure it. You can run <code>./configure --help</code> to see available options. Here's what I do:
+
+{% highlight text %}
+./configure \
+  --prefix=/opt/resty \
+  --conf-path=/opt/resty/nginx.conf \
+  --with-cc-opt="-I/usr/local/include" \
+  --with-ld-opt="-L/usr/local/lib" \
+  --with-pcre-jit \
+  --with-ipv6 \
+  --with-http_postgres_module \
+  --with-http_gunzip_module \
+  --with-http_secure_link_module \
+  --with-http_gzip_static_module \
+  --without-http_redis_module \
+  --without-http_redis2_module \
+  --without-http_xss_module \
+  --without-http_memc_module \
+  --without-http_rds_json_module \
+  --without-http_rds_csv_module \
+  --without-lua_resty_memcached \
+  --without-lua_resty_mysql \
+  --without-http_ssi_module \
+  --without-http_autoindex_module \
+  --without-http_fastcgi_module \
+  --without-http_uwsgi_module \
+  --without-http_scgi_module \
+  --without-http_memcached_module \
+  --without-http_empty_gif_module
+{% endhighlight %}
+
+<p>As you can see, I like to disable modules I won't be using. If you plan on using memcached or mysql, you'll want to take out the relevant lines. I've disabled the redis and redis2 modules because the recommended lua-resty-redis is enabled by default (yes, that means there's a total of 3 redis modules, I don't know why).</p>
+
+<p>On OSX, you'll probably need to install PCRE. The simplest approach is via <code>brew install pcre</code>.</p>
+
+<p>Finally, it doesn't appear to be a common problem, but I ran into problems building luaJIT (which ./configure does). I don't remember the exact steps I took, but it had to do with installing GCC 4.2.1 and, I think, forcing it as my compiler by exporting <code>CC</code> to point to it.</p>
+
+<p>After you run <code>make install</code> you can go into <code>/opt/resty/</code> and find a few folders, and a bunch of files. I usually delete all the files except for <code>nginx.conf</code> and <code>mime.types</code>, but leave the folders.</p>
+
+<p>The actual nginx binary is located at <code>nginx/sbin/nginx</code>. Unrelated to OpenResty (and the rest of this post), but you can run the nginx binary with the <code>-V</code> flag to see how it was configured. This is pretty handy when you jump on a system and aren't 100% sure what's available. The <code>-T</code> flag is also worth pointing out as it'll test your configuration. It's a great idea to check the status code of <code>./nginx -T</code> as part your deployment (and abort said deployment on error).</p>
+
+<h2>Project Structure</h2>
+
+<p>One of the first things you're going to have to figure out is how to organize your projects so that you and your teamates can develop and test while keeping deployments straightforward. Keeping in mind that I just started, I'm going to explain how I did it.</p>
+
+<p>The trick that I use relies on the fact that nginx can be started with a <code>-p</code> and <code>-c</code> flags. The first overwrites the prefix path nginx was configured with. The second tells nginx to use a specific configuration file (instead of the one it was configured to use). Assuming we've setup our code in <code>~/code/proj1</code>, the first thing we want to do is add a <code>develop.conf</code> file to the root of the project. This is a standard nginx config file, but it doesn't have to be tweaked since it's only going to be used for development:</p>
+
+{% highlight text %}
+worker_processes  1;
+daemon off;
+error_log /dev/stdout warn;
+
+events{
+  worker_connections 32;
+}
+
+http {
+  default_type  text/html;
+  access_log off;
+
+  server {
+    listen 3000;
+    include 'src/proj1.conf';
+  }
+}
+{% endhighlight %}
+
+<p>There's nothing special here, so let's look at <code>src/proj1.conf</code>:
+
+{% highlight text %}
+location / {
+  content_by_lua_block {
+    require("handler")()
+  }
+}
+{% endhighlight %}
+
+<p>Even if you don't know Lua or how it integrates with nginx, you can hopefully guess that our traditional nginx <code>location</code> block is going to execute the above Lua block, which in turns requires and executes code located in a "handler" module/file.</p>
+
+<p>For the sake of completeness, we'll add our basic "handler" module, but then we'll go back to tying together our configuration files and development environment. Here's <code>handler.lua</code>:</p>
+
+{% highlight lua %}
+local function process()
+  ngx.say('the spice must flow')
+end
+
+return process
+{% endhighlight %}
+
+<p>It's important to understand and maintain the relationship between <code>develop.conf</code> and <code>src/proj1.conf</code>. Essentially, <code>src/proj1.conf</code> is a fundamental part of your application's logic and should work regardless of its environment. <code>develop.conf</code> is only used for development and is therefore the place where we can enable development flags and setup our paths.</p>
+
+<p>We've already setup a few development flags. <code>daemon off;</code> prevents nginx from running in the background and <code>error_log /dev/stdout warn;</code> sends errors directly to our terminal.</p>
+
+<p>We can start nginx via <code>/opt/resty/nginx/sbin/nginx -c ~/code/proj1/develop.conf</code> but if we try to load <a href="http://localhost:3000">http://localhost:3000</a>, we'll get a 500 error. If you look at your terminal, you should see a useful error message: the <code>handler.lua</code>, which we required, couldn't be found.</p>
+
+<p>To solve this, we'll leverage the <code>lua_package_path</code> directive. This adds a directory to our search path. Change your <code>develop.conf</code> file:
+
+{% highlight text %}
+  ...
+  lua_package_path '${prefix}../../src/?.lua;;';
+  server {
+    listen 3000;
+    include 'src/proj1.conf';
+  }
+}
+{% endhighlight %}
+
+<p>We're telling Lua to search for our code relative to nginx's prefix configuration. (the extra <code>;</code> appends the existing search path). Unfortunately, nginx's prefix path is <code>/opt/resty</code>, but we can change that with the <code>-p</code> flag.  First though, you'll need to create some directories: </p>
+
+{% highlight text %}
+mkdir -p ~/code/proj1/test/nginx/logs
+{% endhighlight %}
+
+<p>We can now launch nginx via:</p>
+
+{% highlight text %}
+/opt/resty/nginx/sbin/nginx -c ~/code/proj1/develop.conf -p ~/code/proj1/test/nginx/
+{% endhighlight %}
+
+<p>And reload our page to get a proper result.</p>
+
+<p>You can use any prefix path you want and adjust your <code>lua_package_path</code> accordingly. In a later part we'll cover how to write tests so you'll end up with <code>test</code> folder anyways.</p>
+
+<h2>Tweaks</h2>
+<p>Two last things. Either before or after the <code>lua_package_path</code> line, we can add <code>lua_code_cache off;</code>. This will cause nginx to reload our Lua files on each request. It's wonderful to enable in development (but horrible to do in production).</p>
+
+<p>The above line doesn't trigger a reload on changes to our <code>develop.conf</code> or <code>src/proj1.conf</code>. To achieve that, I'm using a CoffeeScript file, named <code>develop.coffee</code> which launches nginx and watches these two files for changes:</p>
+
+{% highlight ruby %}
+fs = require('fs')
+crypto = require('crypto')
+exec = require('child_process').exec
+
+# maybe some teammates have their binary somewhere else
+path = process.env.RESTY_PATH || '/opt/resty/nginx/sbin/nginx'
+
+cwd = process.cwd()
+console.log "running #{path} -p #{cwd}/test/nginx/ -c #{cwd}/develop.conf"
+nginx = exec("#{path} -p #{cwd}/test/nginx/ -c #{cwd}/develop.conf")
+nginx.on 'exit', (status, a) -> process.exit(status)
+nginx.stderr.on 'data', (data) -> console.log(data.toString().trim())
+nginx.stdout.on 'data', (data) -> console.log(data.toString().trim())
+
+# on osx I noticed multiple update events being triggered for a single change
+# so we'll calculate the md5 content and only reload nginx if it's actually changed
+watch = (path) ->
+  last = null
+  fs.watch path, ->
+    hash = crypto.createHash('md5').update(fs.readFileSync(path)).digest("hex")
+    return if hash == last
+    process.kill(nginx.pid, 'SIGHUP')
+    last = hash
+
+watch(file) for file in ['develop.conf', 'src/proj1.conf']
+{% endhighlight %}
+
+
+<p>You can now start your server by running <code>coffee develop.coffee</code>.</p>

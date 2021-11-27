@@ -1,0 +1,43 @@
+---
+layout: mongly
+title: "What's A Padding Factor?"
+multi: false
+tags: [devops, mongodb]
+---
+<style>
+#page{max-width: 1080px; margin: 0 auto}
+h1{margin:0 auto;margin-bottom:10px;}
+pre{margin:30px auto;}
+li {padding: 15px}
+</style>
+
+<h1>{{ title }}</h1>
+<ol>
+  <li>An update that doesn't change a document's underlying size can be done in-place, without moving the document.
+  <li>An update which does change a document's size forces MongoDB to move the document and update indexes, which is slower.
+  <li>MongoDB can add extra padding to new documents which can allow in-place updates even when the size changes.
+  <li>$inc an int doesn't usually increase a document's size since the field type usually remains the same.
+  <li>Using $push to add a new embedded document is good example of a document changing size.
+  <li>Analysis of past updates is used to determine what % of a document's size should be added as padding.
+</ol>
+
+{% highlight javascript %}
+db.unicorns.insert({name: 'sporkles', vampires: 10})
+db.unicorns.stats().paddingFactor
+1
+
+// $inc doesn't increase a document's size
+db.unicorns.update({name: 'sporkles'}, {$inc: {vampires: 10}})
+db.unicorns.stats().paddingFactor
+1
+
+// add a new field
+db.unicorns.update({name: 'sporkles'}, {$set: {zombies: 2}})
+db.unicorns.stats().paddingFactor
+1.59
+
+// compact added in 2.0, must repairDatabase in previous versions
+db.unicorns.compact()
+db.unicorns.stats().paddingFactor
+1
+{% endhighlight %}

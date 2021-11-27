@@ -1,0 +1,256 @@
+---
+permalink: "/2012/5/16/Ten-Features-I-Like-About-CoffeeScript/"
+layout: post
+date: 2012-05-16
+title: "Ten Features I Like About CoffeeScript"
+tags: [node.js]
+---
+<style>
+.compare{overflow:auto;position:relative;left:-150px;width:calc(100% + 300px)}
+.compare div{width:48%;}
+.compare pre{padding:3px;width:auto;left:auto}
+.compare .cs{float:left;}
+.compare .js{margin-left:50%;}
+</style>
+
+<h3>String Interpolation</h3>
+<p>It's pretty common that you'll want to build a string based on one or more variables. With CoffeeScript, variables can cleanly be placed inside of as string: </p>
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %}"level greater than '#{maxPowerLevel}'"{% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}"level greater than '" + maxPowerLevel + "'"{% endhighlight %}
+  </div>
+</div>
+
+<p>With well-named variables, string interpolation is easier to read and maintain. Of the three main ways to do this (the third being via some type of formatting function like <code>sprintf</code>), string interpolation is by far, the best, for both simple and complex cases.</p>
+
+<h3>Statement Modifiers</h3>
+<p>I'll admit that statement modifiers are a pretty minor thing, but as trivial as they are, I've always found them useful for simple statements: </p>
+
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %}applyChanges = (elements) ->
+  return if elements.length == 0
+  ...{% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}applyChanges = function(elements) {
+  if (elements.length === 0) { return; }
+  ...{% endhighlight %}
+  </div>
+</div>
+
+<h3>Callback Handling</h3>
+<p>Whether you are doing client-side development or server-side development, callbacks and JavaScript go hand-in-hand. And, although I don't mind braces, I've always found JavaScript's syntax to be far too verbose. CoffeeScript helps in two ways. First, optional parenthesis, which I generally dislike, except when dealing with callbacks. Second, blocks via indentation. Compare: </p>
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %}$('#data').on 'click', 'tr', (e) ->
+  id = $(this).data('id')
+  ...{% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}$('#data').on('click, 'tr', function(e) {
+  id = $(this).data('id')
+  ...
+});{% endhighlight %}
+  </div>
+</div>
+
+<p>I find this particularly useful to help minimize the clutter caused by node.js callback soup. On the downside, it isn't great when you have a parameter after the callback, such as with <code>setInterval</code> or <code>$.get</code> and <code>$.post</code>.</p>
+
+
+<h3>Comprehensions</h3>
+<p>Looping over arrays and hashes is pretty fundamental, and the more we can enhance the experience, the better. Even if you don't leverage comprehensions as-is, simply having a for loop that exposes the value+index of an array, or the key+value of a hash, is a nice addition.</p>
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %}books = [
+  {name: 'Dune', rating: 5}
+  {name: "Old Man's War", rating: 4}
+  {name: 'Foundation', rating: 3}
+]
+good = (b.name for b in books when b.rating > 3){% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}books = [
+  {name: 'Dune', rating: 5},
+  {name: "Old Man's War", rating: 4},
+  {name: 'Foundation', rating: 3}
+];
+good = [];
+for(var i = 0; i < books.length; ++i) {
+  if (books[i].rating > 3) {
+    good.push(books[i].name);
+  }
+}{% endhighlight %}
+  </div>
+</div>
+
+<p>If you'd like learn more about comprehensions, I wrote <a href="/2012/1/15/Understanding-CoffeeScript-Comprehensions/">a blog post on it</a>.</p>
+
+<h3>The Fat Arrow</h3>
+<p>In JavaScript, the meaning of <code>this</code> isn't always intuitive. Consider this CoffeeScript code: </p>
+
+{% highlight ruby %}class DataTable
+  constructor: (elem) ->
+    this.element = $(elem)
+    this.element.on 'click', 'tr', this.clicked
+
+  clicked: (e) ->
+    this.highlight()
+
+  highlight: ->
+    ....
+{% endhighlight %}
+
+<p>One might expect that <code>this</code> in the <code>clicked</code> method to be our <code>DataTable</code> instance, but instead, it'll be the row which is clicked. This means that the call to <code>highlight</code> will fail, since the html row element doesn't have a <code>highlight</code> method.  That <code>clicked</code> exists as a method of <code>DataTable</code> doesn't mean much.</p>
+
+<p>To solve this, CoffeeScript lets you define a method with a fat arrow <code>=></code>. Using <code>=></code> binds the function to the expected scope: </p>
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %}class DataTable
+  constructor: (elem) ->
+    this.element = $(elem)
+    this.element.on 'click', 'tr', this.clicked
+
+  clicked: (e) =>
+    this.highlight()
+
+  highlight: =>
+    ....{% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}__bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
+function DataTable(element) {
+  this.highlight = __bind(this.highlight, this);
+  this.clicked = __bind(this.clicked, this);
+  this.element = $(element).click(this.clicked);
+}
+DataTable.prototype.clicked = function(e) {
+  this.highlight();
+  ...
+};
+DataTable.prototype.highlight = function() {
+  ...
+};{% endhighlight %}
+  </div>
+</div>
+
+<p>Sometimes you'll want the normal JavaScript behavior (via a slim arrow), and sometimes you'll want to fat arrow behavior. In general, I find myself using slim arrows more often in client-side code, and fat arrows more often on server-side code.</p>
+
+
+<h3>@ Alias</h3>
+<p>Speaking of <code>this</code>, CoffeeScript has a shortcut for it, the <code>@</code> symbol. It's easy to write this off as meaningless syntactical sugar, but it is useful. First, constructor parameters prefixed with <code>@</code> are converted into properties:</p>
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %}class User
+  constructor: (@id) ->{% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}function User(id) {
+  this.id = id;
+}{% endhighlight %}
+  </div>
+</div>
+
+<p>Beyond this though, it's a nice way to define class method:</p>
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %}class User
+  constructor: (@id) ->
+
+  @findById: (id) =>
+     ...{% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}function User(id) {
+  this.id = id;
+}
+User.findById = function() {};{% endhighlight %}
+  </div>
+</div>
+
+<p>Neither <code>@</code> nor the fat arrow mean that you don't have to worry about the current meaning of <code>this</code> (or its alias <code>@</code>). They aren't silver bullets, which isn't to say that they don't add value.</p>
+
+<h3>Scoping</h3>
+<p>CoffeeScript takes care of properly scoping your variables. This means that you don't use the <code>var</code> keyword and don't have to worry about having an inner variable shadow an outer one. One top of that, all CoffeeScript output is wrapped inside an anonymous functions, which means you won't leak any global objects.</p>
+
+<p>If you do want to expose something globally, say like our User class above, you need to attach it to a global object, like <code>window</code>. Of course, on the node.js side, you can simply export it.</p>
+
+<h3>Clean JavaScript Output</h3>
+<p>One of the nicest things about CoffeeScript is that it generates clean and readable JavaScript. This makes it both easy to learn and debug. In fact, one of the best ways to learn CoffeeScript is to go to the <a href="http://coffeescript.org/">official website</a>, click the "Try CoffeeScript" button at the top, and type away. Seeing the instant translation to JavaScript is pretty useful.</p>
+
+<h3>Classes</h3>
+<p>We've seen examples of it as a side effect of other features, but CoffeeScript classes are cleaner and more intuitive than their JavaScript counterparts. And the only reason I'm not showing how to inherit via <code>extend</code> is because I don't want to include all the necessary JavaScript...</p>
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %}class User
+  constructor: (@id) ->
+
+  @findById: (id) ->
+
+  @findByEmail: (email) ->
+
+  save: =>{% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}function User(id) {
+  this.id = id;
+  this.save = __bind(this.save, this);
+}
+
+User.findById = function(id) {};
+
+User.findByEmail = function(email) {};
+
+User.prototype.save = function() {};{% endhighlight %}
+  </div>
+</div>
+
+
+<h3>Operators</h3>
+<p>In CoffeeScript, <code>==</code> and <code>!=</code> translate to <code>===</code> and <code>!==</code>, which you probably always want to be using. This alone removes a common pain point.</p>
+
+<p>In addition to that, there's the existential operator. In its simplest form, it checks for undefined and null:</p>
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %} return null unless n?{% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}if (typeof n === "undefined" || n === null) {
+  return null;
+}{% endhighlight %}
+  </div>
+</div>
+
+<p>But it can also be used in chains:</p>
+
+<div class="compare">
+  <div class="cs">
+    {% highlight ruby %}class Unicorn
+  is_rookie: ->
+    vampire?.kills > 0{% endhighlight %}
+  </div>
+  <div class="js">
+    {% highlight javascript %}Unicorn.prototype.is_rookie = function() {
+  return (typeof vampire !== "undefined" &&
+          vampire !== null ?
+          vampire.kills : void 0) > 0;
+};{% endhighlight %}
+  </div>
+</div>
+
+<h3>Wrap Up</h3>
+<p>CoffeeScript has a number of other nice features, and it's always evolving. I understand that some people simply don't like it, which is fine, since a lot of what it offers is subjective. However, I'm baffled that people dismiss as being nothing but syntactical sugar. Almost anything in the programming world can be described as <em>syntactical sugar</em> which sits on top of a more fundamental concept. It's less verbose and improves readability. That's a win in my books.</p>
+
+<p>Of course, as someone <a href="/2012/3/30/why-arrays-normally-start-at-zero/">who believes that knowing C is critical</a>, I agree that new developers should first learn JavaScript and then spend a day learning CoffeeScript. But that's pretty much as much of a debate as I plan on having about it.</p>

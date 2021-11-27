@@ -1,0 +1,15 @@
+---
+permalink: "/2012/3/27/Recommending-Distant-Items/"
+layout: post
+date: 2012-03-27
+title: "Recommending Distant Items"
+tags: [redis]
+---
+
+<p>A story trending on Hacker News today, titled <a href="http://news.sciencemag.org/sciencenow/2012/03/one-drug-to-shrink-all-tumors.html">One Drug to Shrink All Tumors</a>, got me thinking about recommendation engines.</p>
+
+<p>While I'm far from an expert in the field of collective intelligence, it seems that most recommendations work on the basis of closeness. That is, if you and I both loved Dune, and you also loved Hyperion, then maybe I'd like it too. The greater the distance, the less accurate the recommendation. In our example, we could add a third party who also loved Hyperion and Ringworld; but it'd be less accurate to recommend Ringworld to me than it was to recommend Hyperion (because it's one extra relationship).</p>
+
+<p>But, if a story about cancer treatment becomes popular in a tech community, surely that's an indication that it might be popular to a broad demographic. An extremely cynical version might go something like <em>You know a situation in Africa is dire by the time Western media picks up on it</em>.</p>
+
+<p>Is there a point to this? Only that if I was building a recommendation engine, whether it's trending stories, books you might like, or people you should consider following, I'd be interested in mixing in items which appear to have broad appeal rather than merely those that are closely related to me. Just thinking about it now, I'd suggest that this could be a way to make effective recommendations <a href="http://dontbubble.us/">without bubbling-in users</a>.</p>

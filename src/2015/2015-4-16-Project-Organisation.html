@@ -1,0 +1,17 @@
+---
+layout: post
+date: 2015-04-16
+title: "Project Organisation"
+tags: [misc]
+description: "A different (for me) way to organise / structure code in a project"
+---
+
+<p>Yesterday, on twitter, I mentioned that I was starting a new project and using a different project layout (different for me). Rather than organising things by technical function, such as /views, /controllers, /models, etc., I was grouping things by feature: /users, /search, etc.</p>
+
+<p>The feedback was overly positive. So much so in fact that I felt a little embarrassed; as though <em>everyone's</em> been doing it and I've been a fool. Assuming I'm not the only one who missed the memo, I wanted to write about it.</p>
+
+<p>It's too early to tell how it's working out, but so far, I'm a fan. One of my motivating factors was that it would be easier for someone without intimate knowledge of the project to come in and make a change. Everything they need is neatly organised in a single folder and the relationship between types is obvious.</p>
+
+<p>For example, my <code>ListUsers</code> action turns a request into a <code>Query</code> object which then gets passed along, eventually to be turned into SQL. Having most of the code grouped together, in some cases in the same file even, removes the need for a small context switch that I had never realised was there. Things aren't needlessly prefixed or useless grouped with things that merely happen to share a similar name. Yes, IDEs could help with this, but having used an IDE in the past, it's still a somewhat jarring / disoriented experience.</p>
+
+<p>Worth mentioning that, in Go, tests generally sit side by side with code, further grouping everything together. There's special support for this in the tooling, so I'm not sure how well that would work in other languages, but it makes everything even nicer in Go. Enter the folder, make your changes, run `go test .` and commit.
