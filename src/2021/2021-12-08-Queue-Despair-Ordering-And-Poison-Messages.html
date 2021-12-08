@@ -1,0 +1,54 @@
+---
+layout: post
+date: 2021-12-08
+title: "Queue Despair: Ordering and Poison Messages"
+description: "My struggle using queues / rabbitmq in the face of high availability, ordering and poison messages"
+tags: [design]
+---
+
+<p>It's taken me a long time to admit it, but I don't think I know how to do asynchronous programming. In theory, I'm a huge fan of the decoupling it offers in the face of complexity: simple independent components come together to build the whole. And it's not just theory, the benefits are numerous and real. The problem is that it doesn't always work and it isn't always obvious how to handle edge-cases. It's gotten to the point where I'm pretty sure that I don't know what I'm doing.</p>
+
+<p>I should point out that my experience is primarily with RabbitMQ, and the rest of this post is largely with respect to RabbitMQ. The problem may very well be my understanding of how RabbitMQ works or how to work with RabbitMQ.</p>
+
+<h3>Guarantees</h3>
+<p>In my experience, consumers generally operate in one of the following three modes:</p>
+
+<ol>
+  <li>Messages <strong>do not</strong> need to be strictly ordered and some messages <strong>can</strong> be lost</li>
+  <li>Messages <strong>do not</strong> need to be strictly ordered and messages <strong>cannot</strong> be lost</li>
+  <li>Messages <strong>do</strong> need to be strictly ordered and messages <strong>cannot</strong> be lost</li>
+</ol>
+
+<p>For an example of the first, consider a stream of vehicle positions. You likely only care about the latest state. If there's a brief hiccup, the system will right itself on the next message. Adding a timestamp to each message is an easy way for consumers to discard any out-of-order messages. This post is not about these messages.</p>
+
+<p>For an example of the second, consider an ordering system. It's probably ok for orders to be processed slightly out of order, but you certainly wouldn't want to lose any of them.</p>
+
+<p>For an example of the third, consider a system that sends a push notification to a users. You don't want to send a message saying "your order has been delivered" and then send a message saying "your order will arrive in 5 minutes". </p>
+
+<p>The third mode, with both strict ordering and guaranteed delivery is obviously the safest. It's also, in my experience, the most common. Generally, all messages need to be consumed and they need to be consumed in order. A common description I like to give is: <em>you don't want to process your deletes before you process your inserts.</em></p>
+
+<h3>Poison Messages</h3>
+<p>The tl;dr for this post is essentially: If you need guaranteed ordering and can't lose any messages, how do you deal with poison messages? Someone, please tell me!</p>
+
+<p>A poison message, also known as a poison pill, is a message that, for whatever reason, your consumer cannot process. By default, the message gets requeued at the front of the queue and the failure keeps happening, blocking all other messages in the queue and effectively shutting down your consumer. There are two things you can do with poison messages:</p>
+
+<ol>
+  <li>Discard the message
+  <li>Block the queue
+</ol>
+
+<p>Blocking the queue might sound extreme, but from what I can tell, it's the only safe behavior when you require both strict ordering and guaranteed delivery. Discarding messages by default might "unblock" the system, but it could also make it inconsistent, and that might cause even bigger and longer-lasting problems. I should point out that, in addition to discarding messages, people will usually record it somewhere, but that doesn't change the fact that the message wasn't processed.</p>
+
+<p>In many cases, you'll be able to fix your consumer or producer to address whatever issue caused the poison message. But that's only after the fact, and, in my experience, there can be edge-cases that can't be handled automatically. If possible, you can partition messages, say by a tenant id (called an "ordering key" in some system). A poison message will thus only block a specific partition. But, as far as I know, there isn't first class support for this in RabbitMQ. And it isn't something that every system or message can use: not every system or message has clear tenants. Even if they do, you need to make sure that ordering is only important by partition. And, finally, even if you can partition, you still have poison message, it's just (hopefully) impacting fewer people.</p>
+
+<p>I do believe that the frequency of poison messages is a good proxy for the general quality of the system. So it isn't something that necessarily happens often. Through discipline and good software development practices they can be made quite rate. But when it does, it's a nightmare: alerts get triggered and users can't use some (or all) of the system.</p>
+
+<h3>Strict Ordering</h3>
+<p>Even if we ignore poison messages, strict ordering on its own isn't that easy to pull off. Namely, you're limited to a single consumer and can only fetch one message at a time. In RabbitMQ, at least, I believe the best you can do is a quorum queue with a single active consumer. Part of this is unavoidable: you cannot have strict ordering across multiple consumers. But in some cases, first class support for partitioning could be leverages to distribute the work (though, again, partitioning isn't always possible, and they are rarely balanced). Furthermore, improvements to the Single Active Consumer logic could better distribute the consumer load (as-is, there's nothing stopping all of your consumers from being active on the same service). Finally, I feel like it should be possible to have strict ordering even in the face of redeliveries and a prefetch value greater than 1.</p>
+
+<h3>Conclusion</h3>
+<p>More should be done to help developers do things correctly, based on their needs. Queues should be defined with expected guarantees (e.g. <code>"ordering": "strict"</code>) and the system should handle the rest. Richer error-handling should also be available, with the ability to requeue a message at the end of the queue and/or requeue with a delay. But that still leaves poison messages.</p>
+
+<p>As for poison messages? I don't have a conclusion. I'm just hoping I'm doing something wrong and someone will tell me. While I continue to be a huge fan of RabbitMQ, I'm increasingly convinced that asynchronous messaging without partitioning is showstopper. Not because partitioning solves the fundamental problems, it doesn't. But it is, as far as I can tell, the only way to minimize the impact of poison message and scaling consumers (provided that partitioning even makes sense for your system).</p>
+
+<p>Aside: a <a href="/Consistent-Database-and-Message-Queue-Writes/">transactional outbox</a> is a simple pattern for keeping databases and queues consistent. It addresses a problem that I've seen over and over again, and I assume that the only reason it isn't more popular is because people don't know about it.</p>
