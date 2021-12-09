@@ -178,16 +178,16 @@ fn is_https?(url: &str) -> bool {
 
 
 {% highlight rust %}
-  // called with a &str
-  is_https("https://www.openmyind.net");
+// called with a &str
+is_https("https://www.openmyind.net");
 
-  // called with a &String
-  let mut input = String::new();
-  std::io::stdin().read_line(&mut input).unwrap();
-  is_https(&input);
+// called with a &String
+let mut input = String::new();
+std::io::stdin().read_line(&mut input).unwrap();
+is_https(&input);
 
-  // exact same as previous line
-  is_https(&input[..])
+// exact same as previous line
+is_https(&input[..])
 {% endhighlight %}
 
 <h3>Common String Tasks</h3>
@@ -218,9 +218,9 @@ fn from_str(s: &str) -> Result<bool, ParseBoolError> {
 <p>To convert a string to a boolean, or a string to a integer, use:</p>
 
 {% highlight rust %}
-  // unwrapping will panic if the parsing fails!
-  let b: bool = "true".parse().unwrap();
-  let i: u32 = "9001".parse().unwrap();
+// unwrapping will panic if the parsing fails!
+let b: bool = "true".parse().unwrap();
+let i: u32 = "9001".parse().unwrap();
 {% endhighlight %}
 
 
