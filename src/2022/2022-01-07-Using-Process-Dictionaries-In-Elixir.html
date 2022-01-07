@@ -1,0 +1,164 @@
+---
+layout: post
+date: 2022-01-07
+title: "Using Process Dictionaries in Elixir"
+description: "Process dictionaries are useful, can solve specific problems, and are not evil"
+tags: [elixir]
+---
+
+<p>In Elixir, <a href="/Elixir-A-Little-Beyond-The-Basics-Part-6-processes/">everything is a process.</a> And a key aspect of processes is that they have their own isolated state. In most cases when we're talking about a process' state, we're talking about a GenServer and the explicit state we setup in <code>init</code> and then maintain through the various calls to <code>handle_call</code>, <code>handle_cast</code> and <code>handle_info</code>. However, processes have another stateful mechanism:  process dictionaries.</p>
+
+<p>As the name implies, process dictionaries are dictionaries where, in typical Elixir fashion, the keys and values can be any term (any type of value). The <code>Process.get/1</code>, <code>Process.put/2</code> and <code>Process.delete/1</code> functions are used to manipulate the current process dictionary:</p>
+
+{% highlight elixir %}
+> IO.inspect Process.get(:power)
+nil
+
+> IO.inspect Process.put(:power, 9000)
+nil
+
+> IO.inspect Process.get(:power)
+9000
+
+> spawn fn -> IO.inspect Process.get(:power) end
+nil
+{% endhighlight %}
+
+<p>The two processes, the original and the one we spawn, don't share a process dictionary. For completeness, there's also a <code>Process.get/0</code> and <code>Process.get/2</code> function; the first to get all values, and the second to get the value or returns a specific default.</p>
+
+<p>If you've worked with stateful GenServers, you probably have a pretty intuitive feel for how awkward the process dictionary is. To some degree, it's akin to global variables, which is why you'll find a lot of people saying you shouldn't use them. While that might be good general advice, they an be useful in specific cases.</p>
+
+<p>For example, there are two cases where I make use.</p>
+
+<h3>Sensitive Data / Secrets</h3>
+<p>The first, and simplest, is to store sensitive data. Normal process state can be exposed via various mechanisms, such as calls to <code>:sys.get_state/1</code> and in crash logs. Consider this minimalist GenServer:</p>
+
+{% highlight elixir %}
+defmodule MyProcess do
+  use GenServer
+
+  def init(_), do: {:ok, %{secret: "over 9000", other: 1}}
+end
+{% endhighlight %}
+
+<p>There are various ways to get the state:</p>
+
+{% highlight elixir %}
+> {:ok, pid} = GenServer.start(MyProcess, [])
+> :sys.get_state(pid)
+%{other: 1, secret: "over 9000"}
+
+> GenServer.stop(pid, :crash)
+00:00:01.234 [error] GenServer #PID<0.219.0> terminating
+** (stop) :crash
+Last message: []
+State: %{other: 1, secret: "over 9000"}
+{% endhighlight %}
+
+<p>Getting the state inside of the crash dump, which can then be ingested into your log system, is probably the main thing you want to avoid. If we use the process dictionary <strong>and</strong> flag the process as sensitive, we can better protect our data:</p>
+
+{% highlight elixir %}
+def init(_) do
+  Process.put(:secret, "over 9000")
+  Process.flag(:sensitive, true)
+  {:ok, %{other: 1}}
+end
+{% endhighlight %}
+
+<p>For this to work, you <strong>must</strong> call <code>Process.flag(:sensitive, true)</code>. This will make the process dictionary unavailable via calls to <code>Process.info</code> or in crash dumps. Unfortunately, it also disables other information and features (tracing, stacks, pending messages). A common solution is to use a dedicated process for the sensitive information, which can be flagged as sensitive. This isolates the impact of the sensitive flag to this specific "secrets" process.</p>
+
+
+<h3>Mixin State Management</h3>
+<p>In some cases, you might be using macros to implement shared-functionality. For example, for RabbitMQ, we re-use a "base" Consumer module across multiple consumers. For example, if we wanted to track hits across various resources and periodically dump that to a database, we'd do something like:</p>
+
+{% highlight elixir %}
+defmodule MyApp.Consumers.Hits do
+  use MyApp.Consumer
+
+  def routes() do
+    ["v1.someapp.hit"]
+  end
+
+  def setup() do
+    Process.send_after(self(), :dump, 10_000)
+
+    # this is our process state, we'll store the hits here, in memory, and
+    # use the above timer to periodically persist it to the database
+
+    %{}
+  end
+
+  def handle("v1.someapp.hit", message, hits) do
+    Map.update(hits, message.resource, 1, fn existing -> existing + 1 end)
+  end
+
+  def handle_info(:dump, hits) do
+    Process.send_after(self(), :dump, 10_000)
+
+    # TOOD: save our hits
+
+    # reset our hits now that we've saved it
+    {:noreply, %{}}
+  end
+end
+{% endhighlight %}
+
+<p><code>MyApp.Consumer</code> does a bunch of heavy lifting and, importantly, requires its own state (e.g. the RabbitMQ channel). Here's part of the <code>init</code> which <code>MyApp.Consumer</code> generates:</p>
+
+{% highlight elixir %}
+def init(opts) do
+  conn = Keyword.fetch!(opts, :conn)
+  {:ok, channel} = AMQP.Channel.open(conn)
+
+  routes = routes()
+  # TODO bind to routes and start our consumer
+
+  state = setup()
+  {:ok, state}
+end
+{% endhighlight %}
+
+<p>How do we add channel to the state? We could do this:</p>
+
+{% highlight elixir %}
+def init(opts) do
+  ...
+  state = setup()
+  {:ok, %{consumer_state: state, channel: channel}
+end
+{% endhighlight %}
+
+<p>But this requires awareness in all of our consumers. Our above <code>handle_info/2</code> need to be rewritten:</p>
+
+{% highlight elixir %}
+def handle_info(:dump, %{consumer_state: hits} = state) do
+  Process.send_after(self(), :dump, 10_000)
+
+  # TOOD: save our hits
+
+  # reset our state now that we've saved it
+  {:noreply, %{state | consumer_state: %{}}}
+end
+{% endhighlight %}
+
+<p>This is easy to mess up and adds extra nesting to everything (e.g. pattern matching). There are other techniques you could try, but none are as simple and robust as using the process dictionary:</p>
+
+{% highlight elixir %}
+def init(opts) do
+  conn = Keyword.fetch!(opts, :conn)
+  {:ok, channel} = AMQP.Channel.open(conn)
+
+  routes = routes()
+  # TODO bind to routes and start our consumer
+
+  Process.put(:channel, channel)
+  state = setup()
+  {:ok, state}
+end
+{% endhighlight %}
+
+<p>Now, the only "state" is the consumer state, and whenever the <code>MyApp.Consumer</code> code needs the channel, it can call <code>Process.get(:channel)</code>.
+
+
+<h3>Conclusion</h3>
+<p>Process dictionaries shouldn't be the default option you use for statefulness. But they shouldn't be avoided at all costs. There are some problems and patterns that they're well suited for and there's no reason not to use them in those cases. The concept is simple and it's just a few functions. It's the type of thing that's worth knowing and keeping around in your head.</p>
