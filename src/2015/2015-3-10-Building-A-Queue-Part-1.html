@@ -16,7 +16,7 @@ img{display:block;margin:0 auto 20px;}
 
 <p>With a couple configuration options, NSQ can be durable. But the implementation is such that performance degrades linearly with each new channel (a consumer). Why? because each channel gets a copy the message. With everything in-memory, this isn't a huge deal. But when persisted to disk, the linear demand for IO doesn't go unnoticed. The difference between 0, 5 and 10 channels, when writing 5000 4K messages, is 2.22s, 3.81s and 5.19s.</p>
 
-<p>This made me start to think about how I'd design a queue for my own needs. Namely, I'm interested in guaranteed message ordering, at-least one delivery and durability. On the flip side, <a href="http://openmymind.net/Im-Not-Sold-On-High-Availability/">I don't care about high availability</a>.</p>
+<p>This made me start to think about how I'd design a queue for my own needs. Namely, I'm interested in guaranteed message ordering, at-least one delivery and durability. On the flip side, <a href="https://www.openmymind.net/Im-Not-Sold-On-High-Availability/">I don't care about high availability</a>.</p>
 
 <p>Staying with NSQ's approach, my queue has topics and channels. You write to, and create channels from, a topic. A topic might be named "v1.users", which has messages that capture whenever a user gets created, updated or deleted. Any job interested in these messages would create a channel, such as a "email welcomer", "referrer updater" and "cache purger".</p>
 

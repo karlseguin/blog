@@ -25,7 +25,7 @@ end
 
 <p>The end result is that our website flow is friendlier. Users can start using the site right away and our welcome email is just a welcome email - no special activation instructions, no huge deal if it get marked as spam. I'd say that for most websites, its the right model to use. PostMark costs $1.50 per 1000 emails (with bulk pricing available), has libraries for most major frameworks, and provides a rich API (you can query a webservice for bounces rather than have them callback).</p>
 
-<p>My only complaint is that they don't have a Rails 3 library yet. While Rails 3 might be in beta, it'd still be nice to have. So I wasn't able to hook into the <a href="http://openmymind.net/2010/6/24/Rails-does-Mail-Right-ASPNET-not-so-much">beautiful rails mailing api</a>. Instead I had to use PostMark's ruby (not rails) library directly. </p>
+<p>My only complaint is that they don't have a Rails 3 library yet. While Rails 3 might be in beta, it'd still be nice to have. So I wasn't able to hook into the <a href="https://www.openmymind.net/2010/6/24/Rails-does-Mail-Right-ASPNET-not-so-much">beautiful rails mailing api</a>. Instead I had to use PostMark's ruby (not rails) library directly. </p>
 
 
 <p>For the curious, since we are using nginx as our webserver, here's what our location confirguration looks like for this specific URL (to enable basic authentication):</p>

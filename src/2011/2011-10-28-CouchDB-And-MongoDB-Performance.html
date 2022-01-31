@@ -5,7 +5,7 @@ date: 2011-10-28
 title: "CouchDB And MongoDB Performance"
 tags: [mongodb, performance]
 ---
-<p>I wanted to follow up <a href="http://openmymind.net/2011/10/27/A-MongoDB-Guy-Learns-CouchDB/">yesterday's detailed (and objective?) post</a> on CouchDB with some basic benchmarks. I know people hate these types of benchmarks. But I do think it's good to have some very high level idea about these things. Also, both CouchDB and MongoDB have a bulk-api, which is useful for some tasks, but I think most web apps are dealing with fairly small and independent pieces of information. The code is a very poor simulation of the two main queries <a href="http://mogade.com/">mogade.com</a> gets.</p>
+<p>I wanted to follow up <a href="https://www.openmymind.net/2011/10/27/A-MongoDB-Guy-Learns-CouchDB/">yesterday's detailed (and objective?) post</a> on CouchDB with some basic benchmarks. I know people hate these types of benchmarks. But I do think it's good to have some very high level idea about these things. Also, both CouchDB and MongoDB have a bulk-api, which is useful for some tasks, but I think most web apps are dealing with fairly small and independent pieces of information. The code is a very poor simulation of the two main queries <a href="http://mogade.com/">mogade.com</a> gets.</p>
 
 <p>For the record, journaling is enabled in MongoDB <strong>and</strong> I'm doing a full fscync on each insert (the ruby driver doesn't support journal commit yet (which would be faster than a full data file fsync)?! guess what I'm doing next...)</p>
 

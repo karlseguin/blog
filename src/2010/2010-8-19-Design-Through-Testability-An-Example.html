@@ -5,7 +5,7 @@ date: 2010-08-19
 title: "Design Through Testability - An Example"
 tags: [design, testing]
 ---
-<p>Despite my <a href="http://openmymind.net/2010/8/17/Write-testable-code-even-if-you-dont-write-tests">previous attempt</a> you may still not believe that testability has a lot less to do with testing and a lot more to do with good design. So I thought we'd walk through an example to see how making code testable (which doesn't necessarily mean testing it) can turn some bad code into something beautiful.</p>
+<p>Despite my <a href="https://www.openmymind.net/2010/8/17/Write-testable-code-even-if-you-dont-write-tests">previous attempt</a> you may still not believe that testability has a lot less to do with testing and a lot more to do with good design. So I thought we'd walk through an example to see how making code testable (which doesn't necessarily mean testing it) can turn some bad code into something beautiful.</p>
 
 <p>First, the context. I have a need to query a data source (could be a database, an LDAP provider, a web service, or anything, it doesn't really matter) to get employee information based on an id. Since employee information doesn't change frequently and, despite what people try to tell you, performance is a feature, we also want to cache the data. Here's what our initial attempt might look like:</p>
 
