@@ -1,0 +1,231 @@
+---
+layout: post
+date: 2022-02-05
+title: "Elixir Without Ecto"
+description: "Using Elixir (and Phoenix) without Ecto; directly using PostgreSQL"
+tags: [elixir]
+---
+
+<p>In this post we'll explore using PostgreSQL directly from an Elixir (or Phoenix) application. I want to keep this post objective, but I will say that, having used various data mapping patterns and tools, I've found that using SQL directly almost always results in simpler yet more flexible code. The only case where I'd consider a data mapping layer is if I had to support multiple databases (e.g. PostgreSQL, MySQL, Sqlite) within the same codebase.</p>
+
+<p>Getting started is easy:</p>
+
+<ol>
+  <li>Add a dependency to <a href="https://hex.pm/packages/postgrex">Postgrex</a> (the same driver used by Ecto)
+  <li>Use <code>Postgrex.start_link</code> to start a named connection process, probably as part of your root/application supervisor
+  <li>Use <code>Postgrex.query/4</code>, <code>Postgrex.query!/4</code> and <code>Postgrex.transaction/3</code>
+</ol>
+
+<p>Let's look at a basic example:</p>
+
+{% highlight elixir %}
+defmodule MyApp do
+  use Application
+
+  def start(_type, _args) do
+    # Probably want to store this in a config
+    # and load via Application.fetch_env!(:myapp, :db)
+    db_config = [
+      name: :mydb,
+      hostname: "127.0.0.1",
+      database: "postgres",
+    ]
+
+    children = [
+      {Postgrex, db_config},
+      ...
+    ]
+
+    Supervisor.start_link(children, [strategy: :one_for_one, name: __MODULE__])
+  end
+end
+{% endhighlight %}
+
+<p>The above, a fragment of what your application's root supervisor would look like, starts a connection manage named <code>:mydb</code>, which we can use like so:</p>
+
+{% highlight elixir %}
+Postgrex.query!(:mydb, "select * from table where id = $1", [id])
+{% endhighlight %}
+
+<p>You can find a <a href="https://hexdocs.pm/postgrex/Postgrex.html#start_link/1-options">list of configuation options</a> in the documentation, but the most useful options are: <code>name</code>, <code>hostname</code>, <code>database</code>, <code>username</code>, <code>password</code> and <code>pool_size</code>.</p>
+
+<p>I also recommend that you also set the <code>application_name</code> of the <code>paramaters</code> field:</p>
+
+{% highlight elixir %}
+name: :mydb,
+hostname: "127.0.0.1",
+database: "postgres",
+parameters: [application_name: "my_app"]
+{% endhighlight %}
+
+<p>Which is used by PostgreSQL for various things (such as the <code>application_name</code> column of the <code>pg_stat_activity</code> view).</p>
+
+<h2>Helper Functionality</h2>
+<p>The above is all we need to work with PostgreSQL directly. But we can make this more developer-friendly. Specifically, we can use a base module to encapsulate the code to more easily manage the connection name, as well as provide wrappers to the <code>query</code> function for specific patterns (like returning a single column from a single row). As a start, consider:</p>
+
+{% highlight elixir %}
+defmodule A.DB do
+  defmacro __using__(_) do
+    quote location: :keep do
+      @name __MODULE__
+
+      def child_spec(opts) do
+        %{
+          id: __MODULE__,
+          start: {__MODULE__, :start_link, opts}
+        }
+      end
+
+      def start_link(config) do
+        defaults = [name: @name, pool_size: 5]
+        config = Keyword.merge(defaults, config)
+        Postgrex.start_link(config)
+      end
+
+      def query!(sql, values) do
+        Postgrex.query!(@name, sql, values)
+      end
+    end
+  end
+end
+{% endhighlight %}
+
+<p>It's a decent amount of code, but it doesn't do very much (yet). To use it, we create a new module and <code>use A.DB</code>:</p>
+
+{% highlight elixir %}
+defmodule MyApp.DB do
+  use A.DB
+
+  # Feel free to add other app/db-specific things in here
+end
+{% endhighlight %}
+
+<p>Which can then be started in application's supervisor (instead of starting Postgrex directly, as we first saw):</p>
+
+{% highlight elixir %}
+children = [
+  {MyApp.DB, db_config},
+  ...
+]
+{% endhighlight %}
+
+<p>Finally, we can use <code>MyApp.DB.query!(sql, values)</code> in our code.</p>
+
+<p>You can add application-specific code to the <code>MyApp.DB</code> module. But there's also more generic code we can add to the base <code>A.DB</code>. Right now our <code>query!/2</code> is a thin wrapper around <code>Postgrex.query!</code>, which returns rows and columns. But you probably execute code that: needs to know the number of affected rows (for updates and deletes), return a single value or a single row, or maybe returns the row(s) as map(s). All of these can be trivially added to <code>A.DB</code>:</p>
+
+{% highlight elixir %}
+# our existing query!
+def query!(sql, values) do
+  Postgrex.query!(@name, sql, values)
+end
+
+# For queries that return 1 row with 1 column
+def scalar!(sql, values) do
+  case query!(sql, values) do
+    %{rows: []} -> nil
+    %{rows: [[value]]} -> value
+    %{rows: _} ->
+      # maybe log sql and values?
+      raise "scalar returned multiple columns and/or rows"
+  end
+end
+
+# For queries that return 1 row
+def row!(sql, values) do
+  case query!(sql, values) do
+    %{rows: []} -> nil
+    %{rows: [row]} -> row
+    _ ->
+      # maybe log sql and values?
+      raise "row! returned multiple rows"
+  end
+end
+
+# For queries that return mulitple rows
+def rows!(sql, values), do: query!(sql, values).rows
+
+# number of affected rows (generally used for updates or deletes)
+def affected!(sql, values), do: query!(sql, values).num_rows
+
+# For queries that return 1 row, which we want to turn into a map
+def map!(sql, values) do
+  case query!(sql, values) do
+    %{rows: []} -> nil
+    %{rows: [row], columns: columns} -> mapify(columns, row)
+    _ ->
+      # maybe log sql and values?
+      raise "map! returned multiple rows"
+  end
+end
+
+# For queries that return multiple rows, which we want to turn into an array of maps
+def maps!(sql, values) do
+  case query!(sql, values) do
+    %{rows: []} -> nil
+    %{rows: rows, columns: columns} ->
+      Enum.map(rows, fn row -> mapify(columns, row) end)
+    _ ->
+      # maybe log sql and values?
+      raise "maps! returned multiple rows"
+  end
+end
+
+defp mapify(columns, row) do
+  columns
+  |> Enum.zip(row)
+  |> Map.new()
+end
+{% endhighlight %}
+
+<p>The map(s) returned from <code>map!/2</code> and <code>maps!/2</code> have string-based keys, based on the column names being returned. You might want to atomify those keys, which is fine, so long as your column names aren't dynamic and you understand that atom's aren't garbage collected. You can change the above code to always use atom keys, or you can make it an optional argument to the functions.</p>
+
+<p>The final piece that we're missing are transactions. So far, the first parameter that we've passed to the <code>Postgrex.query!</code> function has been the name of our connection (i.e. <code>@name</code> which is our module name, <code>MyApp.DB</code> in this case). However, this function also accepts a connection value created by <code>Postgrex.transaction</code>. We can use this and make all of our above function either take a connection object directly, or default to using <code>@name</code>. So, <code>query!</code> becomes:</p>
+
+{% highlight elixir %}
+def query!(sql, values), do: query!(@name, sql, values)
+def query!(conn, sql, values, opts \\ []) do
+  Postgrex.query!(conn, sql, values, opts)
+end
+{% endhighlight %}
+
+
+<p>And <code>scalar!</code> becomes:</p>
+
+{% highlight elixir %}
+def scalar!(sql, values), do: scalar!(@name, sql, values)
+def scalar!(conn, sql, values, opts \\ []) do
+  case query!(conn, sql, values, opts)  do
+    %{rows: []} -> nil
+    %{rows: [[value]]} -> value
+    %{rows: unknown} ->
+      Log.error("scalar!", sql: sql, values: values)
+      raise "scalar returned multiple columns and/or rows"
+  end
+end
+{% endhighlight %}
+
+<p>We can repeat this pattern for each function, and, finally, add a thin wrapper for <code>Postgrex.transaction</code>:</p>
+
+{% highlight elixir %}
+def transaction!(fun, opts \\ []) do
+  case Postgrex.transaction(@name, fun, opts) do
+    {:ok, res} -> res
+    {:error, :rollback} -> raise "transaction! rollback"
+    err -> err
+  end
+end
+{% endhighlight %}
+
+<p>Which we can then use like so:</p>
+{% highlight elixir %}
+alias MyApp.DB
+
+DB.transaction!(fn tx ->
+  if DB.affected!(tx, "update users set status = 'deleted' where id = $1", [id]) == 1 do
+    DB.query!(tx, "insert into audit_log ....", ...)
+  end
+end, [timeout: 30_000]) # optional parameters to pass to Postgres
+{% endhighlight %}
+
+
+<p><a href="https://gist.github.com/karlseguin/f00417db62d1e4b45d6b37925abc1142">This gist</a> contains the full code. You should keep in mind that this is only meant as a base template. You should personalize and optimize this to fit your needs. In the next part, we'll look at writing a simple query object, which will help use write safe dynamic SQL while staying relatively close to raw SQL.</p>

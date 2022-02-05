@@ -18,6 +18,7 @@ module.exports = function(config) {
 	});
 
 	config.addPassthroughCopy('assets');
+	config.addPassthroughCopy('404.html');
 	config.addPassthroughCopy('favicon.ico');
 
 	return {
