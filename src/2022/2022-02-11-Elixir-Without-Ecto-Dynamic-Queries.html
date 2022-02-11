@@ -1,0 +1,368 @@
+---
+layout: post
+date: 2022-02-11
+title: "Elixir Without Ecto - Dynamic Queries"
+description: "Using Elixir (and Phoenix) without Ecto and supporting safe dynamic queries"
+tags: [elixir]
+---
+
+<p>In the last post, we looked at the basic mechanism for <a href="/Elixir-Without-Ecto/">using elixir without ecto</a>. One thing is obviously missing from that post: support for dynamic queries. For example, to get users based on their status, we can do:</p>
+
+{% highlight elixir %}
+MyApp.DB.maps!("select * from users where status = $1", [user_status])
+{% endhighlight %}
+
+<p>What about getting all users when <code>user_status</code> is <code>nil</code>? We'll need to be able to dynamically build our select statement while ensuring that we protect against SQL injections. What we're going to do is <a href="/Elixir-A-Little-Beyond-The-Basics-Part-2-iolist/">leverage our knowledge of iolists</a> to build a query builder. Our end goal is to be able to write code like this:</p>
+
+{% highlight elixir %}
+q = Query.new()
+|> Query.select("*")
+|> Query.from("users")
+
+q = case user_status == nil do
+  true -> q
+  false -> Query.where(q, "status", :eq, user_status)
+end
+
+DB.maps!(q)
+{% endhighlight %}
+
+<p>This is different than Ecto in that its only purpose is to help us safely generate SQL, we're not concerned with mapping, migrations, models, callbacks or anything else.<p>
+
+<p>The goal of this post isn't to provide a complete solution. If you're looking for that, you might want to consider <a href="https://github.com/robconery/moebius">Mobieus</a>, which I've not used, but looks solid. The goal is to let you know that it's ok to use Elixir and Phoenix without Ecto. In fact, I think it's <em>a lot</em> better. The only thing you'll probably need is a query builder, and you can either use this post as a rough guide or use an existing tool.</p>
+
+<p>We're going to build this up slowly, starting with selecting columns from tables:</p>
+
+{% highlight elixir %}
+defmodule A.DB.Query do
+  # same as doing alias A.DB.Query
+  alias __MODULE__
+
+  defstruct [
+    :from,
+    :select
+  ]
+
+  def new() do
+    %Query{
+      from: [],
+      select: nil,
+    }
+  end
+
+  # first select we add shouldn't be prefixed with a comma
+  def select(%{select: nil} = q, select), do: %Query{q | select: [select]}
+
+  # subsequent selects should be prefixed with a comma
+  def select(q, select), do: %Query{q | select: [q.select, ", ", select]}
+
+  def from(q, from), do: %Query{q | from: [q.from, " ", from]}
+
+  def to_sql(q) do
+    ["select ", q.select || "*", " from", q.from]
+  end
+end
+{% endhighlight %}
+
+<p>The above skeleton captures the approach that we'll be taking; we just need to add more of the same. If you want you can extend this to suit your needs. For example, <code>select/2</code> could optionally take a list of columns, or instead of relying on multiple calls to <code>from/2</code> you could add a <code>join/2</code> (and <code>join_left/2</code>, etc). Make it your own.</p>
+
+<p>For completeness here's a test that covers some of the above code:</p>
+
+{% highlight elixir %}
+test "builds a simple query" do
+  Query.new()
+  |> Query.from("users")
+  |> assert_query("select * from users")
+
+  Query.new()
+  |> Query.select("u.id, c.name")
+  |> Query.select("u.created")
+  |> Query.from("users u")
+  |> Query.from("join clients c on u.client_id = c.id")
+  |> assert_query("""
+    select u.id, c.name, u.created
+    from users u join clients c on u.client_id = c.id
+  """)
+end
+
+defp assert_query(q, expected) do
+  # normalize the spaces
+  actual_sql = sql
+  |> :erlang.iolist_to_binary()
+  |> String.replace(~r/\s+/, " ")
+
+  # normalize the spaces
+  expected_sql = expected_sql
+  |> String.replace(~r/\s+/, " ")
+  |> String.trim()
+
+  assert actual_sql == expected_sql
+end
+{% endhighlight %}
+
+<p>Lets add support for <code>group by</code>. The simplest thing we can do is:</p>
+
+{% highlight elixir %}
+defmodule A.DB.Query do
+  alias __MODULE__
+
+  defstruct [
+    # ... existing fields ...
+    :group
+  ]
+
+  def new() do
+    %Query{
+      # ... existing fields ...
+      group: nil
+    }
+  end
+
+  # ... existing select/2 and from/2 ...
+
+  def group(q, group), do: %Query{q | group: group}
+
+  def to_sql(q) do
+    sql = ["select ", q.select || "*", " from", q.from]
+    case q.group do
+      nil -> sql
+      group -> [sql, " group by ", group]
+    end
+  end
+{% endhighlight %}
+
+<p>Along with a basic sanity test:</p>
+
+{% highlight elixir %}
+test "group by" do
+  Query.new()
+  |> Query.from("x")
+  |> Query.group("id")
+  |> assert_query("select * from x group by id")
+
+  Query.new()
+  |> Query.from("x")
+  |> Query.group("1, id having count(*) > 1")
+  |> assert_query("select * from x group by 1, id having count(*) > 1")
+end
+{% endhighlight %}
+
+<p>Our grouping API is bareboned: <code>group/2</code> is meant to be called once with [optionally] a <code>having</code> clause. As-is, it's pretty much as close to raw SQL as we can make it. But if we want, or need, we can make the API slightly more abstract, while remaining minimal and explicit. Consider this expanded implementation:</p>
+
+{% highlight elixir %}
+# first group we add shouldn't be prefixed with a comma
+def group(%{group: nil} = q, group), do: %Query{q | group: [group]}
+
+# subsequent groups should be prefixed with a comma
+def group(q, group), do: %Query{q | group: [q.group, ", ", group]}
+
+def having(q, having), do: %Query{q | having: having}
+{% endhighlight %}
+
+<p>We could spend more time tweaking this API and supporting various use-cases. At the very least, we'd need to add support for <code>order by</code>, <code>limit</code> and <code>offset</code>. But that largely comes down to more of what we've already done.</p>
+
+<p>To make this useful, we need to support the <code>where</code> clause, and more generally, parameters.</p>
+
+{% highlight elixir %}
+defmodule A.DB.Query do
+  alias __MODULE__
+
+  defstruct [
+    # ... existing fields ...
+    :op,
+    :where,
+    :values,
+    :value_count
+  ]
+
+  def new() do
+    %Query{
+      # ... existing fields ...
+      op: " and "
+      where: nil,
+      values: [],
+      value_count: 0,
+    }
+  end
+
+  # ... existing select/2, from/2, group/2 ...
+
+  # for things like Query.where(q, "deleted is null")
+  def where(q, predicate), do: add_where(q, predicate)
+
+  def where(q, left, :eq, value) do
+    {q, placeholder} = add_value(q, value)
+    add_where(q, [left, " = ", placeholder])
+  end
+
+  def where(q, left, :ne, value) do
+    {q, placeholder} = add_value(q, value)
+    add_where(q, [left, " != ", placeholder])
+  end
+
+  def where(q, left, :gt, value) do
+    {q, placeholder} = add_value(q, value)
+    add_where(q, [left, " > ", placeholder])
+  end
+
+  def where(q, left, :lt, value) do
+    {q, placeholder} = add_value(q, value)
+    add_where(q, [left, " < ", placeholder])
+  end
+
+  # Adds the value to our query and returns the placeholder (e.g. $1) to use
+  # in the SQL. We're only using this for where, but it can be used in any
+  # part of the query where we want to inject a value/placeholder.
+  def add_value(q, value) do
+    count = q.value_count + 1
+    q = %Query{q | values: [value | q.values], value_count: count}
+    {q, placeholder(count)}
+  end
+
+  defp add_where(%{where: nil} = q, predicate), do: %Query{q | where: [predicate]}
+  defp add_where(q, predicate), do: %Query{q | where: [q.where, q.op, predicate]}
+
+  def to_sql(q) do
+    sql = ["select ", q.select || "*", " from", q.from]
+
+    sql = case q.where do
+      nil -> sql
+      where -> [sql, " where ", where]
+    end
+
+    sql = case q.group do
+      nil -> sql
+      group -> [sql, " group by ", group]
+    end
+
+    {sql, Enum.reverse(q.values)}
+  end
+
+  # pre-generate 100 placehoders, so we end up with;
+  #   defp placeholder(1), do: "$1"
+  #   defp placeholder(2), do: "$2"
+  #   defp placeholder(100), do: "$100"
+  for i <- 1..100 do
+    s = "$#{i}"
+    defp placeholder(unquote(i)), do: unquote(s)
+  end
+
+  # fall back to dynamically creating a placeholder
+  defp placeholder(i), do: "$#{i}"
+{% endhighlight %}
+
+<p>We need to add <strong>a lot</strong> of <code>where/3</code> functions in order to support operations like <code>in</code>, <code>any</code>, <code>gte</code>, <code>like</code>, etc. But they all work the same: using <code>add_value/2</code> to add the value to <code>query.values</code> and getting a placeholder (e.g. <code>$1</code>) in return to place into the SQL.</p>
+
+<p>Another test:</p>
+
+{% highlight elixir %}
+test "where" do
+  Query.new()
+  |> Query.from("x")
+  |> Query.where("status", :eq, "normal")
+  |> assert_query("select * from x where status = $1", ["normal"])
+
+  Query.new()
+  |> Query.from("x")
+  |> Query.where("deleted is null")
+  |> Query.where("type", :ne, "monkey")
+  |> Query.where("power", :gt, 9000)
+  |> assert_query("""
+    select * from x
+    where deleted is null
+      and type != $1
+      and power > $2
+    """, ["monkey", 9000])
+end
+
+# extend this to also assert the expected values
+defp assert_query(q, expected_sql, expected_values \\ []) do
+  {sql, values} = Query.to_sql(q)
+
+  # normalize the spaces
+  actual_sql = sql
+  |> :erlang.iolist_to_binary()
+  |> String.replace(~r/\s+/, " ")
+
+  # normalize the spaces
+  expected_sql = expected_sql
+  |> String.replace(~r/\s+/, " ")
+  |> String.trim()
+
+  assert actual_sql == expected_sql
+  assert values == expected_values
+end
+{% endhighlight %}
+
+
+<p>What's nice about <code>add_value/2</code> is that it can be used in any part of query. Obviously we'd want to improve the API to make this more intuitive, but as-is, the following test passes:</p>
+
+{% highlight elixir %}
+q = Query.new()
+{q, p1} = Query.add_value(q, true)
+
+q
+|> Query.select(p1)
+|> Query.from("x")
+|> assert_query("select $1 from x", [true])
+{% endhighlight %}
+
+<p>The last feature we're going to add is some basic grouping for <code>or</code> and <code>and</code>. As you've probably noticed we currently join all where statements with <code>and</code>. Let's see how we can expand this (there's a lot of ways to do this):</p>
+
+{% highlight elixir %}
+defmodule A.DB.Query do
+  alias __MODULE__
+
+  # ... existing defstruct & functions ...
+
+  def where_or(q, fun), do: where_fun(q, fun, " or ")
+  def where_and(q, fun), do: where_fun(q, fun, " and ")
+
+  defp where_fun(q, fun, op) do
+    restore_op = q.op
+    existing = case q.where do
+      nil -> []
+      where -> [where, q.op]
+    end
+
+    q = fun.(%Query{q | op: op, where: nil})
+    %Query{q | op: restore_op, where: [existing, "(", q.where, ")"]}
+  end
+
+  ...
+end
+{% endhighlight %}
+
+<p>The above code captures our existing <code>where</code>, changes the <code>op</code>, executes the function, and then merges the newly generated where with the original.</p>
+
+<p>And our test:</p>
+
+{% highlight elixir %}
+test "filter groups" do
+  Query.new()
+  |> Query.from("x")
+  |> Query.where("a", :eq, 1)
+  |> Query.where_or(fn q ->
+    q
+    |> Query.where("b", :lt, 2)
+    |> Query.where("c", :gt, 3)
+    |> Query.where_and(fn q ->
+      q |> Query.where("d", :ne, 4) |> Query.where("e", :eq, 5)
+    end)
+  end)
+  |> Query.where("f", :ne, 6)
+  |> assert_query("""
+    select * from x
+    where a = $1
+      and (b < $2 or c > $3 or (d != $4 and e = $5))
+      and f != $6
+    """, [1, 2, 3, 4, 5, 6])
+end
+{% endhighlight %}
+
+
+<p>Where you take the code next is up to you. Personally, I'd suggest you start with something similar to what we've explored so far and expand it as needed. The module is easy to test, so you should a robust safety net.</p>
+
+<p>As I said earlier, you might want to look at <a href="https://github.com/robconery/moebius">Mobieus</a> for something more than this quarter-baked solution. If you found this code intimidating, being extremely comfortable with iolists both useful and important.</p>
+
+<p>Elixir without Ecto isn't just possible, it's awesome. Don't be afraid.</p>

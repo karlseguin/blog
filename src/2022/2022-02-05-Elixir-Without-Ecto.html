@@ -47,9 +47,9 @@ end
 Postgrex.query!(:mydb, "select * from table where id = $1", [id])
 {% endhighlight %}
 
-<p>You can find a <a href="https://hexdocs.pm/postgrex/Postgrex.html#start_link/1-options">list of configuation options</a> in the documentation, but the most useful options are: <code>name</code>, <code>hostname</code>, <code>database</code>, <code>username</code>, <code>password</code> and <code>pool_size</code>.</p>
+<p>You can find a <a href="https://hexdocs.pm/postgrex/Postgrex.html#start_link/1-options">list of configuration options</a> in the documentation, but the most useful options are: <code>name</code>, <code>hostname</code>, <code>database</code>, <code>username</code>, <code>password</code> and <code>pool_size</code>.</p>
 
-<p>I also recommend that you also set the <code>application_name</code> of the <code>paramaters</code> field:</p>
+<p>I also recommend that you also set the <code>application_name</code> of the <code>parameters</code> field:</p>
 
 {% highlight elixir %}
 name: :mydb,
@@ -224,7 +224,7 @@ DB.transaction!(fn tx ->
   if DB.affected!(tx, "update users set status = 'deleted' where id = $1", [id]) == 1 do
     DB.query!(tx, "insert into audit_log ....", ...)
   end
-end, [timeout: 30_000]) # optional parameters to pass to Postgres
+end, [timeout: 30_000]) # optional parameters to pass to Postgrex
 {% endhighlight %}
 
 
