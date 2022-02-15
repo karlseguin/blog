@@ -26,8 +26,8 @@ tags: [concurrency, design, performance]
 
 {% highlight javascript %}
 function clicked(event) {
-  var lat = event.latLng.k;
-  var lng = event.latLng.D;
+  var lat = event.latLng.lat();
+  var lng = event.latLng.lng();
 
   // if outside the bounding box, just return
   if (lat > A[0] || lat < Z[0] || lng < A[1] || lng > Z[1]) {
@@ -72,7 +72,7 @@ function updatePosition(user, lat, lng) {
 
 <p>I think.</p>
 
-<script src="http://maps.googleapis.com/maps/api/js?v=3.exp&amp;sensor=false&amp;libraries=places"></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDYDdzImCLtOPt5d-k8UXHyjHFfPW2jaxg&libraries=places"></script>
 <script>
 // top left corner of our bounding box
 var A = [19.54684919724742,  -99.29065704345703];
@@ -99,14 +99,13 @@ var grid = new Array();
 
 //fires when a cell (or anywhere else on the map) is clicked
 function clicked(event) {
-  var lat = event.latLng.H;
-  var lng = event.latLng.L;
+  var lat = event.latLng.lat();
+  var lng = event.latLng.lng();
 
   // if outside the bounding box, just return
   if (lat > A[0] || lat < Z[0] || lng < A[1] || lng > Z[1]) {
     return;
   }
-
   // figure out the cells index within the grid
   var lngPosition = Math.abs(Math.ceil((A[1] - lng) / LNG_STEP));
   var latPosition = Math.abs(Math.ceil(((A[0] - lat) / LAT_STEP)) - 1) * LNG_STEP_COUNT;
