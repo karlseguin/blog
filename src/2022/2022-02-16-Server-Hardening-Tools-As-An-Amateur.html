@@ -1,0 +1,269 @@
+---
+layout: post
+date: 2022-02-16
+title: "Server Hardening Tools (As An Amateur)"
+description: "A list of free (and mostly open source) tools I use to secure servers"
+tags: [security]
+---
+
+<p><b>Warning:</b> I'm a developer who happens to manage servers. I'm far from an expert when it comes to any of this.</p>
+
+<h3><a href="https://vector.dev/">vector</a></h3>
+<p>Vector is a log ingestor written in Rust. I assume people who are using logstash just haven't heard of Vector before. While it isn't primarily related to security, a lot of the tools listed here have their output ingested by vector and written to elastic search / prometheus. In this respect, vector is an important part of making everything actionable and audited.</p>
+
+<p>It also have a built-in transformer, <a href="https://vector.dev/docs/reference/vrl/functions/#parse_linux_authorization">parse_linux_authorization</a> which I use on <code>/var/log/auth.log</code>.</p>
+
+<h3><a href="https://cisofy.com/lynis/">Lynis</a></h3>
+<p>Lynis is an auditing, hardening and compliance command line utility. You run it, <code>lynis audit system</code>, and a few seconds later you get a detailed report, that includes a total score and a link that describes each issue / recommendation. For example, the <a href="https://cisofy.com/lynis/controls/AUTH-9328/">AUTH-9328</a> check recommends that you change the default umask.</p>
+
+<p>You can tell it to skip certain tests, like <a href="https://cisofy.com/lynis/controls/BANN-7126/">BANN-7126</a> which recommends placing a legal disclaimer in <code>/etc/issue.</code> I think it's worth going through the full report, reading the recommendations and descriptions, and deciding which rules to implement and ignore. I learned a lot doing this the first time and, after you do it once, you can automate hardening of future systems (I use a bash script).</p>
+
+<p>Finally, I run lynis daily using <code>lynis --cronjob --warnings-only --quiet</code> and greping the generate <code>/var/log/lynis-report.dat</code> for <code>warning\[\]</code>. If nothing else, it lets me know that some of my packages have pending security-related updates.</p>
+
+<h3><a href="https://github.com/drwetter/testssl.sh">testssl</a></h3>
+<p>testssl lets you test the TLS configuration of any service. It essentially works like <a href="https://www.ssllabs.com/ssltest/">Qualys' SSL Test</a>, except it's a command line tool that you can run against any TLS-exposing service, including internal ones.</p>
+
+<p>The simplest way to run it is by giving it a domain name, e.g., <code>DAYS2WARN2=10 ./testssl.sh www.google.com</code>, but there are a number of options that you'll probably want to tweak. Of note, the <code>--jsonfile</code> is used to output results in JSON to a file, <code>--severity HIGH</code> to limit reports to HIGH (LOW|MEDIUM|HIGH|CRITICAL) issues and <code>--file FILE</code> to test each domain in the newline-delimited <code>FILE</code>.</p>
+
+<h3><a href="https://www.wireguard.com/">Wireguard</a></h3>
+<p>I love wireguard and use it extensively. My approach has been to setup two networks: one for human administration and one for each environment. Every server has 2 wireguard networks: wg-admin and wg-$env (e.g. wg-prod). I haven't setup a jump host, which would probably be more secure and easier to manage, but with ~ 10 servers and only 2 people needing access to all of them, it's been a low priority (most people only need access to our one tool server (logs/metrics/gitlab/dns,...) and have been able to follow the simple linux/mac/windows instructions we have to set it up).</p>
+
+<p>We currently span three hosting providers (2 baremetal and 1 cloud), and being able to connect things over wireguard (e.g. postgresql asynchronous replication) with just IP addresses and no other consideration has been a huge time saver, especially given how easy wireguard is to learn and setup.</p>
+
+<h3><a href="https://linux.die.net/man/8/iptables">iptables</a></h3>
+<p>I know iptables are being (have been?) replaced by nftables but I know one and not the other. I have a very basic setup, because I only have a very basis understanding. My baseline is to allow pings, wireguard, localhost and block everything else:</p>
+
+{% highlight bash %}
+# $PUBLIC and $PRIVATE are the network interface, e.g. enp5s0
+
+# allow ping
+iptables -A INPUT -p icmp --icmp-type 8 -j ACCEPT
+
+# allow all from our 2 wireguard interfaces
+iptables -A INPUT -i wg-prod -j ACCEPT
+iptables -A INPUT -i wg-admin -j ACCEPT
+
+# allow the udp traffic for the wg-prod interface
+iptables -A INPUT -p udp --dport 51820 -i $PUBLIC  -j ACCEPT
+
+# allow the udp traffic for the wg-prod interface over the private interface
+# (if our server has a private interface)
+#iptables -A INPUT -p udp --dport 51820 -i $PRIVATE  -j ACCEPT
+
+# allow the udp traffic for the wg-admin interface
+iptables -A INPUT -p udp --dport 51821 -i $PUBLIC  -j ACCEPT
+
+# allow established and related connections
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# allow all from localhost
+iptables -A INPUT -i lo -j ACCEPT
+
+# drop everything else
+iptables -A INPUT -j DROP
+{% endhighlight %}
+
+<p>I'll then allow access to $PUBLIC as needed, e.g., for https traffic. That's it. However, I recently read a blog post that suggested a number of rules that would block common attacks. It might have been <a href="https://javapipe.com/blog/iptables-ddos-protection/">this blog post</a>, though I'm not sure. So far I've only deployed them on my personal servers and haven't noticed any issues:</p>
+
+{% highlight bash %}
+iptables -t mangle -A PREROUTING -i $PUBLIC -m conntrack --ctstate INVALID \
+  -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -p tcp ! --syn -m conntrack \
+  --ctstate NEW -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -p tcp -m conntrack --ctstate NEW \
+  -m tcpmss ! --mss 536:65535 -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -p tcp --tcp-flags FIN,SYN FIN,SYN \
+  -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -p tcp --tcp-flags SYN,RST SYN,RST \
+  -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -p tcp --tcp-flags FIN,RST FIN,RST \
+  -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -p tcp --tcp-flags FIN,ACK FIN \
+  -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -p tcp --tcp-flags ACK,URG URG \
+  -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -p tcp --tcp-flags ACK,PSH PSH \
+  -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -p tcp --tcp-flags ALL NONE \
+  -j DROP
+
+iptables -t mangle -A PREROUTING -i $PUBLIC -s 224.0.0.0/3 -j DROP
+iptables -t mangle -A PREROUTING -i $PUBLIC -s 169.254.0.0/16 -j DROP
+iptables -t mangle -A PREROUTING -i $PUBLIC -s 172.16.0.0/12 -j DROP
+iptables -t mangle -A PREROUTING -i $PUBLIC -s 192.0.2.0/24 -j DROP
+iptables -t mangle -A PREROUTING -i $PUBLIC -s 192.168.0.0/16 -j DROP
+iptables -t mangle -A PREROUTING -i $PUBLIC -s 10.0.0.0/8 -j DROP
+iptables -t mangle -A PREROUTING -i $PUBLIC -s 0.0.0.0/8 -j DROP
+iptables -t mangle -A PREROUTING -i $PUBLIC -s 240.0.0.0/5 -j DROP
+iptables -t mangle -A PREROUTING -s 127.0.0.0/8 ! -i lo -j DROP
+{% endhighlight %}
+
+<p>Using <code>iptables -vL -t mangle</code> to list these, it seems like some have blocked a few packets. Yay?</p>
+
+<h3><a href="https://nmap.org/">nmap</a></h3>
+<p>nmap is a network discovery and auditing tool. Unlike the other CLI tools in this list which are run daily on the servers themselves, I only run nmap monthly and remotely over the public internet (although now that I think about it, it'd probably be worthwhile to run within the network as well).</p>
+
+<p>The challenge with nmap comes from how powerful it is. In addition to being highly configurable, it supports a <a href="https://nmap.org/nsedoc/index.html">large list of scripts</a> which you'll probably want to enable/disable for your specific case. I use nmap for two different purposes. The first is as a simple port scanner on each server (you can use the <code>-iL</code> argument to specify a file containing a line-separated list of domains/ips):</p>
+
+{% highlight bash %}
+nmap -p 1-65535 -T4 --verbose 1 DOMAIN/IP
+{% endhighlight %}
+
+
+<p>The <code>-T4</code> is a high level timing argument to make it more aggressive (<code>-T3</code> is normal) because I run this from a computer that has low latency and plenty of bandwidth to the target servers (nmap can be quite slow).</p>
+
+<p>My second use of nmap is for general audit:</p>
+
+{% highlight bash %}
+nmap \
+  -T4 \
+  --verbose 1 \
+  --script-updatedb \
+  --script "
+    (default or intrusive or malware or vuln) and not
+    (
+      dos or http-iis* or broadcast-ataoe-discover or url-snarf
+      or targets-xml or mtrace or broadcast-sonicwall-discover
+      or shodan-api or qscan or citrix-brute-xml or http-fetch
+      or http-google-malware or http-sitemap-generator
+      or http-slowloris-check or http-title or asn-query
+      or unusual-port or whois-domain or http-comments-displayer
+      or ip-geolocation-map-bing or ip-geolocation-map-google
+      or ip-geolocation-map-kml or backorifice-brute
+    )" \
+    DOMAIN/IP
+{% endhighlight %}
+
+<p>Here you can see that I run the <a href="https://nmap.org/nsedoc/categories/default.html">default</a>, <a href="https://nmap.org/nsedoc/categories/intrusive.html">intrusive</a>, <a href="https://nmap.org/nsedoc/categories/malware.html">malware</a> and <a href="https://nmap.org/nsedoc/categories/vuln.html">vuln</a> categories and exclude a list of specific scripts. My recommendation is that you run everything once, look at the generated report, and then remove those things that don't make sense for your specific setup.</p>
+
+<h3>WAF</h3>
+<p>I feel that web-application firewalls are security theater. I know people say "defense in depth", but if you're relying on your WAF to stop SQL injection attacks or directory traversel, I think you're probably already compromised. It gives a false sense of security and can easily result in false negatives. Still, since I use NGINX, I do have a <code>waf.conf</code> which I'll include into most sites:</p>
+
+{% highlight bash %}
+location ~ \.php$ { access_log off; return 444; }
+location ~ \.swp$ { access_log off; return 444; }
+location ~ \.asp$ { access_log off; return 444; }
+location ~ \.aspx$ { access_log off; return 444; }
+location ~ /Admincenter/ { access_log off; return 444; }
+location /console/ { access_log off; return 444; }
+location /api/jsonws { access_log off; return 444; }
+location /Autodiscover/ { access_log off; return 444; }
+location /wp-content/ { access_log off; return 444; }
+location /wp-includes/ { access_log off; return 444; }
+location /solr/ { access_log off; return 444; }
+location /mifs/ { access_log off; return 444; }
+location /.env { access_log off; return 444; }
+location /data/admin/allowurl.txt { access_log off; return 444; }
+location wlwmanifest.xml$ { access_log off; return 444; }
+{% endhighlight %}
+
+<p>I've historically added a few more complicated filters in Lua (using <a href="https://openresty.org/en/">OpenResty</a>), but it's probably something I wouldn't do by default anymore without first reviewing access log patterns. (I still recommend OpenResty, just not any request inspection in Lua).</p>
+
+<h3><a href="https://github.com/go-acme/lego">lego</a></h3>
+<p>lego is a Let's Encrypt client and ACME library written in Go. I think I'm in the minority of people that has had a lot of problems with certbot. Having a single binary that just works and that supports gcorelabs, the DNS provider I use for my personal stuff, has saved me a lot of aggravation</p>
+
+<h3><a href="https://sslmate.com/ct_search_api/">certpotter api</a></h3>
+<p>sslmate has a free certificate transparency API (for up to 100 req / hour). I wrapped the call in a bash script which is run daily and outputs any newly issued certificate (which vector picks up and writes out to both elasticsearch and prometheus).</p>
+
+<p>The API lets you query for all certificates issued after a specific state (which is the issuance id), so our script needs to capture the last id, save it (to disk) and use that value next time:</p>
+
+{% highlight bash %}
+#!/usr/bin/env bash
+set -o errexit
+set -o nounset
+set -o errtrace
+
+dir=/data/certspotter
+
+key_path=${dir}/api.key
+api_key=$(cat $key_path)
+
+check() {
+  after=''
+  domain=$1
+
+  state=${dir}/${domain}
+  if [[ -f $state ]]; then
+    after=$(cat $state)
+  fi
+
+  output=$(curl -s "https://api.certspotter.com/v1/\
+issuances?domain=${domain}&expand=issuer&include_subdomains=true\
+&expand=dns_names&after=${after}" -u "${api_key}:")
+
+  for entry in $(echo "${output}" | jq -r '.[] | @base64'); do
+    issuance=$(echo $entry | base64 --d | jq)
+    echo $issuance | jq  -c -M "del(.tbs_sha256, .pubkey_sha256)"
+    after=$(echo $issuance | jq -r '.id')
+  done
+  echo $after > $state
+}
+
+check 'openmymind.io'
+check 'openmymind.net'
+{% endhighlight %}
+
+<h3><a href="https://www.freedesktop.org/software/systemd/man/systemd.exec.html">systemd</a></h3>
+<p>I like systemd and I spend some time making sure any service I write is at least a little hardened. I'm disappointing that most packages and online examples come with no sandboxing whatsoever, but on the other hand I find the documentation around this less than great.  It isn't particularly fast, but you can start by examining the security of a service via <code>systemd-analyze security myapp.service</code> and trying to understand each line (with the help of google).</p>
+
+<p>For a base, I use:</p>
+
+{% highlight bash %}
+UMask=077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes  # need to remove this for Node, probably others
+
+PrivateDevices=yes
+PrivateUsers=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH
+
+SystemCallFilter=@aio @basic-io @debug @file-system @io-event @ipc @network-io \
+                 @signal @sync @timer @system-service
+
+SystemCallArchitectures=native
+
+SocketBindDeny=any
+SocketBindAllow=tcp:3000  # listening port of the app
+{% endhighlight %}
+
+<p>The <code>SocketBind*</code> configurations require a relatively new version of systemd - older versions will just log and ignore it though, so it's safe to pro-actively include. You'll need to go through the documentation to understand each, some are a little obvious, like <code>ProtectHome=true</code> to restrict access to <code>/home</code>, <code>/root</code> and <code>/run/user</code> and <code>PrivateTmp=true</code> creates an isolated tmp directory. </p>
+
+<p>Not included above, but <code>TemporaryFileSystem</code>, <code>BindPaths</code> and <code>BindReadOnlyPaths</code> are also useful for restricting file system access or limiting file system access access to read only. Though they need to be set to values specific to your needs.</p>
+
+<p>I've used <a href="https://firejail.wordpress.com/">firejail</a> recently, just to try. It seems great for running apps in a sandbox on my desktop, but I can't tell if it's objectively better or worse (or even different) than what I'm doing with systemd for services on a server. Also, if I was doing something more important from scratch, I'd probably look at systemd-nspawn, which I had briefly looked at once upon a time.</p>
+
+<h3><a href="https://github.com/FiloSottile/age">age</a></h3>
+<p>age is a file encryption tool. I've been using this where I can, instead of gpg, because it's simpler to use. The main thing that I use this for is to upload encrypted backups to google cloud storage.</p>
+
+
+<h3><a href="https://www.fail2ban.org/wiki/index.php/Main_Page">fail2ban</a></h3>
+<p>Fail2ban scans log files for malicious activities and bans IPs (using iptables). I just have a default configuration. I use it more to fill the "intrusion detection" checkbox. If I wanted to rate limit http traffic, I'd probably want something context-aware. Since SSH is only accessible over wireguard (because of the IP table rules) there's never any failed attempts there.</p>
+
+
+<h3><a href="https://www.notion.so/">notion</a></h3>
+<p>Notion is a project management and note-taking software. I use it to track who has access to what systems and to assign recurring task that need to be done manually, like running nmap monthly, or reviewing access control quarterly. I'm not sure at what scale my approach would fail, but I imagine I'm pretty far from that point. Even if I tracked more granular changes, like changes to our firewall with a link to the commit, these things happen so infrequently that it wouldn't really take any more time.</p>
+
+<p>You can use anything you want for this (including source control).</p>

@@ -31,5 +31,5 @@ main b {display: block;font-weight: normal;font-size: 18px;color: #555;padding-b
 <ul><li><a href=atom.xml>atom</a><li><a href=mailto:blog@karlseguin.com>contact</a><li><a href=https://twitter.com/karlseguin>twitter</a><li><a href=https://www.whysolazy.com>free apis</a><li><a href=https://www.goblgobl.com>tech links</a></ul>
 <main>
 {% assign posts = collections.all | public | reverse %}
-{%- for post in posts -%}<a href={{ post.url }}>{{ post.data.title }}</a><b>{{ post.date | date: "%d %b %y" }} - {% if post.data.tags %}{{ post.data.tags | join: ', ' }} {% endif %}</b>{%- endfor -%}
+{%- for post in posts -%}<a href={{ post.url }}>{{ post.data.title }}</a><b>{{ post.date | date: "%d %b %y" }}</b>{%- endfor -%}
 </main>
