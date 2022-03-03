@@ -8,12 +8,12 @@ tags: [redis]
 <p>When you think transaction, you probably think of being able to rollback changes if something goes wrong. For example, none of the inserts below will be committed, since the 3rd one violates a not-null constraint:</p>
 
 {% highlight ruby %}
-  pg.transaction do |conn|
-    conn.exec("insert into users values (1, 'john')")
-    conn.exec("insert into users values (2, 'bill')")
-    conn.exec("insert into users values (3, null)") #exception causes implicit rollback
-  end
-  # no rows were inserted
+pg.transaction do |conn|
+  conn.exec("insert into users values (1, 'john')")
+  conn.exec("insert into users values (2, 'bill')")
+  conn.exec("insert into users values (3, null)") #exception causes implicit rollback
+end
+# no rows were inserted
 {% endhighlight %}
 
 <p>This isn't the case in Redis (with either <code>multi</code>/<code>exec</code>/<code>discard</code> or scripting):</p>

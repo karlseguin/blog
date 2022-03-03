@@ -52,10 +52,10 @@ func TestHandlesNonExistingItems(t *testing.T) {
 <p>Our <code>LazyCache</code> has a pruner which runs in a separate goroutine. Internally, we schedule it's next run period. We could expose this, but I hate exposing stuff just for testing. Instead, we can simply reach into the object and set whatever state we want:</p>
 
 {% highlight go %}
-  cache.nextPrune = time.Now().Add(-1 * time.Second)
-  cache.Get("fail get triggers a prune")
-  time.Sleep(5 * time.Millisecond) //let the pruner do its job
-  //assert..
+cache.nextPrune = time.Now().Add(-1 * time.Second)
+cache.Get("fail get triggers a prune")
+time.Sleep(5 * time.Millisecond) //let the pruner do its job
+//assert..
 {% endhighlight %}
 
 <p>Overall, it's hard to rate Go's testing. Clearly the built-in package needs love. It also feels like you need to write a lot of support code - fake objects, builders, helpers, etc. On the flip side, the type of code we're writing in Go has always tended to be hard to test (sockets, threads, timers, ...), and Go, as a language, does a decent job of helping you out.</p>
