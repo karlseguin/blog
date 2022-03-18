@@ -20,6 +20,7 @@ module.exports = function(config) {
 	config.addPassthroughCopy('assets');
 	config.addPassthroughCopy('404.html');
 	config.addPassthroughCopy('favicon.ico');
+	config.addPassthroughCopy('apple-touch-icon.png');
 
 	return {
 		dir: {

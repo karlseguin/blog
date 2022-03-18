@@ -1,0 +1,88 @@
+---
+layout: post
+date: 2022-03-03
+title: "Basic observations of Generics in Go"
+description: "Unexpected behavior you might observe using Generics in Go"
+tags: [go]
+---
+
+<p>Generics are coming in Go 1.18, so I decided to update my somewhat popular <a href="https://github.com/karlseguin/ccache/tree/generic">LRU cache</a>. For the most part, it was straightforward, but there were a few minor things that stood out. I should point out that my last heavy use of generics was over a decade ago in C# (and from what I remember, C# had a pretty great implementation).</p>
+
+<h3>Generic Methods</h3>
+<p>You can't have generic methods. The first example works, but the second won't compile:</p>
+
+{% highlight go %}
+func ListContains[T comparable](needle T, haystack []T) bool {
+  ...
+}
+
+// compiler error: method must have no type parameters
+func (u Utils) ListContains[T comparable](needle T, haystack []T) bool {
+ ...
+}
+{% endhighlight %}
+
+<p>This shatters my belief that the second version is just syntactical sugar for <code>ListContains[T comparable](u utils, needle T, haystack []T) bool</code>. I should probably read and understand <a href="https://github.com/golang/proposal/blob/master/design/generics-implementation-dictionaries-go1.18.md">how generics are implemented</a>.</p>
+
+<h3>Type Assertion</h3>
+<p>You cannot switch on a generic type. Give <code>value T</code>, you need to do:</p>
+
+{% highlight go %}
+if reader, ok := (interface{})(value).(Reader); ok {
+  // use reader
+}
+{% endhighlight %}
+
+<p>This is minor, but, in my opinion, unusual given how interfaces are used in Go. Hopefuly we'll see this addressed soon (you can follow these two issues <a href="https://github.com/golang/go/issues/45380">45380</a> and <a href="https://github.com/golang/go/issues/49206">49206</a>).</p>
+
+<h3>default(T)</h3>
+<p>I couldn't find a way to return the default value for a parameter type. In C# you can do <code>default(T)</code> to get the default value for <code>T</code> (i.e <code>false</code> for <code>bool</code>, <code>0</code> for <code>int</code>, ...).</p>
+
+<p><strong>UPDATE</strong> Ok, that was silly, you can just do:</p>
+{% highlight go %}
+var dflt T
+return dflt
+{% endhighlight %}
+
+<h3>Generic Containers (or the lack thereof)</h3>
+<p>There's no generic container in the standard library. For example, you won't find a generic <code>container.List[T]</code> or <code>sync.Map[T]</code>. According to <a href="https://github.com/golang/go/issues/48918">this insightful issue</a> they wanted to minimize the scope of the changes.</p>
+
+<h3>any</h3>
+<p>Instead of <code>interface{}</code>, you can use <code>any</code>. This makes generic definitions more concise, e.g. <code>Node[T any]</code> instead of <code>Node[T interface{}]</code>. You can use it in non-generic code as well (the commit which mass-renamed them in the Go codebase is <a href="https://github.com/golang/go/commit/2580d0e08d5e9f979b943758d3c49877fb2324cb">2580d0e08</a>).</p>
+
+<p>This works:</p>
+{% highlight go %}
+m := map[string]any{
+  "over": 9000,
+  "name": "goku",
+}
+fmt.Println(m)
+{% endhighlight %}
+
+<h3>Inference</h3>
+<p>I didn't have any expectations, but inference works for functions, but not types:</p>
+
+{% highlight go %}
+// Works for a function
+func inspect[T any](value T) { ... }
+
+// infers T: int
+inspect(9000)
+
+
+// But not a type
+type Node[T any] struct {
+  Value T
+}
+
+// does not infer T: string
+// compiler error: cannot infer T
+n := Node{Value: "Leto"}
+
+// must be explicit
+n := Node[string]{Value: "Leto"}
+{% endhighlight %}
+
+
+<h3>Tooling</h3>
+<p>You'll obviously want to update your tooling. I don't use much, but I needed the latest <a href="https://pkg.go.dev/golang.org/x/tools/cmd/goimports">goimports</a> to make my basic setup work.</p>
