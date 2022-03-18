@@ -1,0 +1,80 @@
+---
+layout: post
+date: 2022-03-18
+title: "Exhausting Exhaustive Testing"
+description: "How exhaustive should your test cases be?"
+tags: [testing]
+---
+
+<p>I believe in the value of unit tests. But I also think that writing effective tests is challenging. Every test requires consideration to maximize its value, of which minimizing brittleness is a major factor. I'm glad to be free from the dogma of past decades. Mocks are now the exception; hitting databases and other services is normal; and we all largely agree that testing private functions isn't a cardinal sin.</p>
+
+<p>But I still struggle to write good tests, to find the balance between tests that are reasonable to write, read and maintain while being thorough.</p>
+
+<p>Consider a function that soft-deletes a user:</p>
+
+{% highlight go %}
+func deleteUser(id) (bool, error) {
+  tag, err := conn.Exec(`
+    update users
+    set status = 'deleted'
+    where id = $1
+  `, id)
+
+  return tag.RowsAffected() == 1, err
+}
+{% endhighlight %}
+
+<p>The simple way to test this is: 1) Use a factory to insert a user 2) call the function 3) check that the user's status is <code>deleted</code>. It might sound extreme, but if you take out the <code>where id = $1</code> from the above code, our test would still pass but our behavior would be very much broken (it would delete all users!). To solve this, I believe a better test should insert <strong>two</strong> users, delete one, and then verify that one is deleted and the other is not.</p>
+
+<p>Or, consider an API to list users. Such an API might come down to an SQL statement that looks like:</p>
+
+{% highlight sql %}
+select id, name
+from users
+where status = 'normal'
+  and customer_id = $1
+order by name
+{% endhighlight %}
+
+<p>A basic test might insert a user, call the API, and verify that the user is returned. But I think you need at least <strong>four</strong> users to even begin to have a proper test:</p>
+
+{% highlight text %}
+id | name    | customer_id | status
+------------------------------------
+1  | paul-a  | caladan     | deleted   # deleted, should not be returned
+2  | leto-2  | caladan     | normal
+3  | ghanima | caladan     | normal
+4  | teg     | bashar      | normal
+{% endhighlight %}
+
+<p>You might describe the action as "listing users", but the implicit behavior of the users that <strong>aren't</strong>s listed is just as important as the explicit behavior of the users that <strong>are</strong> listed. It isn't always obvious what shouldn't happen, especially as code gets more complicated (rules, filters, relationships, ...). Furthermore, it's not always obvious which cases and permutations add value and which don't. For example, is it worth testing the above code when <code>customer_id = 'calanda'</code> as well as when <code>customer = 'bashar'</code>?</p>
+
+<p>As a general rule, adding "noise" to your test data  is something you should be doing (whether we're talking about data in a database or in-process). Where possible, this data shouldn't be completely random. In the above, we want a record for the same customer_id, but with a status of 'deleted'.</p>
+
+<p>While writing this post, I wanted to use a real-life example that would be easy to understand. In the end, I decided to go with the above two fabricated examples. However, I did come across a test from <a href="https://gitlab.com/gitlab-org/gitlab/-/blob/cf6d1a582f10a8767edff6539645417bcc13a18b/spec/controllers/admin/users_controller_spec.rb#L5">Gitlab's admin controller for listing users</a>. Here's the relevant code:</p>
+
+{% highlight ruby %}
+let(:user) { create(:user) }
+
+let_it_be(:admin) { create(:admin) }
+
+before do
+  sign_in(admin)
+end
+
+describe 'GET #index' do
+  it 'retrieves all users' do
+    get :index
+    expect(assigns(:users)).to match_array([user, admin])
+  end
+
+  it 'filters by admins' do
+    get :index, params: { filter: 'admins' }
+    expect(assigns(:users)).to eq([admin])
+  end
+
+  ...
+end
+{% endhighlight %}
+
+<p>I don't know anything about this codebase and I don't mean to pick on Gitlab. Maybe more extensive tests exist elsewhere. But I hope most developers who see the above would agree that these tests could be improved. This API support more filtering, searching and different sorting and, in most cases, probably returns more than 1 or 2 users.</p>
