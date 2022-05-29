@@ -8,7 +8,7 @@ tags: [elixir]
 
 <p>GenServers take what we've <a href=/Elixir-A-Little-Beyond-The-Basics-Part-6-processes/>already learnt about processes</a> and wrap it in a developer-friendly interface. To master GenServers, you must simply understand the fundamentals of processes, namely the mailbox and how processes interact with it. Still, looking at these fundamentals from the perspective of GenServers is a useful exercise.</p>
 
-<p>The first thing that stands about about GenServers is that we don't generally interact with the mailbox directly. Instead, to send a message to a GenServer we use <code>GenServer.cast/2</code> or <code>GenServer.call/2</code> and to receive, we implement the <code>handle_cast/2</code>, <code>handle_call/3</code> and, sometimes, <code>handle_info/2</code>. Here's a basic counter in action:</p>
+<p>The first thing that stands about GenServers is that we don't generally interact with the mailbox directly. Instead, to send a message to a GenServer we use <code>GenServer.cast/2</code> or <code>GenServer.call/2</code> and to receive, we implement the <code>handle_cast/2</code>, <code>handle_call/3</code> and, sometimes, <code>handle_info/2</code>. Here's a basic counter in action:</p>
 
 {% highlight elixir %}
 defmodule MyApp.Counter do
