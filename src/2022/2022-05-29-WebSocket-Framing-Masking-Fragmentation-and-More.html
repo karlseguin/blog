@@ -89,7 +89,7 @@ tags: [learning]
 <p>However, even these restrictions on fragmentation mean that the life cycle for a frame gets more complicated. We no longer get one frame and pass it to the application. We have to accumulate frames, dealing with interleaved control frames, to create the message. It not only introduces a number of error cases, it makes memory management more complicated (it's hard to deal with fragmentation and interleaving without allocation more memory).</p>
 
 <h3>Autobahn</h3>
-<p>I need to send a shout-out to the open source <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn Testsuite project</a>. It has a comprehensive number of test cases that validate the correctness of both client and server implementations. I think it's a model that every protocol show aspire to.</p>
+<p>I need to send a shout-out to the open source <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn Testsuite project</a>. It has a comprehensive number of test cases that validate the correctness of both client and server implementations. I think it's a model that every protocol should aspire to.</p>
 
 <h3>Conclusion</h3>
 <p>The shortest possible WebSocket frame of 2-bytes is a server-to-client message with no payload. Since there's no payload, the length is 0, and since it's server-to-client, there's no mask. The longest possible header is 14 bytes for a client-to-server message with a payload large than 16KB: 8+1 bytes for the length and 4 bytes for the mask (plus the first fin/type byte).</p>
