@@ -30,9 +30,9 @@ tags: [learning]
 
 <p>The above diagram, taken from <a href="https://datatracker.ietf.org/doc/html/rfc6455">RFC 6455 The WebSocket Protocol</a>, describes a WebSocket frame.</p>
 
-<p>The smallest valid <strong>full</strong> WebSocket message is two bytes, such as this a close message sent from the server with no payload: <code>138, 0</code>. Yet the longest possible <strong>header</strong> is 14 bytes, which would represent a message sent from the client to the server with a payload greater then 64KB.</p>
+<p>The smallest valid <strong>full</strong> WebSocket message is two bytes, such as this close message sent from the server with no payload: <code>138, 0</code>. Yet the longest possible <strong>header</strong> is 14 bytes, which would represent a message sent from the client to the server with a payload greater then 64KB.</p>
 
-<p>Sending "over9000" from the client to the server will be a 14-byte with a seemingly random last 12 bytes, something like <code>129, 136, 136, 35, 93, 205, 231, 85, 56, 191, 177, 19, 109, 253</code>. Yet that same message sent from the server to the client will always be these exact 10 bytes: <code>129, 8, 118, 101, 114, 57, 48, 48, 48</code>.</p>
+<p>Sending "over9000" from the client to the server will be 14 bytes with a seemingly random last 12 bytes, something like <code>129, 136, 136, 35, 93, 205, 231, 85, 56, 191, 177, 19, 109, 253</code>. Yet that same message sent from the server to the client will always be these exact 10 bytes: <code>129, 8, 118, 101, 114, 57, 48, 48, 48</code>.</p>
 
 <p>Why is the longest possible header longer than the shortest possible message? Why does a message sent from the client to the server look so different than the same message sent from the server to the client? And, are there any other WebSocket oddities?</p>
 
@@ -92,7 +92,7 @@ tags: [learning]
 <p>I need to send a shout-out to the open source <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn Testsuite project</a>. It has a comprehensive number of test cases that validate the correctness of both client and server implementations. I think it's a model that every protocol should aspire to.</p>
 
 <h3>Conclusion</h3>
-<p>The shortest possible WebSocket frame of 2-bytes is a server-to-client message with no payload. Since there's no payload, the length is 0, and since it's server-to-client, there's no mask. The longest possible header is 14 bytes for a client-to-server message with a payload large than 16KB: 8+1 bytes for the length and 4 bytes for the mask (plus the first fin/type byte).</p>
+<p>The shortest possible WebSocket frame of 2-bytes is a server-to-client message with no payload. Since there's no payload, the length is 0, and since it's server-to-client, there's no mask. The longest possible header is 14 bytes for a client-to-server message with a payload larger than 16KB: 8+1 bytes for the length and 4 bytes for the mask (plus the first fin/type byte).</p>
 
 <p>"over9000" sent from the client to the server is longer and unpredictable because of the masking. Since the server to client message doesn't have a mask, it's always 4 bytes shorter and won't be random.</p>
 
