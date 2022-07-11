@@ -55,7 +55,7 @@ end
 
 {% highlight elixir %}
 def put(key, value, ttl) do
-  expires = :erlang.system_clock(:second)
+  expires = :erlang.system_time(:second) + ttl
   :ets.insert(:myapp_users, {key, value, expires})
 end
 {% endhighlight %}
@@ -66,7 +66,7 @@ end
 def get(key) do
   entry = :ets.lookup(:myapp_users, key)
   with [{_key, value, expiry}] <- entry,
-       true <- :erlang.system_clock(:second) > expiry
+       true <- :erlang.system_time(:second) > expiry
   do
     value
   else
@@ -135,7 +135,7 @@ end
 
 {% highlight elixir %}
 def put(key, value, ttl) do
-  expires = :erlang.system_clock(:second)
+  expires = :erlang.system_time(:second)
   entry = {key, value, expires}
 
   # Only purge if we're inserting a new value
