@@ -1,0 +1,189 @@
+---
+layout: post
+date: 2022-07-11
+title: "Building a Cache in Elixir"
+description: "The challenges of building a cache in elixir (and the compromises I made to build one)"
+tags: [elixir]
+---
+
+<p>I recently wrote a <a href="https://github.com/karlseguin/dcache">caching library for Elixir</a> which aims to have a simple but effective implementation. It's meant to provide good out of the box performance while being extensible. This posts examines some of the ideas that came from it.</p>
+
+<p>Without access to mutable data structures that can be shared across processes, building a cache in Elixir isn't <em>that</em> straightforward. If we're willing to compromise a little, we can build something quite powerful with minimal effort.</p>
+
+<p>We use <a href="/Learning-Elixir-ETS/">use an ETS table</a> as our concurrent-safe mutable map. We'll use this to store and get values. Note that the process that creates the table owns it. In most cases, you'll want to create it when the application starts. While it might not be "pure", I generally start my caches directly in the root supervisor.</p>
+
+{% highlight elixir %}
+defmodule MyApp.Users do
+  def setup() do
+    :ets.new(:myapp_users, [
+
+      # gives us key=>value semantics
+      :set,
+
+      # allows any process to read/write to our table
+      :public,
+
+      # allow the ETS table to access by it's name, `:myapp_users`
+      :named_table,
+
+      # favor read-locks over write-locks
+      read_concurrency: true,
+
+      # internally split the ETS table into buckets to reduce
+      # write-lock contention
+      write_concurrency: true,
+    ])
+  end
+
+  def get(key) do
+    case :ets.lookup(:myapp_users, key) do
+      [{_key, value}] -> {:ok, value}
+      _ -> nil
+    end
+  end
+
+  def put(key, value) do
+    :ets.insert(:myapp_users, {key, value})
+  end
+end
+{% endhighlight %}
+
+<p>This is a start, but there are two things we need to add. The first is the ability to expire items. The second is placing some limit on the size of our cache.</p>
+
+<h2>Time To Live</h2>
+<p>Adding an expiry to items is easy, providing we're ok with lazily removing them. In order to expire items, we need to now when to expire them. We'll change our <code>put/2</code> function and add a third parameter: <code>ttl</code>. This is the time-to-live in seconds:</p>
+
+{% highlight elixir %}
+def put(key, value, ttl) do
+  expires = :erlang.system_clock(:second)
+  :ets.insert(:myapp_users, {key, value, expires})
+end
+{% endhighlight %}
+
+<p>Here we take a time-to-live (<code>ttl</code>) as relative seconds, but we could change this to take an absolute <code>DateTime</code> or some other time unit. What's important is that by storing the expiration time, we can modify our existing <code>get/1</code> function to evict expired values:</p>
+
+{% highlight elixir %}
+def get(key) do
+  entry = :ets.lookup(:myapp_users, key)
+  with [{_key, value, expiry}] <- entry,
+       true <- :erlang.system_clock(:second) > expiry
+  do
+    value
+  else
+     [] -> nil  # key not found in ets
+     false ->
+      # key found but past expiry, delete
+      :ets.delete(:myapp_users, key)
+      nil
+  end
+end
+{% endhighlight %}
+
+<p>You could call this lazily evicting expired values. We say it's lazy because it only happens re-actively when we try to get the value, not proactively when the value actually expires.</p>
+
+<h2>Purging</h2>
+<p>If you're only dealing with a small and slow-growing number of entries, the above might be all you need. But for larger and more dynamic data sets, solely depending on lazy removal can result in serious memory issues. Entries that aren't fetched after they expire will never be deleted.</p>
+
+<h3>Full Scan</h3>
+<p>The simplest option is to scan our ETS table and remove expired entries:</p>
+
+{% highlight elixir %}
+def purge() do
+  # we'll delete any where the expiry < now
+  now = :erlang.system_time(:second)
+
+  # to be able to safely iterate through an ETS table
+  # (to handle additions and removals), we need to fix the table
+  :ets.safe_fixtable(:t, true)
+
+  # iterate through the table
+  purge(:ets.first(:t), now)
+after
+
+  # were're done iterate, we can unfix the table
+  :ets.safe_fixtable(:t, false)
+end
+
+defp purge(:"$end_of_table", _), do: :ok
+
+defp purge(key, now) do
+  with [{_, _, expiry}] <- :ets.lookup(:t, key),
+       true <- expiry < now
+  do
+    :ets.delete(:t, key)
+  end
+  purge(:ets.next(:t, key), now)
+end
+{% endhighlight %}
+
+<p>One question we need to figure out is when should <code>purge</code> be called? One option is to call it periodically. But then we need to decide on a good frequency. Too often, and we're needlessly scanning the entire cache. But if we wait too long, the cache might grow significantly between scans. As a general solution, I dislike the idea of periodic purges.</p>
+
+<h3>Max Size</h3>
+<p>In order to move forward, we need a way to enforce a limit on the number of values in our cache. To accomplish this, we'll store a configurable <code>max_size</code> within our ETS on <code>setup</code>:</p>
+
+{% highlight elixir %}
+def setup(max_size) do
+  :ets.new(:myapp_users, [...])
+  :ets.insert(:myapp_users, {:__max_size, max_size, nil})
+end
+{% endhighlight %}
+
+<p>Why are we storing <code>{:__max_size, max_size, nil}</code> instead of just <code>{:__max_size, max_size}</code>? Because this makes our <code>__max_size</code> entry look like any other regular entry (i.e. <code>{key, value, ttl}</code>). <code>nil</code> works as our ttl because <code>nil</code> is greater than any integer. In other words, the <code>:__max_size</code> entry never expires.</p>
+
+<h3>Purge When Full</h3>
+<p>With a configured <code>max_size</code> we can initiate our scan whenever our cache grows:</p>
+
+{% highlight elixir %}
+def put(key, value, ttl) do
+  expires = :erlang.system_clock(:second)
+  entry = {key, value, expires}
+
+  # Only purge if we're inserting a new value
+  # AND we've reached our size limit
+  # (If we're updating a value, then our size won't increase
+  # so we won't need to purge)
+  if !exists?(key) && :ets.info(:myapp_users, :size) > get_max_size() do
+    purge()
+  end
+
+  :ets.insert(:myapp_users, entry)
+end
+
+def exists?(key) do
+  :ets.member(:myapp_users, key)
+end
+
+defp get_max_size() do
+  [{_key, max_size, _dummy_ttl} = :ets.get(:myapp_users, __max_size)
+  max_size
+end
+{% endhighlight %}
+
+<p>If our cache has 10_000 entries in it, and we update one of those entries (i.e. if we call <code>put/3</code> on a <code>key</code> that already exists), then the cache won't grow, it will still have 10_000 entries. Only when we insert a new entry do we need to check if we've outgrown the cache and, if so, purge.</p>
+
+<h3>Forced Eviction</h3>
+<p>What if our cache reaches its maximum size and there are no expired items to evict? The above <code>purge</code> function won't remove any items. This is a real challenge to solve in Elixir. In most other languages, we'd use a separate mutable data structure to track usage pattern to inform our eviction policy. For example, we could use a doubly linked list to track usage recency or creation age and evict the least recently used (LRU) or oldest created (FIFO), but this doesn't work easily in Elixir.</p>
+
+<p>Imagine an implementation that tracks when an item was inserted into our cache. The entry would now look like <code>{key, value, ttl, creation}</code>. Deleting the N-oldest entries would require our purge code to build up a sorted <code>creation=>key</code> lookup. This is certainly doable, using Erlang's <a href="https://www.erlang.org/doc/man/gb_trees.html">gb_trees module</a> for example, but not particularly efficient.</p>
+
+<p>Another ETS table, defined as a <code>ordered_set</code>, could be used. The creation date would be the key, and the value would be a list of cache keys (a list because creation date isn't unique). One concern with this approach is that, while ETS tables allow access from multiple processes, such access still involves copying values. This would add overhead to both our get and put operation (get for when we lazily delete expired items).</p>
+
+<p>We could come up with other strategies. But there isn't a single best solution, especially considering what's best for one application might not be best for another. My dcache library opts for a customizable purging behavior with a simple default: randomly evicting existing entries when no expired entries are found. You can imagine a slight change to our <code>purge</code> path which deletes entries regardless of the <code>expiry</code></p>
+
+{% highlight elixir %}
+# we've deleted 100 keys, that's enough
+defp purge(_, 100), do: :ok
+
+# we're reach the end of the table
+defp purge(:"$end_of_table", _), do: :ok
+
+defp purge(key, count) do
+  :ets.delete(t, key)
+  purge(:ets.next(key), count + 1)
+end
+{% endhighlight %}
+
+<h2>Conclusion</h2>
+<p>It's a bit unfortunate that ETS gets us 90% of what we want, but that last 10% - enforcing an upper size - isn't straightforward to implement (at least, not without compromise). Still, I believe that in the vast number of cases, falling back to random eviction is more than sufficient.</p>
+
+<p>I find it particularly interesting and fun to explore this simple approach with the goal of maximizing flexibility and performance. For example, while writing my library, I learnt about the <a href="https://www.erlang.org/doc/man/ets.html#slot-2">:ets.slot/2</a> function, which I used instead of <code>first/1</code> and <code>next/2</code>. I've always been a firm believer that micro-optimization is a critical task for developers to undertake. In the worst case, it tends to be a great teacher. It's also only through such efforts that informed decisions, based on previously gained knowledge and facts, can be made about what truly is and isn't worth pursuing with respect to performance.</p>
