@@ -59,25 +59,33 @@ func TestProperlyGetsAllTheVolumes(t *testing.T) {
   var called bool
   now := time.Now()
   getVolumes = func(symbol string, day time.Time) ([]float64, error) {
-    if symbol != "spice" { t.Errorf("Expected %v to equal spice", symbol)}
+    if symbol != "spice" {
+      t.Errorf("Expected %v to equal spice", symbol)
+    }
     if day != now { t.Errorf("Expected %v to equal spice", symbol)}
     called = true
     return nil, nil
   }
   AverageVolume("spice", now)
-  if called == false { t.Error("GetVolumes should have been called") }
+  if called == false {
+    t.Error("GetVolumes should have been called")
+  }
 }
 
 // More of a stub, where we test a behavior of AverageVolume
 func TestReturnsZeroOnError(t *testing.T) {
-  getVolumes = func(symbol string, day time.Time) ([]float64, error) { return nil, errors.Error("some error") }
+  getVolumes = func(symbol string, day time.Time) ([]float64, error) {
+    return nil, errors.Error("some error")
+  }
   actual := AverageVolume("spice", time.Now())
   if actual != 0 { t.Errorf("Expected %f to equal 0", actual)}
 }
 
 // More of a stub, where we test a behavior of AverageVolume
 func TestReturnsTheAverage(t *testing.T) {
-  getVolumes = func(symbol string, day time.Time) ([]float64, error) { return []float64{3,4,6,7,9}, nil }
+  getVolumes = func(symbol string, day time.Time) ([]float64, error) {
+    return []float64{3,4,6,7,9}, nil
+  }
   actual := AverageVolume("spice", time.Now())
   if actual != 5.8 { t.Errorf("Expected %f to equal 5.8", actual)}
 }

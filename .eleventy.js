@@ -10,7 +10,8 @@ module.exports = function(config) {
 	});
 
 	config.addFilter('public', function(posts) {
-		return posts.filter((p) => p.data.title );
+		const p = posts.filter((p) => p.data.title );
+		return p;
 	});
 
 	config.addFilter('last_updated', function(posts) {

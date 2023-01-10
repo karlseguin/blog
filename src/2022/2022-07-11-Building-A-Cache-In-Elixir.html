@@ -51,7 +51,7 @@ end
 <p>This is a start, but there are two things we need to add. The first is the ability to expire items. The second is placing some limit on the size of our cache.</p>
 
 <h2>Time To Live</h2>
-<p>Adding an expiry to items is easy, providing we're ok with lazily removing them. In order to expire items, we need to now when to expire them. We'll change our <code>put/2</code> function and add a third parameter: <code>ttl</code>. This is the time-to-live in seconds:</p>
+<p>Adding an expiry to items is easy, providing we're ok with lazily removing them. In order to expire items, we need to know when to expire them. We'll change our <code>put/2</code> function and add a third parameter: <code>ttl</code>. This is the time-to-live in seconds:</p>
 
 {% highlight elixir %}
 def put(key, value, ttl) do

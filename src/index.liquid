@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name=referrer content=origin>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<meta name=description content="Programming blog exploring Rust, Elixir, Go, Testing, Design and Performance">
+<meta name=description content="Programming blog exploring Elixir, Go, Testing, Design and Performance">
 <link href=atom.xml rel=alternate type=application/atom+xml>
+<link href=feed.xml rel=alternate type=application/rss+xml>
 
 <style>
 *{padding:0;margin:0;}
@@ -24,7 +25,7 @@ main b {display: inline-block;font-weight: normal;font-size: 18px;color: #555;pa
 	ul a{padding: 10px}
 }
 </style>
-<ul><li><a href=atom.xml>atom</a><li><a href=mailto:blog@karlseguin.com>contact</a><li><a href=https://twitter.com/karlseguin>twitter</a><li><a href=https://www.whysolazy.com>free apis</a><li><a href=https://links.openmymind.net>tech links</a></ul>
+<ul><li><a href=rss.xml>rss</a><li><a href=mailto:blog@karlseguin.com>contact</a><li><a href=https://twitter.com/karlseguin>twitter</a><li><a href=https://www.whysolazy.com>free apis</a><li><a href=https://links.openmymind.net>tech links</a></ul>
 <main>
 {%- assign posts = collections.all | public | reverse -%}
 {%- for post in posts %}
