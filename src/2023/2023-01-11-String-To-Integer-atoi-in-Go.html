@@ -1,0 +1,169 @@
+---
+layout: post
+date: 2023-01-11
+title: "String to Integer (atoi) in Go"
+description: "A look inside WebSocket framing and some of the more annoying aspects of the protocol"
+tags: [golang performance]
+---
+
+<p>In Go, <code>strconv</code> is the go-to package for various string conversions. When we want to convert a string to an integer, the <code>ParseInt</code> and closely related <code>Atoi</code> functions are the two functions we're most likely to use:</p>
+
+{% highlight go %}
+import (
+  "fmt"
+  "strconv"
+)
+
+func main() {
+  n, err := strconv.Atoi("9001")
+  if err != nil {
+    panic(err)
+  }
+  fmt.Println(n)
+}
+{% endhighlight %}
+
+<p>The above code will parse the string <code>"9001"</code> and store the integer value in the variable <code>n</code> (it also prints that integer value, i.e. <code>9001</code>).</p>
+
+<p>Based on <code>Atoi</code>'s documentation which simply states <em>Atoi is equivalent to ParseInt(s, 10, 0), converted to type int</em>, you'd be forgiven for thinking that <code>Atoi</code> is a thin wrapper around <code>ParseInt</code>. But consider this benchmark:</p>
+
+{% highlight go %}
+const (
+  INPUT    = "1234567890"
+  EXPECTED = 1234567890
+)
+
+func Benchmark_ParseInt(b *testing.B) {
+  for n := 0; n < b.N; n++ {
+    x, _ := strconv.ParseInt(INPUT, 10, 32)
+    if x != EXPECTED {
+      panic("invalid")
+    }
+  }
+}
+
+func Benchmark_Atoi(b *testing.B) {
+  for n := 0; n < b.N; n++ {
+    x, _ := strconv.Atoi(INPUT)
+    if x != EXPECTED {
+      panic("invalid")
+    }
+  }
+}
+{% endhighlight %}
+
+<p>And the results:</p>
+
+{% highlight text %}
+Benchmark_ParseInt-8        16.36 ns/op
+Benchmark_Atoi-8            6.477 ns/op
+{% endhighlight %}
+
+<p>The reason <code>Atoi</code> is so much faster is that, for common cases, <code>Atoi</code> will do the conversion itself (in what the inline-documentation calls the "fast path"). This "fast path" is easy to understand and likely what you'd come up with if you had to parse a string yourself:</p>
+
+{% highlight go %}
+// not exactly Atoi's fast-path, but simplified for the purpose of this post
+var n int
+for _, b := range []byte(input) {
+  b -= '0'
+  if b > 9 {
+    return errors.New("invalid integer")
+  }
+  n = n*10 + int(b)
+}
+{% endhighlight %}
+
+<p>Go's version also handles negative values (by checking if the first character == '-' and, if so, inverting the final result). <code>ParseInt</code> on the other hand is more flexible and powerful - supporting different bases and underscored integer literals. Thus, <code>Atoi</code> and <code>ParseInt</code> are only "equivalent" in certain cases and in a certain light (i.e. when we don't consider performance).</p>
+
+<p>Both <code>Atoi</code> and <code>ParseInt</code> are similar in anoter way: they will only parse a string if it only contains an integer. This is different than C's <code>atoi</code> function which <em>converts the initial portion of the string.</em> In other words, in Go, <code>Atoi</code> will return an error when given <code>"9000!"</code>. However in C, <code>atoi</code> will return <code>9000</code>.
+
+<p>As far as I can tell, the "recommended" way to parse "9000!" in Go is to use the <code>fmt.Sscan</code> function. But, <code>Sscan</code> is a general-purpose function capable of scanning arbitrarily complex inputs. This power comes at a cost: it's really slow. For our case, where we want to convert the initial portion of a string into an integer (or, put differently, when our integer has a suffix), we can write our own function which is largely based on Go's built-in <code>Atoi</code> logic :</p>
+
+{% highlight go %}
+func atoi(input string) (int, string) {
+  var n int
+  for i, b := range []byte(input) {
+    b -= '0'
+    if b > 9 {
+      return n, input[i:]
+    }
+    n = n*10 + int(b)
+  }
+  return n, ""
+}
+{% endhighlight %}
+
+<p>This implementation has the benefit of returning the remainder of the input string that was not a valid integer. This is a pretty common requirement when parsing a string, for example, if we wanted to extract a value with a unit (e.g. 100m).</p>
+
+<p>Now our <code>atoi</code> function <strong>is</strong> naive. Given a value larger than an integer can hold, our <code>atoi</code> will silently overflow (Go's <code>fmt.Sscan</code>, <code>strconv.Atoi</code> and <code>strconv.ParseInt</code> will return errors). Also, our <code>atoi</code> doesn't support negative values - though that would be easy to add. Still, as a baseline, if we compare it to <code>Sscan</code> using the following:</p>
+
+{% highlight go %}
+var cases = []struct {
+  input     string
+  expected  int
+  remainder string
+  name      string
+}{
+  {"0", 0, "", "zero"},
+  {"9000!", 9000, "!", "small"},
+  {"272833319 km", 272833319, " km", "large"},
+  {"nope", 0, "nope", "invalid"},
+}
+
+func Benchmark_Sscan(b *testing.B) {
+  for _, c := range cases {
+    b.Run(fmt.Sprintf("sscan_%s", c.name), func(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+        var actual int
+        fmt.Sscan(c.input, &actual)
+        if int(actual) != c.expected {
+          panic("invalid")
+        }
+      }
+    })
+  }
+}
+
+func Benchmark_Atoi(b *testing.B) {
+  for _, c := range cases {
+    b.Run(fmt.Sprintf("custom_atoi_%s", c.name), func(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+        actual, remainder := atoi(c.input)
+        if actual != c.expected || remainder != c.remainder {
+          panic("invalid")
+        }
+      }
+    })
+  }
+}
+
+func atoi(input string) (int, string) {
+  var n int
+  for i, b := range []byte(input) {
+    b -= '0'
+    if b > 9 {
+      return n, input[i:]
+    }
+    n = n*10 + int(b)
+  }
+  return n, ""
+}
+{% endhighlight %}
+
+<p>We see a massive performance difference:</p>
+
+{% highlight text %}
+Benchmark_Sscan/sscan_zero-8             160.9 ns/op
+Benchmark_Atoi/custom_atoi_zero-8        2.355 ns/op
+
+Benchmark_Sscan/sscan_small-8            213.9 ns/op
+Benchmark_Atoi/custom_atoi_small-8       4.413 ns/op
+
+Benchmark_Sscan/sscan_large-8            307.0 ns/op
+Benchmark_Atoi/custom_atoi_large-8       6.696 ns/op
+
+Benchmark_Sscan/sscan_invalid-8          371.2 ns/op
+Benchmark_Atoi/custom_atoi_invalid-8     3.450 ns/op
+{% endhighlight %}
+
+<p>Maybe there's a better built-in option than <code>fmt.Sscan</code>, but I couldn't find it. Do I think you should write your own string to integer function? Absolutely, if the built-in functions don't do what you like (either in terms of functionality or performance) AND you're willing to live with the edge cases that your implementation is likely fail on (possibly silently, as the above <code>atoi</code> function does with very large integers).</p>
