@@ -38,15 +38,17 @@ tags: [learning]
 
 <h3>Payload Length</h3>
 <p>As a stream-oriented protocol, TCP has no concept of messages (or framing). It's just a sequence of bytes. If one side uses the <code>write</code> function four times, the other side might get those bytes across 1-N calls to <code>read</code>, where N will be the total number of bytes sent (i.e. where each read only reads a single byte). Solutions that sit on top of TCP, like WebSockets, have to provide their own framing. One common solution is to length prefix every message. For example, if we wanted to send two messages, <code>get power</code> and <code>set power 9000</code>, using a 2-byte length prefix, we'd send:
-<br> <code>0, 9, 'g', 'e', 't', ' ','p','o','w','e','r'</code>
+<br> <code>0, 9, 'g', 'e', 't', ' ', 'p', 'o', 'w', 'e', 'r'</code>
 <br>and,
 <br><code>0, 14, 's', 'e', 't', ' ','p','o','w','e','r', ' ', '9', '0', '0', '0'</code>.</p>
 
+<p>(Notice that the first message starts with <code>0, 9</code> because the message excluding the lenght-prefix itself, is 9 bytes long. Similarly, the second message starts with <code>0, 14</code> because it is 14 bytes long.)</p>
+
 <p>WebSocket uses the first 7 bits of its 2nd byte to support a variable-length length prefix. When those bits are equal or less than 125, then the length of the payload is this value itself. When the bits equal 126, then the next 2 bytes indicate the length of the payload. When the bits equal 127, the the next 8 bytes indicate the length of the payload.</p>
 
-<p>For example, if we wanted to send "hello", then the 2nd byte would contain all the length data needed, namely: <code>byte2 & 127 == 5</code>. But if we wanted to send a payload that was 300 bytes long, then we'd get <code>byte2 & 127 == 126</code> which would tell us to look at the next two bytes to get the length of the payload, in this case, they'd be <code>1, 44</code> (e.g. 256 + 44).</p>
+<p>For example, if we wanted to send "hello", then the 2nd byte would contain all the length data needed, namely: <code>byte2 & 127 == 5</code>. But if we wanted to send a payload that was 300 bytes long, then we'd get <code>byte2 & 127 == 126</code> which would tell us to look at the next two bytes to get the length of the payload, in this case, they'd be <code>1, 44</code> (i.e. 256 + 44).</p>
 
-<p>The benefit of having this variable length length-prefix is that messages with payloads that are 125 bytes or less only require a single byte. However, messages greater than 125 bytes and less than 64K will require 3 bytes (like the 300 byte example we just saw: <code>126, 1, 44</code>). Larger messages require 9 bytes.</p>
+<p>The benefit of having this variable length length-prefix is that messages with payloads that are 125 bytes or less only require a single byte. However, messages greater than 125 bytes and less than 64K will require 3 bytes (like the 300 byte example we just saw: <code>126, 1, 44</code>). Larger messages require 9 bytes (with <code>byte2 & 127 == 127</code> followed by an 8-byte length).</p>
 
 <p>I'd prefer a fixed 4-byte length prefix. I think it's safe to assume that most WebSocket messages are less than 16K, so this would mean most messages would be 1 byte larger. For small message, it would be 3 bytes longer. But a fixed-length length would be easier to deal with and have fewer error cases. I can't help but wonder if that 1 byte is worth those extra if statements and error cases.</p>
 
@@ -86,7 +88,7 @@ tags: [learning]
 
 <p>I'm not a fan of this feature, at all. It makes the implementation much more difficult. There are a couple rules that make our lives a little easier. Only <code>text</code> and <code>binary</code> frames can be fragmented. Only control frames (<code>ping</code>, <code>pong</code> and <code>close</code>) can be inserted between fragmented frames. In other words, we're only ever dealing with a single fragmented message at a time.</p>
 
-<p>However, even these restrictions on fragmentation mean that the life cycle for a frame gets more complicated. We no longer get one frame and pass it to the application. We have to accumulate frames, dealing with interleaved control frames, to create the message. It not only introduces a number of error cases, it makes memory management more complicated (it's hard to deal with fragmentation and interleaving without allocation more memory).</p>
+<p>However, even these restrictions on fragmentation mean that the life cycle for a frame gets more complicated. We no longer get one frame and pass it to the application. We have to accumulate frames, dealing with interleaved control frames, to create the message. It not only introduces a number of error cases, it makes memory management more complicated (it's hard to deal with fragmentation and interleaving without allocating more memory).</p>
 
 <h3>Autobahn</h3>
 <p>I need to send a shout-out to the open source <a href="https://github.com/crossbario/autobahn-testsuite">Autobahn Testsuite project</a>. It has a comprehensive number of test cases that validate the correctness of both client and server implementations. I think it's a model that every protocol should aspire to.</p>
