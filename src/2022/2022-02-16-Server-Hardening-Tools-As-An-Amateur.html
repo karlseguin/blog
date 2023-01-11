@@ -171,7 +171,7 @@ location wlwmanifest.xml$ { access_log off; return 444; }
 <h3><a href="https://github.com/go-acme/lego">lego</a></h3>
 <p>lego is a Let's Encrypt client and ACME library written in Go. I think I'm in the minority of people that has had a lot of problems with certbot. Having a single binary that just works and that supports gcorelabs, the DNS provider I use for my personal stuff, has saved me a lot of aggravation</p>
 
-<h3><a href="https://sslmate.com/ct_search_api/">certpotter api</a></h3>
+<h3><a href="https://sslmate.com/ct_search_api/">certspotter api</a></h3>
 <p>sslmate has a free certificate transparency API (for up to 100 req / hour). I wrapped the call in a bash script which is run daily and outputs any newly issued certificate (which vector picks up and writes out to both elasticsearch and prometheus).</p>
 
 <p>The API lets you query for all certificates issued after a specific state (which is the issuance id), so our script needs to capture the last id, save it (to disk) and use that value next time:</p>

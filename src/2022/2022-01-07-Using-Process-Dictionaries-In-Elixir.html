@@ -26,7 +26,7 @@ nil
 
 <p>The two processes, the original and the one we spawn, don't share a process dictionary. For completeness, there's also a <code>Process.get/0</code> and <code>Process.get/2</code> function; the first to get all values, and the second to get the value or returns a specific default.</p>
 
-<p>If you've worked with stateful GenServers, you probably have a pretty intuitive feel for how awkward the process dictionary is. To some degree, it's akin to global variables, which is why you'll find a lot of people saying you shouldn't use them. While that might be good general advice, they an be useful in specific cases.</p>
+<p>If you've worked with stateful GenServers, you probably have a pretty intuitive feel for how awkward the process dictionary is. To some degree, it's akin to global variables, which is why you'll find a lot of people saying you shouldn't use them. While that might be good general advice, they can be useful in specific cases.</p>
 
 <p>For example, there are two cases where I make use.</p>
 

@@ -6,6 +6,8 @@ description: "CockroachDB is a newSQL database, behaving much like a traditional
 tags: [learning]
 ---
 
+<p><strong>Update: CockroachDB is rapidly evolving and many of the original limitations and issues listed in this post have been addressed. I'll try to keep this post updated with bolded notes.</strong></p>
+
 <p>I recently had the opportunity to put a system into production backed by CockroachDB. While I'm a huge fan of PostgreSQL, I wanted something that provided better out of the box support for high availability.</p>
 
 <p>CockroachDB belongs to a class of databases referred to as NewSQL. They're called this because they maintain most of what traditional SQL databases offer while adding scalability as a first class citizen. Cockroach not only provides ACID guarantees and SQL support (including joins), but also consistent data distribution via the raft consensus algorithm.</p>
@@ -18,21 +20,21 @@ tags: [learning]
 
 <p><strong>2.</strong> We ran into two security issues. The first is that if you want password-authentication, you must configure your cluster to communicate using certificates. You can start each node in "insecure" mode, but then can't use password authentication. There's a <a href="https://github.com/cockroachdb/cockroach/issues/16188">issue</a> about this. Like the people posting there, our network is already secured, so this requirement is just an unnecessary nuisance.</p>
 
-<p>Secondly, permissions capabilities seem basic. Our driver, Elixir's Postgrex library, requires access to <code>pg_type</code>. Thankfully, CockroachDB exposes this view, but the only way to access it is to grant <a href="https://github.com/cockroachdb/cockroach/issues/43177">select</a> on the entire database. If you need things like row-level-security you're definitely out of luck.</p>
+<p><strong>(This issue has since been fixed)</strong> Secondly, permissions capabilities seem basic. Our driver, Elixir's Postgrex library, requires access to <code>pg_type</code>. Thankfully, CockroachDB exposes this view, but the only way to access it is to grant <a href="https://github.com/cockroachdb/cockroach/issues/43177">select</a> on the entire database. If you need things like row-level-security you're definitely out of luck.</p>
 
-<p><strong>3.</strong> <a href="https://github.com/cockroachdb/cockroach/issues/9683">Partial indexes aren't available</a>. This is particularly painful if you're relying on unique constraints for upserts based on partial indexes. You can work around this, but you'll have to re-work your code. </p>
+<p><strong>3.</strong> <strong>(CockroachDB now supports partial indexes)</strong> <a href="https://github.com/cockroachdb/cockroach/issues/9683">Partial indexes aren't available</a>. This is particularly painful if you're relying on unique constraints for upserts based on partial indexes. You can work around this, but you'll have to re-work your code. </p>
 
-<p><strong>4.</strong> <a href="https://github.com/cockroachdb/cockroach/issues/27791">There's no range data types</a> nor support for <a href="https://github.com/cockroachdb/cockroach/issues/24873">enums</a>. Again, you can change your code to accommodate this. For example, we have constraints in place to avoid overlapping date ranges which had to be moved into code.</p>
+<p><strong>4.</strong> <a href="https://github.com/cockroachdb/cockroach/issues/27791">There's no range data types</a> nor support for <a href="https://github.com/cockroachdb/cockroach/issues/24873">enums</a> <strong>(CockroachDB now supports enums)</strong>. Again, you can change your code to accommodate this. For example, we have constraints in place to avoid overlapping date ranges which had to be moved into code.</p>
 
 <p><strong>5.</strong> I've grown increasingly enamored with triggers. There are times when they're just so convenient that their poor visibility is a small price to pay. Sadly, triggers, along with user defined functions and stored procedures aren't available.</p>
 
-<p><strong>6.</strong> <code>on conflict do nothing</code> can fail with a <a href="https://github.com/cockroachdb/cockroach/issues/37880">duplicate key error</a> in a pretty simple and basic case. Thankfully the error can be addressed in code.</p>
+<p><strong>6.</strong> <strong>(This issue has since been fixed)</strong> <code>on conflict do nothing</code> can fail with a <a href="https://github.com/cockroachdb/cockroach/issues/37880">duplicate key error</a> in a pretty simple and basic case. Thankfully the error can be addressed in code.</p>
 
 <p><strong>7.</strong> Foreign key checks <a href="https://github.com/cockroachdb/cockroach/issues/31632">can't be deferred.</a> This is a pain.</p>
 
-<p><strong>8.</strong> There's no full text search nor geospatial capabilities.</p>
+<p><strong>8.</strong> There's no full text search nor geospatial capabilities <strong>(CockroachDB now has geospatial capabilities, though it isn't 100% compatible with Postgis)</strong>.</p>
 
-<p><strong>9.</strong> There's no way to have an index on an array column.</p>
+<p><strong>9.</strong> There's no way to have an index on an array column. <strong>(GIN indexes are now supported and can be used to index array columns)</strong></p>
 
 <p><strong>10.</strong> As far as I could tell, there's no way to determine if an upsert was executed as an insert or an update. In postgresql you can check <code>xmax</code>.</p>
 
