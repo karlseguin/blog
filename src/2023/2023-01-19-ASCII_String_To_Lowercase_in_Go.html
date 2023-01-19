@@ -1,0 +1,196 @@
+---
+layout: post
+date: 2023-01-19
+title: "ASCII String to Lowercase in Go"
+description: "Examining strings.ToLower and how we might be able to improve it for ASCII-only strings"
+tags: [golang performance]
+---
+<style>
+.win{background:#afa}
+</style>
+
+<p>As the documentation states, Go's <code>strings</code> package is for the manipulation of UTF-8 encoded strings. This might make one wonder how an ASCII-specific implementation would compare.</p>
+
+<p>To start with, let's write an ASCII-only <code>lowercase</code> function. This will iterate through the input, converting an uppercase ASCII letter (where the value is between 'A' and 'Z') and lowercasing it by adding 32 (or 'a' - 'A') to it:</p>
+
+{% highlight go %}
+func lowercase(input string) string {
+  lower := make([]byte, len(input))
+  for i := 0; i < len(input); i++ {
+    c := input[i]
+    if 'A' <= c && c <= 'Z' {
+      c += 32
+    }
+    lower[i] = c
+  }
+  // if you think this is unfair, note that strings.Builder
+  // does the exact same thing
+  return *(*string)(unsafe.Pointer(&lower))
+}
+{% endhighlight %}
+
+
+<p>We can tell from our <code>lowercase</code> function that the performance will be linear based on the length of the input and regardless of what the input is (whether it be all lowercase or all uppercase or a mix of the two). But without looking into <code>strings.ToLower</code> we don't know how it behaves across different lengths and types of inputs, so we'll test 4 different strings:</p>
+
+{% highlight go %}
+var A = strings.Repeat("A", 4096)
+var a = strings.ToLower(A)
+
+var cases = []struct {
+  input    string
+  expected string
+  name     string
+}{
+  {"jpeg", "jpeg", "short no transform"},
+  {"JPEG", "jpeg", "short with transform"},
+  {a, a, "long no transform"},
+  {A, a, "long with transform"},
+}
+{% endhighlight %}
+
+<p>Above we have the test cases for a short and long string, which both come in an already-lowercase version and an uppercase version. There's nothing fancy about our benchmark:</p>
+
+{% highlight go %}
+func Benchmark_Stdlib(b *testing.B) {
+  for _, c := range cases {
+    b.Run(fmt.Sprintf("stdlib_%s", c.name), func(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+        if actual := strings.ToLower(c.input); actual != c.expected {
+          panic(actual)
+        }
+      }
+    })
+  }
+}
+
+func Benchmark_Custom(b *testing.B) {
+  for _, c := range cases {
+    b.Run(fmt.Sprintf("custom_%s", c.name), func(b *testing.B) {
+      for i := 0; i < b.N; i++ {
+        if actual := lowercase(c.input); actual != c.expected {
+          panic(actual)
+        }
+      }
+    })
+  }
+}
+{% endhighlight %}
+
+<p>And the results:</p>
+
+{% highlight text %}
+<span class=win>stdlib</span>_short_no_transform    <span class=win>6.303 ns/op</span>        0 B/op        0 allocs/op
+custom_short_no_transform    11.39 ns/op        4 B/op        1 allocs/op
+
+stdlib_short_with_transform  19.98 ns/op        4 B/op        1 allocs/op
+<span class=win>custom</span>_short_with_transform  <span class=win>11.39 ns/op</span>        4 B/op        1 allocs/op
+
+stdlib_long_no_transform     2837 ns/op         0 B/op        0 allocs/op
+<span class=win>custom</span>_long_no_transform     <span class=win>2450 ns/op</span>      4096 B/op        1 allocs/op
+
+stdlib_long_with_transform   10731 ns/op     4096 B/op        1 allocs/op
+<span class=win>custom</span>_long_with_transform   <span class=win>2457 ns/op</span>      4096 B/op        1 allocs/op
+{% endhighlight %}
+
+<p>With no insight into the standard library's implementation, these results are quite interesting. The standard library is much faster with short strings which are already lowercase, but much slower for long strings that must be converted. In the other two cases, it's a little closer, but still the edge goes to our custom function.</p>
+
+<p>As we predicted, the performance (and memory) characteristic of our function is easy to reason about: the two short versions perform the same as each other, as do the two long versions. The performance of <code>strings.ToLower</code> is a little bit more varied. In particular, we see that the variations that require no conversion perform considerably better than the variations that do. Why is that? Well, one big hint is that both fast cases allocate no memory.</p>
+
+<p>It turns out that <code>strings.ToLower</code> first scans the entire input to determine two things: 1) does the string contain only ASCII characters and 2) does it contain any uppercase characters. Understanding this detail explains all of the performance differences between the two versions. First of all, the standard library starts off with a performance disadvantage by needing to scan the entire string once (which explains why the performance for long strings is so much worse). However, by doing this scan, it can detect that the string is already lowercase and simply return the input (which explains why the tests with lowercase input is so fast and doesn't allocate any memory).</p>
+
+<p>The logic for lowercasing an ASCII string is much simpler and efficient than an UTF-8 string. But because <code>strings.ToLower</code> supports UTF-8, the only solution is to scan the string to determine whether the faster ASCII logic can be used. Cleverly, since you're scanning the string anyways, you might as well check if anything even needs to change. The issue that resulted in this change <a href="https://github.com/golang/go/issues/17859">can be seen here</a>.</p>
+
+<p>Our story isn't quite done yet. Knowing what the standard library does, is there anything we can do to improve the performance of our custom function, specifically with respect to our worst case performance: short strings that are already lowercase? At first glance, it's hard to see a solution other than what the standard library does, namely scanning the string first and then scanning it again, if necessary, to lowercase it. But upon further reflection, the two loops can be combined into one. That is, we can scan the input up until we detect our first uppercase character, at which point we can begin our conversion within the same loop</p>
+
+
+{% highlight go %}
+func fancyLowercase(input string) string {
+  for i := 0; i < len(input); i++ {
+    c := input[i]
+    if 'A' <= c && c <= 'Z' {
+      // We've found an uppercase character, we'll need to convert this string
+      lower := make([]byte, len(input))
+
+      // copy everything we've skipped over up to this point
+      copy(lower, input[:i])
+
+      // our current character needs to be uppercase (it's the reason we're
+      // in this branch)
+      lower[i] = c + 32
+
+      // now iterate over the rest of the input, from where we are, knowing that
+      // we need to copy/lower case into our lowercase strinr
+      for j := i + 1; j < len(input); j++ {
+        c := input[j]
+        if 'A' <= c && c <= 'Z' {
+          c += 32
+        }
+        lower[j] = c
+      }
+      // if you think this is unfair, note that strings.Builder
+      // does the exact same thing
+      return *(*string)(unsafe.Pointer(&lower))
+    }
+  }
+
+  // input was already lowercase, return it as-is
+  return input
+}
+{% endhighlight %}
+
+<p>And the results:</p>
+
+{% highlight text %}
+stdlib_short_no_transform     6.305 ns/op        0 B/op       0 allocs/op
+custom_short_no_transform     11.40 ns/op        4 B/op       1 allocs/op
+<span class=win>fancy</span>_short_no_transform      <span class=win>5.885 ns/op</span>        0 B/op       0 allocs/op
+
+stdlib_short_with_transform   20.45 ns/op        4 B/op       1 allocs/op
+<span class=win>custom</span>_short_with_transform   <span class=win>11.39 ns/op</span>        4 B/op       1 allocs/op
+fancy_short_with_transform    12.24 ns/op        4 B/op       1 allocs/op
+
+stdlib_long_no_transform       2884 ns/op        0 B/op       0 allocs/op
+custom_long_no_transform       2441 ns/op     4096 B/op       1 allocs/op
+<span class=win>fancy</span>_long_no_transform        <span class=win>1646 ns/op</span>        0 B/op       0 allocs/op
+
+stdlib_long_with_transform    10781 ns/op     4096 B/op       1 allocs/op
+<span class=win>custom</span>_long_with_transform     <span class=win>2448 ns/op</span>     4096 B/op       1 allocs/op
+fancy_long_with_transform      2754 ns/op     4096 B/op       1 allocs/op
+{% endhighlight %}
+
+<p>Our new implementation is a good mix of the two other versions. Like <code>strings.ToLower</code> it's able to avoid unnecessary allocations for input which are already lowercase. And, like our custom <code>lowercase</code> function, it only ever does a single iteration. We're always faster than <code>strings.ToLower</code> (because we're able to assume the string is ASCII) and when a conversion <strong>is</strong> needed, we're only a little bit slower than our simpler <code>lowecase</code> version.</p>
+
+<h3>Additional Notes</h3>
+<p>The above is all I wanted to say about lowercasing, specifically because I was looking at ASCII-only text manipulation. But I did notice two small details in the standard library that I wanted to point out. The first relates to UTF-8 conversion using <code>strings.ToLower</code>. If we know that our input is UTF-8, then again, <code>strings.ToLower</code> is doing an unnecessary iteration over our input (to determine if it's ASCII only):</p>
+
+{% highlight go %}
+var input = strings.Repeat("A", 4096) + "☺"
+var expected = strings.ToLower(input)
+
+func Benchmark_ToLower(b *testing.B) {
+  for i := 0; i < b.N; i++ {
+    if actual := strings.ToLower(input); actual != expected {
+      panic(actual)
+    }
+  }
+}
+
+func Benchmark_Map(b *testing.B) {
+  for i := 0; i < b.N; i++ {
+    if actual := strings.Map(unicode.ToLower, input); actual != expected {
+      panic(actual)
+    }
+  }
+}
+{% endhighlight %}
+
+<p>When <code>strings.ToLower</code> detects a UTF-8 input, it calls <code>strings.Map(unicode.ToLower)</code>. The result of calling this directly is obviously going to be faster (note that our input is intentionally exploiting the worst-case behaviour):</p>
+
+{% highlight text %}
+ToLower   11208 ns/op    4864 B/op   1 allocs/op
+Map       8985 ns/op     4864 B/op   1 allocs/op
+{% endhighlight %}
+
+<p>It's a small difference, but it might be of interest in cases where UTF-8 input is guaranteed.</p>
+
+<p>The other small/random thing I observed is that there's a <code>ToLower</code> function inside the <code>net/http/internal/ascii</code> package which first iterates through the string to determine if each character is printable. If each character is printable, <code>strings.ToLower</code> is called. This means that this function iterates over the input string 3 times. That seems unfortunate, though I assume it's only used for short strings.</p>
