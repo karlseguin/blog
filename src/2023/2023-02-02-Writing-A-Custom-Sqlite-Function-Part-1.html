@@ -1,0 +1,301 @@
+---
+layout: post
+date: 2023-02-02
+title: "Writing a Custom SQLite Function (in C) - Part 1"
+description: "Adding a user defined function (UDF) to SQLite"
+tags: [c sqlite]
+---
+
+<p>A powerful feature of SQLite is the ability to call application-defined functions from within SQL. This functionality leverages the fact that SQLite is embedded within the application and thus has far greater capacity for integration than an external database.</p>
+
+<p>Your language's SQLite library probably offers some facility for registering a function with SQLite. But in most cases, these are heavily abstracted, hiding all internal SQLite details and, in some cases, limiting what you're able to accomplish.</p>
+
+<p>In this short series, we're going to add a user defined function to SQLite in C. We'll go through the process slowly and in a way which, I hope, a C novice can follow.</p>
+
+<h3>Setup</h3>
+<p>It's pretty easy to get setup. The first thing we'll do is download and unzip the complete SQLite source code. Head over to the <a href="https://www.sqlite.org/download.html">SQLite download page</a> and search for "Alternative Source Code Formats". Download the source code. I'll be using <a href="https://www.sqlite.org/2022/sqlite-src-3400100.zip">https://www.sqlite.org/2022/sqlite-src-3400100.zip</a>, but there's a good chance the latest version will work fine. Next we'll run <code>./configure</code> and <code>make</code>. The entire sequence looks like:</p>
+
+{% highlight bash %}
+wget https://www.sqlite.org/2022/sqlite-src-3400100.zip
+unzip sqlite-src-3400100.zip
+cd sqlite-src-3400100/
+./configure
+make
+{% endhighlight %}
+
+<p>In addition to other things, this will generate what's known as the "amalgamation" source code, which is the entire SQLite source code in a single file (sqlite3.c) with a single header (sqlite3.h). If you have any problems building this from source, you can grab the pre-generated amalgamation from the same download page, just search for "sqlite-amalgamation" (it's usually the first (pre-release) or second (stable release) link).</p>
+
+<p>We'll copy <code>sqlite3.c</code> and <code>sqlite3.h</code> into a new empty working directory. For me, that's <code>~/code/play/sqlite</code>. To this, we'll add a file, <code>main.c</code>. In the end, you should have a directory with 3 files: <code>sqlite3.h</code>, <code>sqlite3.c</code> and <code>main.c</code>. You'll only touch <code>main.c</code>, open it now now.</p>
+
+<h3>Opening a Connection</h3>
+<p>The first thing we'll do is open a new SQLite database and then close it:</p>
+
+{% highlight c %}
+#include <stdio.h>
+#include <stdlib.h>
+#include "sqlite3.h"
+
+int main(int argc, char ** argv) {
+  sqlite3 *db;
+
+  int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+  int rc = sqlite3_open_v2("db.sqlite", &db, flags, NULL);
+
+  if (rc != SQLITE_OK) {
+    printf("Failed to open: %s\n", sqlite3_errmsg(db));
+    sqlite3_close_v2(db);
+    exit(1);
+  }
+
+  sqlite3_close_v2(db);
+  exit(0);
+}
+{% endhighlight %}
+
+<p>If you go through the above code, it's hopefully understandable. We're using 3 SQLite functions. <code>sqlite3_open_v2</code> opens a connection to our database and, because we're specifying the <code>SQLITE_OPEN_CREATE</code> flag, will create the database if necessary. <code>sqlite3_close_v2</code> closes the connection. <code>sqlite3_errmsg</code> returns the last error message that happened on the provided connection.</p>
+
+<p>If you're new (or like me rusty) with C, there's one thing about the above that must be understood: return values. A typical pattern in C, and certainly in SQLite, is for functions to return a return code. If we need to "return" multiple values, such as <code>sqlite3_open_v2</code> which needs to "return" a return code (hence <code>rc</code>) and a connection, we pass a reference to our connection and let the function initialize it.</p>
+
+<p>Those familiar with Go (or other modern languages) will probably consider this pattern inferior to returning multiple values (and I'd agree!). But even in Go, passing "output" parameters is quite common: think <code>json.Unmarshal</code> which takes a reference to the data to populate, or the <code>Scan</code> methods of <code>sql.Row</code> and <code>sql.Rows</code> which take references to empty values to populate.
+
+<p>We can compile and run the above:</p>
+
+{% highlight bash %}
+cc sqlite3.c main.c -o sqlite_udf
+chmod a+x sqlite_udf # make it executable
+./sqlite_udf  # execute it
+{% endhighlight %}
+
+<p>This should create an empty <code>db.sqlite</code> file in the same directory. If you want, you can check the error handling by changing the path, <code>"db.sqlite"</code>, to something that doesn't exist, like <code>/invalid/fail</code>, re-compiling and running it again.</p>
+
+<h3>Refactoring</h3>
+<p>Before we start writing a custom function, let's clean things up a little to streamline the rest of our effort. Let's create a helper to print errors, and let's add another function, <code>run</code>, so that we don't have to worry about closing our connection in every error case:</p>
+
+{% highlight c %}
+#include <stdio.h>
+#include <stdlib.h>
+#include "sqlite3.h"
+
+// Must define functions before we can use them
+// An alternative would be to move the full run and print_error up here
+// but that can get pretty tangled as we add more and more functions that call
+// one and other.
+static int run(sqlite3*);
+static void print_error(const char*, sqlite3*);
+
+int main(int argc, char ** argv) {
+  sqlite3 *db;
+  int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+  int rc = sqlite3_open_v2("db.sqlite", &db, flags, NULL);
+  if (rc != SQLITE_OK) {
+    print_error("sqlite_open: %s", db);
+    exit(1);
+  }
+  int status = run(db);
+  sqlite3_close_v2(db);
+  exit(status);
+}
+
+static void print_error(const char *format, sqlite3 *db) {
+  printf(format, sqlite3_errmsg(db));
+  printf("\n");
+}
+
+static void run(sqlite3 *db) {
+  // our main code will go here
+}
+{% endhighlight %}
+
+<p>Note that in C, we usually explicitly declare our functions before we can use them. Hence we provide the function headers for <code>run</code> and <code>print_error</code>. An alternative approach is to simply define the entire function before we use it. So we could put <code>print_error</code> and <code>run</code> and any other function that we'll create before they are needed.</p>
+
+<h3>Increment User Defined Function</h3>
+<p>We're going to do this slowly and incrementally. We'll eventually write a slightly fancier function, but for now, we're keeping it simple. Inside of our new <code>run</code> function, we're going to use the <code>sqlite3_create_function</code> function to register a custom function with SQLite:</p>
+
+{% highlight c %}
+static int run(sqlite3 *db) {
+  int rc = sqlite3_create_function(db, "increment", 1, SQLITE_UTF8, NULL, &increment, NULL, NULL);
+  if (rc != SQLITE_OK) {
+    print_error("create_function: %s", db);
+    return 2;
+  }
+  return 0;
+}
+{% endhighlight %}
+
+<p>We're registering our (not-yet-created) <code>increment</code> function, that takes <code>1</code> argument and naming it "increment". The eventual result will be that we'll be able to do: <code>select increment(value_or_column)</code>. The first argument to <code>sqlite3_create_function</code> is the database connection (<code>sqlite3*</code>). Functions are registered on the connection, not the database. If we open multiple connections and want our user defined function available in all of them, we need to call <code>sqlite3_create_function</code> on each connection.</p>
+
+<p>Now the skeleton of our <code>increment</code> function:</p>
+
+{% highlight c %}
+// add this header with the run and print_error headers
+static void increment(sqlite3_context*, int, sqlite3_value**);
+
+// add this function anywhere else in the file
+static void increment(sqlite3_context *context, int argc, sqlite3_value **argv) {
+
+}
+{% endhighlight %}
+
+<p>The <code>sqlite3_context*</code> is used to store results that will be passed back to SQLite and can be used for a few other things (like getting the underlying db connection (of type <code>sqlite3*</code>). <code>argc</code> is the number of arguments that were passed into our function, and <code>argv</code> are the actual arguments. When we called <code>sqlite3_create_function</code> we specified that our function needed <code>1</code> argument. SQLite will enforce this so, in our case, <code>argc</code> will <strong>always</strong> be equal to <code>1</code>. But we could have specified <code>-1</code> to indicate that the number of argument is variable, in which case we'd use <code>argc</code> to figure out the number of arguments that were passed to our function.</p>
+
+<p>Parameters to our function are given as <code>sqlite3_value*</code>. To increment, we'll need an integer. We can use the <code>sqlite3_value_int</code> function to turn an <code>sqlite3_value*</code> into an <code>int</code>. As you can probably guess, there are functions for all of the SQLite supported types, such as <code>sqlite3_value_double</code>, <code>sqlite3_value_text</code> and so on:</p>
+
+{% highlight c %}
+static void increment(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  // we can safely access argv[0] because told SQLite that our increment
+  // function takes 1 argument when we called sqlite3_create_function.
+  int value = sqlite3_value_int(argv[0]) + 1;
+  // TODO: return
+}
+{% endhighlight %}
+
+<p>We can then use the <code>sqlite3_result_int</code> to store the result into the context. Just like <code>sqlite3_value_*</code>, there are also  <code>sqlite3_result_*</code> for each supported type. Thus, the entire <code>increment</code> function is:</p>
+
+{% highlight c %}
+static void increment(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  // we can safely access argv[0] because told SQLite that our increment
+  // function takes 1 argument when we called sqlite3_create_function.
+  int value = sqlite3_value_int(argv[0]) + 1;
+  sqlite3_result_int(context, value);
+}
+{% endhighlight %}
+
+<h3>Testing It (By Executing A Statement)</h3>
+<p>Our <code>increment</code> function <em>will</em> work, but it'd be nice to see it in action. To do so, we need to execute a statement, such as <code>select increment(?1)</code> and read the result. This is, as you can probably guess, the most important thing we can do in SQLite. So while it isn't directly related to writing a custom function, it's worth learning.</p>
+
+<p>To execute a statement, any statement, we must do multiple things. First we have to prepare the statement. Next we optionally bind values to the statement. Then we step through the results in a loop, until the statement execution is done. Finally, we must cleanup after ourselves. This prepare -&gt; bind -&gt; step loop -&gt; cleanup is a common pattern in SQLite (for example, it's the same thing that must be done when PostgreSQL executes a statement).</p>
+
+<p>Starting from the beginning, we must prepare a statement:</p>
+
+
+{% highlight c %}
+static int run(sqlite3 *db) {
+  // existing sqlite3_create_function code
+  // ...
+
+  sqlite3_stmt *stmt;
+  rc = sqlite3_prepare_v2(db, "select increment(9000)", -1, &stmt, 0);
+  if (rc != SQLITE_OK) {
+    print_error("statement prepare: %s", db);
+    return 2;
+  }
+
+
+  return 0;
+}
+{% endhighlight %}
+
+<p>The third parameter is the length of the SQL statement to execute. <code>-1</code> tells SQLite to find the end of the string (zero-terminated). This is a common pattern, where we can either specify the length of the string or let SQLite infer it. Being able to pass in an explicit length allows us to use larger buffers and tell SQLite to only care about the first N bytes (think something like an Go slice; but unsafe since we could always specify a length greater than our buffer).
+
+<p><code>sqlite3_prepare_v2</code> only prepares a single statement. The last parameter is an output parameter that, after execution, would point to the remainder of our input. In this case, we only have a single statement and thus don't expect any remainder.</p>
+
+<p>After the function executes, we expect <code>rc == SQLITE_OK</code> and <code>stmt</code> to be initialized. At this point, we need to bind our values. We could make our life easier and simply test <code>select increment(9000)</code>, but to demonstrate binding, we'll do <code>select increment(?1)</code>. Thus we need to bind one value:</p>
+
+{% highlight c %}
+if (sqlite3_bind_int64(stmt, 1, 9000) != SQLITE_OK) {
+  print_error("bind: %s", db);
+  return 2;
+}
+{% endhighlight %}
+
+<p>There are <code>sqlite3_bind_*</code> versions for all of the SQLite supported types. The 2nd parameter is the bind index. Bind indexes start at 1.</p>
+
+<p>We're now ready to step through the result. Normally, we'd step in a loop, waiting for the step function to return <code>SQLITE_DONE</code>. But we'll cheat a little for our specific use-case and rely on the fact that we only expect a single row:</p>
+
+{% highlight c %}
+int status;
+rc = sqlite3_step(stmt);
+if (rc == SQLITE_ROW) {
+  printf("increment(%d) == %d", 9000, sqlite3_column_int(stmt, 0));
+  status = 0;
+} else if (rc == SQLITE_DONE) {
+  // very weird, should not be possible
+  printf("Unexpected empty result");
+  status = 3;
+} else {
+  print_error("step: %s", db);
+  status = 2;
+}
+sqlite3_finalize(stmt);
+return status;
+{% endhighlight %}
+
+<p>Again, the <code>sqlite3_step</code> function is what we use to iterate through each row of our result. Here we cheat a little as we know to expect a single row (thus, don't iterate). The <code>sqlite3_column_int</code> function reads an <code>int</code> from the current row as the specified index (here our indexes start at 0). There are various <code>sqlite3_column_*</code> functions to read different types of values from.</p>
+
+<p>Finally, we have to call <code>sqlite3_finalize</code> on the prepared statement to clean up any resources associated with it. In the next part we'll look more closely at resource allocation and lifetime as these are critical and complicated topics we need to understand. Our simple example only deals with an integer, but what if we were dealing with a heap-allocated value (like a string)? Who would be responsible for freeing that memory?</p>
+
+<h3>Complete Code</h3>
+<p>Our completed code looks like:</p>
+
+{% highlight c %}
+#include <stdio.h>
+#include <stdlib.h>
+#include "sqlite3.h"
+
+
+static int run(sqlite3*);
+static void print_error(const char*, sqlite3*);
+static void increment(sqlite3_context*, int, sqlite3_value**);
+
+int main(int argc, char ** argv) {
+  sqlite3 *db;
+  int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+  int rc = sqlite3_open_v2("db.sqlite", &db, flags, NULL);
+  if (rc != SQLITE_OK) {
+    print_error("sqlite_open: %s", db);
+    exit(1);
+  }
+  int status = run(db);
+  sqlite3_close_v2(db);
+  exit(status);
+}
+
+static void print_error(const char *format, sqlite3 *db) {
+  printf(format, sqlite3_errmsg(db));
+  printf("\n");
+}
+
+static int run(sqlite3 *db) {
+  int rc = sqlite3_create_function(db, "increment", 1, SQLITE_UTF8, NULL, &increment, NULL, NULL);
+  if (rc != SQLITE_OK) {
+    print_error("create_function: %s", db);
+    return 2;
+  }
+
+  sqlite3_stmt *stmt;
+  rc = sqlite3_prepare_v2(db, "select increment(?1)", -1, &stmt, 0);
+  if (rc != SQLITE_OK) {
+    print_error("statement prepare: %s", db);
+    return 2;
+  }
+
+  if (sqlite3_bind_int64(stmt, 1, 9000) != SQLITE_OK) {
+    print_error("bind: %s", db);
+    return 2;
+  }
+
+  int status;
+  rc = sqlite3_step(stmt);
+  if (rc == SQLITE_ROW) {
+    printf("increment(%d) == %d", 9000, sqlite3_column_int(stmt, 0));
+    status = 0;
+  } else if (rc == SQLITE_DONE) {
+    // very weird, should not be possible
+    printf("Unexpected empty result");
+    status = 3;
+  } else {
+    print_error("step: %s", db);
+    status = 2;
+  }
+  sqlite3_finalize(stmt);
+  return status;
+}
+
+static void increment(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  int value = sqlite3_value_int(argv[0]) + 1;
+  sqlite3_result_int(context, value);
+}
+{% endhighlight %}
+
+<h3>Follow Up Exercise</h3>
+<p>There are two additional enhancements you might be interested in exploring on your own. The first is expanding our increment function to take a 2nd (possibly optional) parameter to indicate how much to increment our value by (defaulting to 1). The second is to add type strictness. As-is, the return value for <code>increment('teg')</code> will be <code>1</code>, as <code>sqlite3_value_int</code> will return <code>0</code> when called on a non-integer value (or a value that cannot be coerced to an integer (e.g. passing the a string argument of '9002' would return 9003)). We could use the <code>sqlite3_value_type</code> function on <code>argv[0]</code> to determine the type and handle non-integer values. In such cases, instead of using the <code>sqlite3_result_int</code> to store an integer value in our context, we could use <code>sqlite3_result_error</code> to store an error.</p>
