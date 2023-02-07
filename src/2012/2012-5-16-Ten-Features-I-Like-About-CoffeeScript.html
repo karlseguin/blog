@@ -5,23 +5,21 @@ date: 2012-05-16
 title: "Ten Features I Like About CoffeeScript"
 tags: [node.js]
 ---
-<style>
-.compare{overflow:auto;position:relative;left:-150px;width:calc(100% + 300px)}
-.compare div{width:48%;}
-.compare pre{padding:3px;width:auto;left:auto}
-.compare .cs{float:left;}
-.compare .js{margin-left:50%;}
-</style>
-
 <h3>String Interpolation</h3>
 <p>It's pretty common that you'll want to build a string based on one or more variables. With CoffeeScript, variables can cleanly be placed inside of as string: </p>
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %}"level greater than '#{maxPowerLevel}'"{% endhighlight %}
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+"level greater than '#{maxPowerLevel}'"
+{% endhighlight %}
   </div>
-  <div class="js">
-    {% highlight javascript %}"level greater than '" + maxPowerLevel + "'"{% endhighlight %}
+  <div>
+{% highlight javascript %}
+// javascript
+"level greater than '" + maxPowerLevel + "'"
+{% endhighlight %}
   </div>
 </div>
 
@@ -31,33 +29,46 @@ tags: [node.js]
 <p>I'll admit that statement modifiers are a pretty minor thing, but as trivial as they are, I've always found them useful for simple statements: </p>
 
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %}applyChanges = (elements) ->
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+applyChanges = (elements) ->
   return if elements.length == 0
-  ...{% endhighlight %}
+  ...
+{% endhighlight %}
   </div>
-  <div class="js">
-    {% highlight javascript %}applyChanges = function(elements) {
+  <div>
+{% highlight javascript %}
+// javascript
+applyChanges = function(elements) {
   if (elements.length === 0) { return; }
-  ...{% endhighlight %}
+  ...
+}
+{% endhighlight %}
   </div>
 </div>
 
 <h3>Callback Handling</h3>
 <p>Whether you are doing client-side development or server-side development, callbacks and JavaScript go hand-in-hand. And, although I don't mind braces, I've always found JavaScript's syntax to be far too verbose. CoffeeScript helps in two ways. First, optional parenthesis, which I generally dislike, except when dealing with callbacks. Second, blocks via indentation. Compare: </p>
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %}$('#data').on 'click', 'tr', (e) ->
-  id = $(this).data('id')
-  ...{% endhighlight %}
-  </div>
-  <div class="js">
-    {% highlight javascript %}$('#data').on('click, 'tr', function(e) {
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+$('#data').on 'click', 'tr', (e) ->
   id = $(this).data('id')
   ...
-});{% endhighlight %}
+{% endhighlight %}
+  </div>
+  <div>
+{% highlight javascript %}
+// javascript
+$('#data').on('click, 'tr', function(e) {
+  id = $(this).data('id')
+  ...
+});
+{% endhighlight %}
   </div>
 </div>
 
@@ -67,17 +78,22 @@ tags: [node.js]
 <h3>Comprehensions</h3>
 <p>Looping over arrays and hashes is pretty fundamental, and the more we can enhance the experience, the better. Even if you don't leverage comprehensions as-is, simply having a for loop that exposes the value+index of an array, or the key+value of a hash, is a nice addition.</p>
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %}books = [
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+books = [
   {name: 'Dune', rating: 5}
   {name: "Old Man's War", rating: 4}
   {name: 'Foundation', rating: 3}
 ]
-good = (b.name for b in books when b.rating > 3){% endhighlight %}
+good = (b.name for b in books when b.rating > 3)
+{% endhighlight %}
   </div>
-  <div class="js">
-    {% highlight javascript %}books = [
+  <div>
+{% highlight javascript %}
+// javascript
+books = [
   {name: 'Dune', rating: 5},
   {name: "Old Man's War", rating: 4},
   {name: 'Foundation', rating: 3}
@@ -87,7 +103,8 @@ for(var i = 0; i < books.length; ++i) {
   if (books[i].rating > 3) {
     good.push(books[i].name);
   }
-}{% endhighlight %}
+}
+{% endhighlight %}
   </div>
 </div>
 
@@ -96,7 +113,9 @@ for(var i = 0; i < books.length; ++i) {
 <h3>The Fat Arrow</h3>
 <p>In JavaScript, the meaning of <code>this</code> isn't always intuitive. Consider this CoffeeScript code: </p>
 
-{% highlight ruby %}class DataTable
+{% highlight ruby %}
+# coffeescript
+class DataTable
   constructor: (elem) ->
     this.element = $(elem)
     this.element.on 'click', 'tr', this.clicked
@@ -112,9 +131,11 @@ for(var i = 0; i < books.length; ++i) {
 
 <p>To solve this, CoffeeScript lets you define a method with a fat arrow <code>=></code>. Using <code>=></code> binds the function to the expected scope: </p>
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %}class DataTable
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+class DataTable
   constructor: (elem) ->
     this.element = $(elem)
     this.element.on 'click', 'tr', this.clicked
@@ -123,10 +144,13 @@ for(var i = 0; i < books.length; ++i) {
     this.highlight()
 
   highlight: =>
-    ....{% endhighlight %}
+    ....
+{% endhighlight %}
   </div>
-  <div class="js">
-    {% highlight javascript %}__bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
+  <div>
+{% highlight javascript %}
+// javsacript
+__bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
 function DataTable(element) {
   this.highlight = __bind(this.highlight, this);
   this.clicked = __bind(this.clicked, this);
@@ -138,7 +162,8 @@ DataTable.prototype.clicked = function(e) {
 };
 DataTable.prototype.highlight = function() {
   ...
-};{% endhighlight %}
+};
+{% endhighlight %}
   </div>
 </div>
 
@@ -148,13 +173,18 @@ DataTable.prototype.highlight = function() {
 <h3>@ Alias</h3>
 <p>Speaking of <code>this</code>, CoffeeScript has a shortcut for it, the <code>@</code> symbol. It's easy to write this off as meaningless syntactical sugar, but it is useful. First, constructor parameters prefixed with <code>@</code> are converted into properties:</p>
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %}class User
-  constructor: (@id) ->{% endhighlight %}
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+class User
+  constructor: (@id) ->
+{% endhighlight %}
   </div>
-  <div class="js">
-    {% highlight javascript %}function User(id) {
+  <div>
+{% highlight javascript %}
+// jasvascript
+function User(id) {
   this.id = id;
 }{% endhighlight %}
   </div>
@@ -162,19 +192,25 @@ DataTable.prototype.highlight = function() {
 
 <p>Beyond this though, it's a nice way to define class method:</p>
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %}class User
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+class User
   constructor: (@id) ->
 
   @findById: (id) =>
-     ...{% endhighlight %}
+     ...
+{% endhighlight %}
   </div>
-  <div class="js">
-    {% highlight javascript %}function User(id) {
+  <div>
+{% highlight javascript %}
+// javascript
+function User(id) {
   this.id = id;
 }
-User.findById = function() {};{% endhighlight %}
+User.findById = function() {};
+{% endhighlight %}
   </div>
 </div>
 
@@ -191,19 +227,24 @@ User.findById = function() {};{% endhighlight %}
 <h3>Classes</h3>
 <p>We've seen examples of it as a side effect of other features, but CoffeeScript classes are cleaner and more intuitive than their JavaScript counterparts. And the only reason I'm not showing how to inherit via <code>extend</code> is because I don't want to include all the necessary JavaScript...</p>
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %}class User
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+class User
   constructor: (@id) ->
 
   @findById: (id) ->
 
   @findByEmail: (email) ->
 
-  save: =>{% endhighlight %}
+  save: =>
+{% endhighlight %}
   </div>
-  <div class="js">
-    {% highlight javascript %}function User(id) {
+  <div>
+{% highlight javascript %}
+// javascript
+function User(id) {
   this.id = id;
   this.save = __bind(this.save, this);
 }
@@ -212,41 +253,53 @@ User.findById = function(id) {};
 
 User.findByEmail = function(email) {};
 
-User.prototype.save = function() {};{% endhighlight %}
+User.prototype.save = function() {};
+{% endhighlight %}
   </div>
 </div>
-
 
 <h3>Operators</h3>
 <p>In CoffeeScript, <code>==</code> and <code>!=</code> translate to <code>===</code> and <code>!==</code>, which you probably always want to be using. This alone removes a common pain point.</p>
 
 <p>In addition to that, there's the existential operator. In its simplest form, it checks for undefined and null:</p>
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %} return null unless n?{% endhighlight %}
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+return null unless n?
+{% endhighlight %}
   </div>
-  <div class="js">
-    {% highlight javascript %}if (typeof n === "undefined" || n === null) {
+  <div>
+{% highlight javascript %}
+// javascript
+if (typeof n === "undefined" || n === null) {
   return null;
-}{% endhighlight %}
+}
+{% endhighlight %}
   </div>
 </div>
 
 <p>But it can also be used in chains:</p>
 
-<div class="compare">
-  <div class="cs">
-    {% highlight ruby %}class Unicorn
+<div>
+  <div>
+{% highlight ruby %}
+# coffeescript
+class Unicorn
   is_rookie: ->
-    vampire?.kills > 0{% endhighlight %}
+    vampire?.kills > 0
+{% endhighlight %}
   </div>
-  <div class="js">
-    {% highlight javascript %}Unicorn.prototype.is_rookie = function() {
+  <div>
+{% highlight javascript %}
+// javascript
+Unicorn.prototype.is_rookie = function() {
   return (typeof vampire !== "undefined" &&
           vampire !== null ?
           vampire.kills : void 0) > 0;
-};{% endhighlight %}
+};
+{% endhighlight %}
   </div>
 </div>
 
