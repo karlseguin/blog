@@ -1,0 +1,184 @@
+---
+layout: post
+date: 2023-02-14
+title: "Writing a Custom SQLite Function (in C) - Part 2"
+description: "Memory management with SQLite and user defined functions"
+tags: [c sqlite]
+---
+
+<p>In <a href="/Writing-A-Custom-Sqlite-Function-Part-1/">part 1</a> we built a trivial SQLite function in C. Our goal was to cover the most critical parts of the SQLite API. One consequence of using a simple example is that we sidestepped any conversation about memory management. This second part looks specifically at some memory management that you'll likely need to be aware of.</p>
+
+<h3>Memory</h3>
+<p>To execute and read the result of our <code>increment</code> function, we used the <code>sqlite3_bind_int64</code> and <code>sqlite3_column_int</code> functions respectively. As the name implies, these functions let us bind an integer to an SQLite statement and read an integer from a result. Integers have two important properties: their size is known upfront (a 64 bit integer always requires 64 bits of memory) and they are small. Types that have these two properties, including composite types (say a <code>Point</code> struct with two integer fields, <code>X</code> and <code>Y</code>) require straightforward memory management. When a function begins execution, the memory that we know it will require (essentially the sum of bytes needed for all the ints, floats, bytes, ...) is allocated upfront. This is called the "stack". Parameters are copied onto the stack and local variables (think a counter in a for loop) are initialized onit. Importantly, when the function returns, that entire stack is deallocated. Hence the memory is automatically allocated when the function starts and deallocate when the function ends.</p>
+
+<p>In most programs though, not all of our memory needs are going to be known upfront. The classic example is processing a user's input; for example their favorite color where "red", "blue" and "yellow" all require different amounts of storage space. The most common strategy for dealing with this is to allocate memory on the "heap" which is tied to the entire program's lifetime, as opposed to the execution of individual functions. For small and shortlived programs, we can allocate memory on the heap, as needed, never freeing it, and let the OS reclaim the space when the program exit. But for long-running programs, space on the heap has to be managed. Specifically, because memory is a finite resource, we want memory allocated on the heap to be deallocated once it is no longer needed so it can be re-used . This is largely what a garbage collector does: it figures out when heap memory can be deallocated.</p>
+
+<p>In C, we have no garbage collector. We are responsible for deallocating any memory we allocate on the heap. One common way to mess this up is to use the memory after we've deallocated it (a.k.a  use-after-free). Similarly common is to not free the memory at all. In fact, it's easy to mess things up so badly that we lose all references to allocated memory and thus can't free it even if we wanted to (until the OS reclaims it on program exit). This is known as a memory leak.</p>
+
+<p>To allocate memory on the heap, we use the <code>malloc</code> function, specifying how much memory we want. On success, it returns a pointer to the newly allocated memory. We use <code>free</code> on this pointer to deallocate the memory. At first glance, this sounds straightforward; in practice, it can be opaque. Maybe it's just because I don't touch C very often, but when I do, I spend a lot of time worrying about whether a function allocated memory and, if it did, whether I'm responsible for freeing it.</p>
+
+<h3>SQLite Strings</h3>
+<p>The real life example that inspired these posts was the development of a function, <code>current_user_id</code>, which wrapped a <code>select user_id from tmp_session</code> query. I wanted to encapsulate this query to make it usable within CTEs, triggers, default values and so on, while hiding the implementation details. <code>user_id</code>, being a string, required understanding of how to interact with heap-allocated memory from SQLite.</p>
+
+<p>How the <code>tmp_session</code> table is populated isn't important. We're just using it as an example to get a heap-allocated value (in this case, a string) from SQLite. In my real use-case, it's a temporary table (thus scoped to an individual connection) which always has 0 or 1 rows depending on whether the request is being made from an anonymous or a logged-in user.</p>
+
+<p>The first thing we'll do is register our function and create the skeleton:</p>
+
+{% highlight c %}
+static void current_user_id(sqlite3_context*, int, sqlite3_value**);
+
+//...
+
+static int run(sqlite3 *db) {
+  // current_user_id is called with 0 arguments, thus the 3rd parameter is 0
+  int rc = sqlite3_create_function(db, "current_user_id", 0, SQLITE_UTF8, NULL, &current_user_id, NULL, NULL);
+  if (rc != SQLITE_OK) {
+    print_error("create_current_user_id: %s", db);
+    return 2;
+  }
+  return 0;
+}
+
+static void current_user_id(sqlite3_context *context, int argc, sqlite3_value **argv) {
+
+}
+{% endhighlight %}
+
+<p>The body of <code>current_user_id</code> will borrow from the code we wrote in Part 1 to execute the increment function. We need to create a statement, step through it (again, just once) and clean up:</p>
+
+{% highlight c %}
+static void current_user_id(sqlite3_context *context, int argc, sqlite3_value **argv) {
+  // We get our db connection from the context
+  sqlite3 *db = sqlite3_context_db_handle(context);
+
+  sqlite3_stmt *stmt;
+  int rc = sqlite3_prepare_v2(db, "select user_id from tmp_session", -1, &stmt, 0);
+  if (rc != SQLITE_OK) {
+    // Something bad happened, we'll come back to look at this later
+    return;
+  }
+
+  rc = sqlite3_step(stmt);
+  if (rc == SQLITE_ROW) {
+    char *user_id = sqlite3_column_text(stmt, 0);
+    // !!HERE!! What do we do with user_id
+  } else if (rc == SQLITE_DONE) {
+    // There's no user, we'll return null
+    sqlite3_result_null(context);
+  } else {
+    // something bad happened, we'll come back to look at this later.
+  }
+
+  sqlite3_finalize(stmt);
+}
+{% endhighlight %}
+
+<p>The <code>sqlite3_context_db_handle</code> function is new and is used to get a reference to our connection from a <code>sqlite3_context*</code>. We need the connection to create our statement. The query that we're executing doesn't have any parameters/placeholders, so we don't need to bind anything.  If our query returned a row, we called <code>sqlite3_column_text</code> to get the <code>user_id</code> value. If our query didn't have any rows, we called <code>sqlite3_result_null</code> to have our function return null.</p>
+
+<p>Besides adding error handling (which we'll do later), we need to figure out how to return the <code>user_id</code> from our function. In Part 1 we called <code>sqlite3_result_int</code> to return an integer. Just above, we called <code>sqlite3_result_null</code> to return <code>null</code>. Maybe there's a <code>sqlite3_result_text</code>? In fact there is, but it's slightly more complicated to use. Here's the working code:
+
+
+{% highlight c %}
+char *user_id = sqlite3_column_text(stmt, 0);
+sqlite3_result_text(context, user_id, -1, SQLITE_TRANSIENT);
+{% endhighlight %}
+
+<p>Compared to <code>sqlite3_result_int</code>, <code>sqlite3_result_text</code> takes 2 additional parameters. The 3rd parameter is the length of the string. In the above we're being lazy and passing -1, which means SQLite will scan <code>user_id</code> for a null terminator to determine the length. The 4th parameter can either be <code>SQLITE_TRANSIENT</code> or <code>SQLITE_STATIC</code> and specifically exists to inform SQLite about how it should manage the memory associated with the 2nd parameter, the <code>char*</code>. <code>SQLITE_STATIC</code> means the memory is allocated in constant space, that it won't suddenly disappear or change. <code>SQLITE_STATIC</code> is a powerful promise that allows <code>sqlite3_result_text</code> to simply reference the supplied <code>char *</code>. On the other hand, <code>SQLITE_TRANSIENT</code> makes no such guarantees. It basically informs <code>sqlite3_result_text</code> that after it returns, the memory referenced by the 2nd parameter could be changed or freed. Thus, when <code>SQLITE_TRANSIENT</code> is specified, as we've done above, <code>sqlite3_result_text</code> will allocate its own memory to hold the contents of the 2nd parameter and copy the value. Because it creates a copy, it no longer cares what happens to the original.</p>
+
+<p>The above raises an important question: should we use <code>SQLITE_TRANSIENT</code> or <code>SQLITE_STATIC</code>? I mean <code>SQLITE_STATIC</code> seems preferable because it avoids having to allocate <code>len(user_id)</code> space and then having to create a copy. But we can only specify <code>SQLITE_STATIC</code> if we're sure that the memory referenced by <code>user_id</code> is, in fact, static. In our code above, the reference in question is returned by <code>sqlite3_column_text</code>. We could take an educated guess about how this behaves: it seems unlikely that the memory associated with an <code>sqlite3_stmt*</code> would outlive the call to <code>sqlite3_finalize(stmt)</code>. To be sure, we need to refer to the documentation:</p>
+
+<blockquote>
+The pointers returned [from the <code>sqlite3_column_* functions</code>] are valid until (...) <code>sqlite3_step()</code> or <code>sqlite3_reset()</code> or <code>sqlite3_finalize()</code> is called. The memory space used to hold strings and BLOBs is freed automatically.
+</blockquote>
+
+<p>Our educated guess was only partially correct. In cases where we expect multiple rows and thus call <code>sqlite3_step</code> multiple times, the memory would be valid only until the next iteration. In our case, since <code>sqlite3_step</code> is only called once, the memory is valid only until <code>sqlite3_finalize</code> is called. In any case, we need the data to be returned out by our function, well beyond the point where <code>sqlite3_finalize</code> is called. Therefore, we must use <code>SQLITE_TRANSIENT</code>.</p>
+
+<p>Thankfully, the SQLite API handles our cases easily. The memory ownership from stepping through a result is straightforward (returned pointers are valid only until the next step and/or finalize) and functions like <code>sqlite3_result_text</code> can be told to take ownership, by creating a copy, of the data we pass in.</p>
+
+<p>What if we made things more complicated and did more than just take data from one SQLite function and pass it into another? For example, let's say that we wanted to create a function that returned the <code>user_id</code> for use in other code (essentially, refactoring the above logic)? In that case, we'd need to do what <code>sqlite3_result_text</code> does: allocate space for a copy of the value:</p>
+
+{% highlight c %}
+static char *get_user_id(sqlite3_context *context) {
+  char *user_id = NULL;
+  sqlite3 *db = sqlite3_context_db_handle(context);
+
+  sqlite3_stmt *stmt;
+  int rc = sqlite3_prepare_v2(db, "select user_id from tmp_session", -1, &stmt, 0);
+  if (rc != SQLITE_OK) {
+    // Something bad happened, we'll come back to look at this later
+    return NULL;
+  }
+
+  rc = sqlite3_step(stmt);
+  if (rc == SQLITE_ROW) {
+    size_t len = sqlite3_column_bytes(stmt, 0);
+    if (len != 0) {
+      user_id = (char*)sqlite3_malloc64(len);
+      if (user_id) {
+        // if we successfully allocated the necessary memory
+        // we can copy the value from the result into it
+        memcpy(user_id, sqlite3_column_text(stmt, 0), len);
+      } else {
+        // sqlite3 has a helper method specifically for returning
+        // a memory allocation failure
+        sqlite3_result_error_nomem(context);
+      }
+    }
+  }
+  sqlite3_finalize(stmt);
+  return user_id;
+}
+{% endhighlight %}
+
+<p>There's a lot to unpack, but it's essentially the same code as before, except for the part where we allocate memory and copy the contents of <code>sqlite3_column_text</code> to the new memory. Do note the use of the <code>sqlite3_column_bytes</code> function which returns the length of bytes for a text or blob column. We need this to know how much memory to allocate. (We could have used this function instead of passing <code>-1</code> to the <code>sqlite3_result_text</code> function.)</p>
+
+<p>Our function calls <code>sqlite3_malloc64</code>, which is like C's <code>malloc</code> but allocate the memory via SQLite (i.e. SQLite might call <code>malloc</code> itself, or might be able to return memory from a cache/buffer). However, we don't call <code>sqlite3_free</code>. The caller of this function will be responsible for freeing the returned pointer (or for passing the responsibility to its caller).</p>
+
+<h3>Error Handling</h3>
+<p>In the above example, we use the <code>sqlite3_result_error_nomem</code> function to return an error. This is a special function specifically designed for returning memory failures (like <code>sqlite3_malloc64</code> returning <code>NULL</code>). But there are a lot of other places in our code where we'd like to return an error, for example, if the call to <code>sqlite3_prepare_v2</code> fails. This could happen if the <code>tmp_session</code> table didn't exist. Just like we have a <code>sqlite3_result_int</code> and <code>sqlite3_result_text</code>, we also have a <code>sqlite3_result_error</code>.</p>
+
+<p>An initial way to do error handling would be to return a static error message:</p>
+
+{% highlight c %}
+static char *get_user_id(sqlite3_context *context) {
+  // ...
+  int rc = sqlite3_prepare_v2(db, "select user_id from tmp_session", -1, &stmt, 0);
+  if (rc != SQLITE_OK) {
+    // ADDED THIS
+    sqlite3_result_error(context, "failed to select user_id from tmp_session", -1);
+    return NULL;
+  }
+  // ...
+{% endhighlight %}
+
+<p>In some cases, this might be good enough, but there's a good chance we'll want the underlying error as well. We need to craft a better error message - it needs to be dynamic:</p>
+
+{% highlight c %}
+static char *get_user_id(sqlite3_context *context) {
+  // ...
+  int rc = sqlite3_prepare_v2(db, "select user_id from tmp_session", -1, &stmt, 0);
+    const char* err = sqlite3_mprintf("get_user_id.prepare - %s", sqlite3_errmsg(db));
+    sqlite3_result_error(context, err, -1);
+    sqlite3_free((void *)err);
+    return NULL;
+  }
+  // ...
+{% endhighlight %}
+
+<p>The <code>sqlite3_mprintf</code> allocates memory and returns a pointer. It is our responsibility to free it when it is no longer needed. We do this (free the memory) after calling <code>sqlite3_result_error</code> and passing the error message to it. But is this ok? How do we know that <code>sqlite3_result_error</code> is OK with us freeing memory we just passed to it? Unfortunately, we need to either examine the implementation or hope the documentation can help. The SQLite documentation is, thankfully, clear on the subject:</code>
+
+<blockquote>
+The <code>sqlite3_result_error()</code> and <code>sqlite3_result_error16()</code> routines make a private copy of the error message text before they return. Hence, the calling function can deallocate or modify the text after they return without harm
+</blockquote>
+
+<p>Therefore, our above code is correct. We need to allocate memory to create a dynamic error message (<code>sqlite3_mprintf</code> takes care of that) and we can free it after passing it to <code>sqlite3_result_error</code> because that function creates a copy (which it internally owns and is responsible for).</p>
+
+<h3>Conclusion</h3>
+<p>The SQLite API is intuitive and friendly. Memory management and data ownership work in a logical and predictable manner. Still, there's a significant burden to understand where memory is allocated and who is responsible for freeing it. The most important thing to remember is that a pointer returned from an <code>sqlite3_column_*</code> function is only valid until the next call to <code>sqlite3_step</code>, <code>sqlite3_reset</code> or <code>sqlite3_finalize</code>. If you want data to exist beyond this, you'll need to copy it.</p>
+
+<p>Furthermore, I believe the error handling pattern, while simple, is also common. And it showcases the importance of understanding who owns what memory (and the importance of good documentation). In this case, we had to know that <code>sqlite3_result_error</code> creates a copy of the supplied error to know that our error string could be freed.</p>
+
+<div id=pager>
+  <a class=prev href=/Writing-A-Custom-Sqlite-Function-Part-1/>Part 1</a>
+  <a class=next></a>
+</div>
