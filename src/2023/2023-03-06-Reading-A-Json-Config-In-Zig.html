@@ -1,0 +1,222 @@
+---
+layout: post
+date: 2023-03-06
+title: "Reading a JSON config in Zig"
+description: "Reading a JSON configuration file in Zig"
+tags: [zig]
+---
+
+<p>A while ago, I wrote a <a href="https://github.com/karlseguin/websocket.zig">Websocket Server implementation in Zig</a>. I did it just for fun, which means I didn't have to worry about the boilerplate things that go into creating an actual production application.</p>
+
+<p>More recently, I've jumped back into Zig for something a little more serious (but not really). As part of my learning journey, I wanted to add more polish. One of the things I wanted to do was add configuration options, which meant reading a <code>config.json</code> file.</p>
+
+<p>This seemingly simple task presented me with enough challenges that I thought it might be worth a blog post. The difficulties that I ran into are threefold. First, Zig's documentation is, generously, experimental. Second, Zig changes enough from version to version that whatever external documentation I did find, didn't work as-is (I'm writing this using 0.11-dev). Finally, decades of being coddled by garbage collectors have dulled by education.</p>
+
+<p>Here's the skeleton that we'll start with:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  const config = try readConfig("config.json");
+  std.debug.print("config.root: {s}\n", .{config.root});
+}
+
+fn readConfig(path: []const u8) !Config {
+  //TODO: all our logic here!
+
+  // since we're not using path yet, we need this to satisfy the compiler
+  _ = path;
+  return error.NotImplemented;
+}
+
+const Config = struct {
+  root: []const u8,
+};
+{% endhighlight %}
+
+<p>It would be a nice addition to be able to specify the path/filename of the configuration via a command line option, such as <code>--config config.json</code>, but Zig has no built-in flag parser, so we'd have fiddle around with <code>std.os.argv</code> or use a third party library.</p>
+
+<p>Also, as a very quick summary of Zig's error handling, the <code>try function(...)</code> syntax is like Go's <code>if err != nil { return err }</code>. Note that our <code>main</code> function returns <code>!void</code> and our <code>readConfig</code> returns <code>!Config</code>. This is called an error union type and it means our functions return either an error or the specified type. We can list an explicit error set (like an enum), in the form of <code>ErrorType!Type</code>, but you'll very commonly run across <code>!Type</code> which is shorthand for <code>anyerror!Type</code>.</p>
+
+<h3>Reading a File</h3>
+<p>The first thing we need to do is read the contents of our file (after which we can parse it). We could explore the available API, but it should be somewhat obvious that this is going to require allocating memory. One of Zig's key feature is explicit memory allocations. This means that any part of the standard library (and hopefully 3rd party libraries) that might allocate memory take a parameter of type <code>std.mem.Allocator</code>. In other words, instead of having a <code>readFile(path) ![]u8</code> function which would allocate memory internally using, say, <code>malloc</code>, we'd expect to find a <code>readFile(allocator, path) ![]u8</code> which would use the supplied <code>allocator</code>.</p>
+
+<p>Hopefully this will make more sense once we look at a concrete example. For now, we'll create an allocator in <code>main</code> and pass it to <code>readConfig</code>:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub fn main() !void {
+  // we have a few choices, but this is a safe default
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  const config = try readConfig(allocator, "config.json");
+  std.debug.print("config.root: {s}\n", .{config.root});
+}
+
+fn readConfig(allocator: Allocator, path: []const u8) !Config {
+  //TODO: all our logic here!
+
+  // since we're not using path yet, we need this to satisfy the compiler
+  _ = path;
+  _ = allocator;
+  return error.NotImplemented;
+}
+{% endhighlight %}
+
+<p>Now to actually read the file, there's a <code>Dir</code> type in the standard library that exposes a <code>readFile</code> and a <code>readFileAlloc</code> method. I find this API a little confusing (though I'm sure there's a reason for it), as these aren't static functions but members of the <code>Dir</code> type. So we need a <code>Dir</code>. Thankfully, we can easily get the <code>Dir</code> of the current working directory using <code>std.fs.cwd()</code>.</p>
+
+<p>If we use <code>readFileAlloc</code>, our code looks like:</p>
+
+{% highlight zig %}
+fn readConfig(allocator: Allocator, path: []const u8) !Config {
+  const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
+  defer allocator.free(data);
+  ...
+}
+{% endhighlight %}
+
+<p>The last parameter, 512, is the maximum size to allocate/read. Our config is very small, so we're limiting this to 512 bytes. Importantly, this function allocates and returns memory using our provided allocator. We're responsible for freeing this memory, which we'll do when the function returns, using <code>defer</code>.</p>
+
+<p>Alternatively, we could use <code>readFile</code>, which takes and fills in a <code>[]u8</code> instead of an allocator. Using this function, our code looks like:</p>
+
+{% highlight zig %}
+fn readConfig(allocator: Allocator, path: []const u8) !Config {
+  var buffer = try allocator.alloc(u8, 512);
+  const data = try std.fs.cwd().readFile(path, buffer);
+  defer allocator.free(buffer);
+  ...
+{% endhighlight %}
+
+<p>In the above code, <code>data</code> is a slice of <code>buffer</code> which is fitted to the size of file. In our specific case, it doesn't matter if you use <code>readFileAlloc</code> or <code>readFile</code>. I find the first one simpler. The benefit of the <code>readFile</code> though is the ability to re-use buffers.</p>
+
+<p>It turns out that reading a file is straightforward. However, if you're coming from a garbage collected mindset, it's hopefully apparent that [manual] memory management is a significant responsibility. If we did forget to <code>free</code> <code>data</code>, and we did write tests for <code>readConfig</code>, Zig's test runner would detect this and automatically fail. The output would look something like:
+
+
+{% highlight text %}
+zig build test
+Test [3/10] test.readConfig... [gpa] (err): memory address 0x1044f8000 leaked:
+/opt/zig/lib/std/array_list.zig:391:67: 0x10436fa5f in ensureTotalCapacityPrecise (test)
+    const new_memory = try self.allocator.alignedAlloc(T, alignment, new_capacity);
+                                                                  ^
+/opt/zig/lib/std/array_list.zig:367:51: 0x104366c2f in ensureTotalCapacity (test)
+    return self.ensureTotalCapacityPrecise(better_capacity);
+                                                  ^
+/opt/zig/lib/std/io/reader.zig:74:56: 0x104366607 in readAllArrayListAligned__anon_3814 (test)
+    try array_list.ensureTotalCapacity(math.min(max_append_size, 4096));
+                                                       ^
+/opt/zig/lib/std/fs/file.zig:959:46: 0x10436637b in readToEndAllocOptions__anon_3649 (test)
+    self.reader().readAllArrayListAligned(alignment, &array_list, max_bytes) catch |err| switch (err) {
+                                             ^
+/opt/zig/lib/std/fs.zig:2058:42: 0x104365d0f in readFileAllocOptions__anon_3466 (test)
+    return file.readToEndAllocOptions(allocator, max_bytes, stat_size, alignment, optional_sentinel);
+                                         ^
+/opt/zig/lib/std/fs.zig:2033:41: 0x104365a0f in readFileAlloc (test)
+    return self.readFileAllocOptions(allocator, file_path, max_bytes, null, @alignOf(u8), null);
+                                        ^
+/code/demo.zig:13:41: 0x10436745f in readConfig (test)
+    const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
+                                        ^
+/code/demo.zig:30:13: 0x104369547 in test.readConfig (test)
+    const config = try readConfig(allocator, "config.json");
+{% endhighlight %}
+
+
+<h3>Parsing JSON</h3>
+<p>We've read our file and have a string, which in Zig is a <code>[]u8</code>. Populating a <config>Config</config> struct is just two more lines:</p>
+
+{% highlight zig %}
+fn readConfig(allocator: Allocator, path: []const u8) !Config {
+  const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
+  defer allocator.free(data);
+
+  // these 2 new lines
+  var stream = std.json.TokenStream.init(data);
+
+  // 3rd parameter is a ParseOption. Zig can infer the type. The explicit version
+  // would be std.json.ParseOption{.allocator = allocator}
+  return try std.json.parse(Config, &stream, .{.allocator = allocator});
+}
+{% endhighlight %}
+
+<p>Having this as a single API that encapsulates the need for a "TokenStream" would be nice, but it works....</p>
+
+<p>Except....memory allocations again. Because our <code>Config</code> structure has a string field, we know that <code>std.json.parse</code> is going to have to allocate memory. That's why we pass our allocator to the 3rd parameter. If we had just passed in an empty option (<code>.{}</code>), we'd get a runtime error of type <code>AllocatorRequired</code>.<p>
+
+<p>Our code works, but it's leaking memory: <code>config.root</code> needs to be freed! Now in this case, that's pedantic, since we're only creating a single Config and it'll probably exist from start to end. But, for completeness, we can modify our <code>main</code>:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  // we have a few choices, but this is a safe default
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  const config = try readConfig(allocator, "config.json");
+  defer allocator.free(config.root);
+  ...
+}
+{% endhighlight %}
+
+<p>If we had more fields, we might want to create a <code>deinit</code> function in <code>Config</code> to better encapsulate the logic. Our main would be much cleaner if it could just call <code>defer config.deinit(allocator);</code>.</p>
+
+<p>The json package has a <code>parseFree</code> function which can free any memory that <code>parse</code> allocated. I'm sure that's useful in complex cases, but in our simple case, I'm not really a fan. If you wanted to, you'd use it as:</p>
+
+{% highlight zig %}
+std.json.parseFree(Config, config, .{.allocator = allocator});
+{% endhighlight %}
+
+<p>Importantly, we need to pass the same Type and ParseOptions (the 1st and 3rd parameter) to <code>parseFree</code> as we used when calling <code>parse</code>.</p>
+
+<h3>Arena Allocator</h3>
+<p>One option we could consider is an ArenaAllocator. An ArenaAllocator wraps another allocator (like the GeneralPurposeAllocator we've been using), and makes it so we free the entire arena in one shot instead of each individually allocated data. It's suitable for a number of cases, such as using an arena per http request. In our case, since we're talking about data that lives from the start of the program until the end, it probably not that useful. But, let's look at it anyways. We just need a slight change to our main:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+  defer arena.deinit();
+  const allocator = arena.allocator();
+
+  ...
+{% endhighlight %}
+
+<p>We still have an <code>allocator</code> of type <code>std.mem.Allocator</code>, so we can still pass this to <code>readConfig</code> and <code>readFileAlloc</code> and <code>json.parse</code>, but we no longer need to <code>free</code> the memory as it'll all be freed when we call <code>arena.deinit().</code></p>
+
+<p><strong>However</strong>, we should still keep all of our existing code as-is. In other words, in <code>readConfig</code> we should still call: <code>defer allocator.free(data);</code>. Why? Because <code>readConfig</code> only knows that it received a <code>std.mem.Allocator</code>, it doesn't know that it's an ArenaAllocator. Plus, in the future, things could change. Calling <code>free</code> on an ArenaAllocator is a noop. So we definitely want to leave it in.</p>
+
+<p>As a final tweak that I'll just mention, rather than having our ArenaAllocator wrap our GeneralPurposeAllocator, we could use a FixedBufferAllocator. A FixedBufferAllocator is initiated with <code>[]u8</code> and cannot grow beyond that. Thus it's both efficient and provides some protection against misuse.</p>
+
+<h3>Conclusion</h3>
+<p>The complete code to read a json config file into a config structure is:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  const config = try readConfig(allocator, "config.json");
+  std.debug.print("config.root: {s}\n", .{config.root});
+}
+
+fn readConfig(allocator: Allocator, path: []const u8) !Config {
+  // 512 is the maximum size to read, if your config is larger
+  // you should make this bigger.
+  const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
+  defer allocator.free(data);
+
+  var stream = std.json.TokenStream.init(data);
+  return try std.json.parse(Config, &stream, .{.allocator = allocator});
+}
+
+const Config = struct {
+  root: []const u8,
+};
+{% endhighlight %}
+
+<p>It would be nice to parse our JSON in a single line, and I don't get why <code>readFileAlloc</code> is a member of <code>Dir</code> (but I bet there's a reason). Overall though, it's pretty painless. Hopefully this helps someone :)</p>
