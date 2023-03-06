@@ -95,7 +95,6 @@ fn readConfig(allocator: Allocator, path: []const u8) !Config {
 
 <p>It turns out that reading a file is straightforward. However, if you're coming from a garbage collected mindset, it's hopefully apparent that [manual] memory management is a significant responsibility. If we did forget to <code>free</code> <code>data</code>, and we did write tests for <code>readConfig</code>, Zig's test runner would detect this and automatically fail. The output would look something like:
 
-
 {% highlight text %}
 zig build test
 Test [3/10] test.readConfig... [gpa] (err): memory address 0x1044f8000 leaked:
@@ -169,6 +168,41 @@ std.json.parseFree(Config, config, .{.allocator = allocator});
 {% endhighlight %}
 
 <p>Importantly, we need to pass the same Type and ParseOptions (the 1st and 3rd parameter) to <code>parseFree</code> as we used when calling <code>parse</code>.</p>
+
+<h3>Default Values</h3>
+
+<p>With the above code, <code>json.parse</code> will fail with an <code>error.MissingField</code> if our json file doesn't have a <code>root</code> field. But what if we wanted to make it optional with a default value? There are two options. The first is to specify the default value in our structure:</p>
+
+{% highlight zig %}
+const Config = struct {
+  root: []const u8 = "/tmp/demo",
+};
+{% endhighlight %}
+
+<p>This will work, but there's one major issue: we can no longer safely free <code>config.root</code>. If the root comes from json, then it's allocated with our allocator and can/must be freed with our allocator. But if it's a default, it's global data and trying to free it with our allocator will crash. In this case, using the previously mentioned <code>std.json.parseFree</code> is a viable solution as it will only free the memory that <code>parse</code> allocated.</p>
+
+<p>Another option is to use an Optional type and default to <code>null</code>:</p>
+
+{% highlight zig %}
+const Config = struct {
+  root: ?[]const u8 = null,
+};
+{% endhighlight %}
+
+<p>When we want to use the value, we can use <code>orelse</code> to set the default:</p>
+
+{% highlight zig %}
+lmdb.open(config.root orelse "/tmp/db")
+{% endhighlight %}
+
+<p>And we can conditionally free:</p>
+
+{% highlight zig %}
+if (config.root) |root| {
+  allocator.free(root);
+}
+{% endhighlight %}
+
 
 <h3>Arena Allocator</h3>
 <p>One option we could consider is an ArenaAllocator. An ArenaAllocator wraps another allocator (like the GeneralPurposeAllocator we've been using), and makes it so we free the entire arena in one shot instead of each individually allocated data. It's suitable for a number of cases, such as using an arena per http request. In our case, since we're talking about data that lives from the start of the program until the end, it probably not that useful. But, let's look at it anyways. We just need a slight change to our main:</p>
