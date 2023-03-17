@@ -1,0 +1,279 @@
+---
+layout: post
+date: 2023-03-17
+title: "Writing JSON to a custom output in Zig"
+description: "How to use the built-in json.stringify to write to a custom output/stream in Zig"
+tags: [zig]
+---
+<p>If you want to serialize (or "stringify") data to JSON using Zig, you'll probably take a peak at Zig's [beta] API documentation and find:</p>
+
+{% highlight zig %}
+pub fn stringify(
+  value: anytype,
+  options: StringifyOptions,
+  out_stream: anytype,
+) @TypeOf(out_stream).Error!void
+{% endhighlight %}
+
+<p>And not much else. It would be reasonable to guess that the first parameter is the value we want to serialize. The second parameter is probably options controlling how to serialize (e.g., indentation). The third parameter is a lot more opaque. Given that this function doesn't take an allocator, and by the fact that it returns a strange error union with <code>void</code>, we can safely say that it won't be returning a string / <code>[]const u8</code>. The name <code>out_stream</code> implies that the output will be written to this parameter, but what is it?!</p>
+
+<p>It helps (but only a little) to understand <code>anytype</code>, which is the type of our third parameter. This is commonly explained as duct typing that happens at compile-time. Despite the name, it usually isn't a type. It can be anything, so long as it can do what <code>stringify</code> needs from it. The obvious next question is: what does <code>stringify</code> need from our <code>out_stream</code>?</p>
+
+<h3>anytype</h3>
+<p>Before I disappoint you with the answer, let's look at a small <code>anytype</code> example:</p>
+
+{% highlight zig %}
+pub fn info(msg: []const u8, into: anytype) void {
+  into.writei64(std.time.timestamp());
+  into.writeByte(' ');
+  into.writeString(msg);
+}
+{% endhighlight %}
+
+
+<p>If we try to use the above <code>info</code> function with a <code>[100]u8</code> as the 2nd paremeter, like so:</p>
+
+{% highlight zig %}
+var out: [100]u8 = undefined;
+info("application started", out);
+{% endhighlight %}
+
+<p>We'll get an error:</p>
+
+{% highlight bash %}
+error: no field or member function named 'writei64' in '[100]u8'
+ into.writei64(std.time.timestamp());
+{% endhighlight %}
+
+<p>So what happens if we create a type that satisfies the requirements of our <code>info</code> function, starting with an <code>writei64</code> function?:</p>
+
+{% highlight zig %}
+const BufWriter = struct {
+  len: usize = 0,
+  buf: [100]u8 = undefined,
+
+  // just makes it so we can use Self inside of here instead of BufWriter
+  const Self = @This();
+
+  // todo: make sure we don't go over our buffer's size of 100!
+  fn writei64(self: *Self, value: i64) void {
+    self.len += std.fmt.formatIntBuf(self.buf[self.len..], value, 10, .lower, .{});
+  }
+};
+{% endhighlight %}
+
+<p>If we try to use our new <code>BufWriter</code>:</p>
+
+{% highlight zig %}
+var writer = BufWriter{};
+info("application started", &writer);
+std.debug.print("{s}", .{writer.string()});
+{% endhighlight %}
+
+<p>We no longer get an error about an missing <code>writei64</code> member. Instead, we get an error about a missig <code>writeByte</code> member. For completeness, let's add our missing functions:</p>
+
+{% highlight zig %}
+// todo: make sure we don't go over our buffer's size of 100!
+fn writeByte(self: *Self, b: u8) void {
+  self.buf[self.len] = b;
+  self.len += 1;
+}
+
+// todo: make sure we don't go over our buffer's size of 100!
+fn writeString(self: *Self, data: []const u8) void {
+  std.mem.copy(u8, self.buf[self.len..], data);
+  self.len += data.len;
+}
+
+// This isn't needed by the info function, but we called:
+//    std.debug.print("{s}", .{writer.string()});
+// in our little demo
+fn string(self: Self) []const u8 {
+  return self.buf[0..self.len];
+}
+{% endhighlight %}
+
+<p>And this is what <code>anytype</code> means. You can pass anything, as long as it implements the necessary functionality. This check is done at compile-time. What actually happen is that the compiler will see that <code>info</code> is called with <code>*BufWriter</code> and it'll create a specialized function, something like:</p>
+
+{% highlight zig %}
+// anytype -> *BufWriter
+pub fn info(msg: []const u8, into: *BufWriter) void {
+  into.writei64(std.time.timestamp());
+  into.writeByte(' ');
+  into.writeString(msg);
+}
+{% endhighlight %}
+
+<p>It'll generate a specialized function like this for every type that is used with the function.</p>
+
+<h3>json.stringify</h3>
+<p>We now know that the third parameter to <code>json.stringify</code> can be any value that satisfies its requirements. But what are those requirements? As far as I can tell, there's no easy way to tell except to examine the code or to implement the skeleton of a type that compiles.</p>
+
+<p>So, we start with an empty type, and try to compile:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  var buffer = Buffer{};
+  try std.json.stringify(.{.x = 123}, .{}, &buffer);
+}
+
+const Buffer = struct {
+  const Self = @This();
+};
+{% endhighlight %}
+
+<p>And try to compile:</p>
+
+{% highlight bash %}
+json.zig:2248:22: error: type '*demo.Buffer' has no members
+) @TypeOf(out_stream).Error!void {
+{% endhighlight %}
+
+<p>Well, that's both similar and a different than what we saw before. Clearly our <code>Writer</code> skeleton is missing something, but what's this <code>@TypeOf(out_stream).Error!void</code> all about? If you look back at <code>stringify's</code> signature, you'll note that the return type is <code>@TypeOf(out_stream).Error!void</code>. In other words, the return type is based on data that our type must provide. In this case, it isn't a function, but constant error type.</p>
+
+<p>I would have hoped that the following might work:</p>
+
+{% highlight zig %}
+const Buffer = struct {
+  const Self = @This();
+
+  pub const Error = std.mem.Allocator.Error;
+};
+{% endhighlight %}
+
+<p>But note that we're passing a <code>*Buffer</code> to <code>stringify</code> and this <code>Error</code> type is defined on <code>Buffer</code>. If we passed <code>buffer</code> instead of <code>&buffer</code>, we'd be able to move past this error, but in the long run, we know that our buffer will need to be mutable.</p>
+
+<p>As far as I can tell, the only way to solve this issue is to wrap our buffer:</p>
+
+{% highlight zig %}
+const Buffer = struct {
+  const Self = @This();
+
+  pub const Writer = struct {
+    buffer: *Buffer,
+    pub const Error = std.mem.Allocator.Error;
+  };
+
+  pub fn writer(self: *Self) Writer {
+    // .{...} is shorthand for Writer{...}
+    // The return type is inferred.
+    return .{.buffer = self};
+  }
+};
+{% endhighlight %}
+
+<p>Now we can pass our <code>Buffer.Write</code> to <code>stringify</code>:</p>
+
+{% highlight zig %}
+var buffer = Buffer{};
+try std.json.stringify(.{.x = 123}, .{}, buffer.writer());
+{% endhighlight %}
+
+<p>And move on to the next compilation error, which is that our <code>Buffer.Writer</code> is missing a <code>writeByte</code> function. If we create an empty <code>writeByte</code> and try again, we'll see that we're missing a <code>writeByteNTimes</code> function. Thankfully, if we do this one more time, we'll find the last function that we're missing: <code>writeAll</code>. Finally, our skeleton compiles:</p>
+
+{% highlight zig %}
+const Buffer = struct {
+  const Self = @This();
+
+  pub const Writer = struct {
+    buffer: *Buffer,
+    pub const Error = std.mem.Allocator.Error;
+
+    pub fn writeByte(self: Writer, b: u8) !void {
+      _ = self;
+      _ = b;
+    }
+
+    pub fn writeByteNTimes(self: Writer, b: u8, n: usize) !void {
+      _ = self;
+      _ = b;
+      _ = n;
+    }
+
+    pub fn writeAll(self: Writer, b: []const u8) !void {
+      _ = self;
+      _ = b;
+    }
+  };
+
+  pub fn writer(self: *Self) Writer {
+    return .{.buffer = self};
+  }
+};
+{% endhighlight %}
+
+<p>With this skeleton, we could serialize json out into or however we wanted. The implementation of this skeleton doesn't matter. Also, for common cases, like writing to a file, the standard library provides existing writers. Still, this all seems difficult to discover.</p>
+
+<h3>io.Writer</h3>
+<p>With our skeleton writer done, we could call it a day. But there's a more common approach to solve this particular problem.</p>
+
+<p>The above 3 functions, <code>writeByte</code>, <code>writeByteNTimes</code> and <code>writeAll</code> are all about writing data of various shape (a single byte, a single byte multiple types, multiple bytes) into wherever our writer wants it to go. These functions can be implemeted by wrapping a generic <code>writeAll</code> function. For example, <code>writeByte</code> could be implemented as:</p>
+
+{% highlight zig %}
+pub fn writeByte(self: Writer, b: u8) !void {
+  const array = [1]u8{byte};
+  return self.writeAll(&array);
+}
+{% endhighlight %}
+
+<p>We can take this a small step further and make <code>writeAll</code> itself generic wrapper around an even more focused <code>write(data: []const u8) !usize</code> function, like so:</p>
+
+{% highlight zig %}
+pub fn writeAll(self: Self, data: []const u8) !void {
+  var index: usize = 0;
+  while (index != data.len) {
+    index += try self.write(data[index..]);
+  }
+}
+{% endhighlight %}
+
+<p>When we take this approach, all of the wrapper functions are generic. It is only <code>write</code> that has any implementation-specific logic. This is what Zig's built-in <code>io.Writer</code> leverages. <code>io.Writer</code> provides all of the generic <code>writeXYZ</code> function. It just needs us to give it a <code>write</code> function to call. So instead of providing our own <code>Writer</code> we can provide an <code>io.Writer</code> which points to our specific <code>write</code> implementation:</p>
+
+{% highlight zig %}
+const Buffer = struct {
+  const Self = @This();
+
+  pub const Writer = std.io.Writer(*Self, error{OutOfMemory}, write);
+
+  pub fn writer(self: *Self) Writer {
+    return .{.context = self};
+  }
+
+  pub fn write(self: *Self, data: []const u8) !usize {
+    _ = self;
+
+    // just lie and tell io.Writer that we successfully wrote everything
+    return data.length;
+  }
+};
+{% endhighlight %}
+
+<p>This has the same usage as our fully customized approach:</p>
+
+{% highlight zig %}
+var buffer = Buffer{};
+try std.json.stringify(.{.x = 123}, .{}, buffer.writer());
+{% endhighlight %}
+
+<p>We still define our own <code>Buffer.Writer</code>, but this is a generic implementation of <code>std.io.Writer</code>. Whe provide the "context" type, the error type, and a our write function (which can be called anything you want, it doesn't have to be <code>write</code>). When we actually create an instance of our <code>Writer</code>, via the <code>writer</code> function, we set the "context" to the instance of our buffer. Seeing how <code>io.Writer</code> calls back into our code will probably make things clearer:</p>
+
+{% highlight zig %}
+// Self here is the io.Writer, or, more correctly, it's our
+// std.io.Writer(*Buffer, error{OutOfMemory}, write)
+pub fn write(self: Self, bytes: []const u8) Error!usize {
+  return writeFn(self.context, bytes);
+}
+{% endhighlight %}
+
+<p>The context could be anything. In our case, we just the Buffer itself. But if we have a lot of state to track when writing and if our Buffer is a busy object doing a lot of things, it wouldn't be crazy to create a write-specific object which gets created when <code>writer()</code> is called.</p>
+
+<h3>Conclusion</h3>
+<p>Using <code>io.Writer</code> requires a lot less code. It also makes our <code>Buffer.Writer</code> (and by extension our <code>Buffer</code>) usable in more places because <code>Buffer.Writer</code> implements more functions (for example, is also implements <code>writeIntNative</code>, because that's a function of <code>io.Writer</code> which wraps our <code>write</code> function.)</p>
+
+<p>The custom implementation has less overhead and could provide greater optimization opportunity (e.g. a custom implementation of <code>writeByte</code> can be a lot simpler).
+
+<p>If the <code>json.stringify</code> logic changes, our custom writer might fail (though this would be compile-time error). If we're using <code>io.Writer</code> chances are we wouldn't have to make any changes (unless <code>json.stringify</code> changes so much that even <code>io.Writer</code> is no longer a valid type).</p>
+
+<p>Use whichever you want.</p>
+
+<p>Again, none of this is particularly obvious. There's nothing in <code>std.json</code> that points to <code>io.Writer</code>. More generically, as far as I can tell, there's nothing that describes the contract. This makes me wonder about backwards compatibility as it seems like <code>json.stringify</code> isn't constrained in anyway. At any point, it can change what it requires from its third parameter.</p>
