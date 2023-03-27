@@ -1,0 +1,323 @@
+---
+layout: post
+date: 2023-03-27
+title: "Zig Quirks"
+description: "Little things you'll notice and need to learn when learning Zig"
+tags: [zig]
+---
+<p>I've been writing a lot of Zig lately (<a href="https://github.com/karlseguin/http.zig">http.zig</a>, <a href="https://github.com/karlseguin/log.zig">log.zig</a> and <a href="https://github.com/karlseguin/websocket.zig">websocket.zig</a>). I'm still in the early stages of learning, and often run into things that either surprise me or I don't understand. I figure I'm probably not the only one, so going through them might be useful.</p>
+
+<p>Some of these things are probably really obvious to a lot of people.</p>
+
+<h3>1 -  const Self = @This()</h3>
+<p>Once you start looking at Zig source code, it won't be long until you see:</p>
+
+{% highlight zig %}
+const Self = @This();
+{% endhighlight %}
+
+<p>First, functions that begin with <code>@</code>, like <code>@This()</code>, are builtin functions that are provided by the compiler. <code>@This()</code> returns the type of the inner most struct/enum/union. For example, the following prints "true":</p>
+
+{% highlight zig %}
+const Tea = struct {
+  const Self = @This();
+};
+
+pub fn main() !void {
+  // we'll talk about the .{} syntax later!
+  // prints "true"
+  std.debug.print("{}\n", .{Tea == Tea.Self});
+}
+{% endhighlight %}
+
+<p>This is often used in a method to specify the receiver:</p>
+
+{% highlight zig %}
+const Tea = struct {
+  const Self = @This();
+
+  fn drink(self: *Self) void {
+    ...
+  }
+};
+{% endhighlight %}
+
+<p>But this usage, while common, is superficial. We could just have easily written: <code>fn drink(self: *Tea) void {...}</code>.</p>
+
+<p>Where it's really useful is when we have an anonymous structure:</p>
+
+{% highlight zig %}
+fn beverage() type {
+  return struct {
+    full: bool = true,
+
+    const Self = @This();
+
+    fn drink(self: *Self) void {
+      self.full = false;
+    }
+  };
+}
+
+pub fn main() !void {
+  // beverage() returns a type, which we instantiate using {}
+  // "full" has a default value of "true", so we don't have to specify it here
+  var b = beverage(){};
+  std.debug.print("Full? {}\n", .{b.full});
+
+  b.drink();
+  std.debug.print("Full? {}\n", .{b.full});
+}
+{% endhighlight %}
+
+<p>This will print "true" followed by  "false".</p>
+
+<p>This example is contrived: why do we need an anonymous structure here? We don't, but this is the foundation for how Zig implements generics. For generics, we do something similar to the above (with the addition of passing a <code>type</code> to our function), and thus need <code>@This()</code> to reference the anonymous struct from within the anonymous struct.</p>
+
+<h3>2 -  Files are Structures</h3>
+<p>In Zig, files are structures.</p>
+
+<p>Say we wanted a <code>Tea</code> structure. We could create a file named "tea.zig" and add the following:</p>
+
+{% highlight zig %}
+// contents of tea.zig
+pub const Tea = struct{
+  full: bool = true,
+  const Self = @This();
+
+  pub fn drink(self: *Self) void {
+    self.full = false;
+  }
+};
+{% endhighlight %}
+
+<p>Callers could then use our <code>Tea</code> structure like so:</p>
+
+{% highlight zig %}
+const tea = @import("tea.zig");
+...
+
+var t = tea.Tea{};
+{% endhighlight %}
+
+<p>Or, with this superficial change:</p>
+
+{% highlight zig %}
+// if we're only using the Tea structure from tea.zig,
+// maybe we'd prefer to do it this way.
+const Tea = @import("tea.zig").Tea;
+...
+
+var t = Tea{};
+{% endhighlight %}
+
+<p>Since files are structures, our <code>Tea</code> is actually nested inside of the implicitly created file structure. As an alternative, the full contents of tea.zig could be:</p>
+
+{% highlight zig %}
+full: bool = true,
+const Self = @This();
+
+pub fn drink(self: *Self) void {
+  self.full = false;
+}
+{% endhighlight %}
+
+<p>Which we could import with:</p>
+
+{% highlight zig %}
+const Tea = @import("tea.zig");
+{% endhighlight %}
+
+<p>It looks weird, but if you imagine that the contents are wrapped in a <code>pub const default = struct { ... };</code> it makes sense. I was pretty confused the first time I saw one.</p>
+
+<h3>3 - Naming Convention</h3>
+<p>In general:</p>
+<ul>
+  <li>Functions are camelCase
+  <li>Types are PascalCase
+  <li>Variables are lowercase_with_underscores
+</ul>
+
+<p>The main exception to this rule are functions that returns types (most commonly used with generics). These are PascalCade.</p>
+
+<p>Normally, file names are lowercase_with_underscore. However, files that expose a type directly (like our last tea example), follow the type naming rule. Thus, the file should have been called "Tea.zig".</p>
+
+<p>It's easy to follow but is more colorful than what I'm used to.</p>
+
+<h3>4 - .{...}</h3>
+<p>You see <code>.{...}</code> throughout Zig code. This is an anonymous structure. The following compiles and prints "keemun"::</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  const tea = .{.type = "keemun"};
+  std.debug.print("{s}\n", .{tea.type});
+}
+{% endhighlight %}
+
+<p>The above example actually has 2 anonymous structures. The first is the anonymous structure that we've assigned to the <code>tea</code> variable. The other is the second parameter we passed to <code>print</code>: i.e <code>.{tea.type}</code>. This second version is a special type of anonymous structure with implicit field names. The field names are "0", "1", "2", ... In Zig, this is called a tuple. We can confirm the implicit field names by accessing them directly:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  const tea = .{"keemun", 10};
+  std.debug.print("Type: {s}, Quality: {d}\n", .{tea.@"0", tea.@"1"});
+}
+{% endhighlight %}
+
+<p>The <code>@"0"</code> syntax is necessary because <code>0</code> and <code>1</code> aren't standard identifiers (i.e. they don't begin with a letter), and thus must be quoted.</p>
+
+<p>Another place that you'll see the <code>.{...}</code> syntax is when the structure can be inferred. You'll commonly see this inside of a structure's <code>init</code> function:</p>
+
+{% highlight zig %}
+pub const Tea = struct {
+  full: bool,
+
+  const Self = @This();
+
+  fn init() Self {
+    // struct type is inferred by the return type of the function
+    return .{
+      .full = true,
+    };
+
+  }
+};
+{% endhighlight %}
+
+<p>You also see it as a function parameter:</p>
+
+{% highlight zig %}
+var server = httpz.Server().init(allocator, .{});
+{% endhighlight %}
+
+<p>The second parameter is an <code>httpz.Config</code>, which Zig can infer. Zig requires that every field be initialized, but <code>httpz.Config</code> has default values for each field, so an empty struct intializer is fine. You could also specify one or more fields explicitly:</p>
+
+{% highlight zig %}
+var server = httpz.Server().init(allocator, .{.port = 5040});
+{% endhighlight %}
+
+<p>Zig's <code>.{...}</code> is like telling the compiler "make this fit".</p>
+
+<h3>5 - .field = value</h3>
+<p>In the above code, we used <code>.full = true</code> and <code>.port = 5040</code>. This is how fields are set when a struct is initialized. I don't know if this was the intention, but it's actually consistent with how fields are generally set.</p>
+
+<p>I think the following example shows how the  <code>.field = value</code> syntax makes sense:</p>
+
+{% highlight zig %}
+var tea = Tea{.full = true};
+
+// hey, look, it's pretty similar!
+tea.full = false;
+{% endhighlight %}
+
+<h3>6 - Private Struct Fields</h3>
+<p>Speaking of structure fields, they're always public. Structures and functions are private by default with an option to make them public. But struct fields can only be public. The recommendation is to document allowed/proper usage of each field.</p>
+
+<p>I don't want to editorialize this post too much, but it's already caused the type of issues that you'd expect, and I think it'll only cause more difficulties in a 1.x world.</p>
+
+<h3>7 - const *tmp</h3>
+<p>Prior to Zig 0.10, the first line of this code:</p>
+
+{% highlight zig %}
+const r = std.rand.DefaultPrng.init(0).random();
+std.debug.print("{d}\n", .{r.uintAtMost(u16, 1000)});
+{% endhighlight %}
+
+<p>Would have been equivalent to:</p>
+
+{% highlight zig %}
+var t = std.rand.DefaultPrng.init(0);
+const r = t.random();
+{% endhighlight %}
+
+<p>From 0.10 onward however, the same line is now equivalent to:</p>
+
+{% highlight zig %}
+const t = std.rand.DefaultPrng.init(0);
+const r = t.random();
+{% endhighlight %}
+
+<p>Notice that <code>t</code> has gone from being a <code>var</code> to a <code>const</code>. The difference is important since <code>random()</code> requires a mutable value. In other words, our original code no longer works. You'll get an error saying that a <code>*rand.Xoshiro256</code> was expected, but a <code>*const rand.Xoshiro256</code> was found instead. To make it work, we need to split the original code and explicitly introduce the temporary variable as a <code>var</code>:</p>
+
+{% highlight zig %}
+var t = std.rand.DefaultPrng.init(0);
+const r = t.random();
+{% endhighlight %}
+
+<h3>8 - comptime_int</h3>
+<p>Zig has a powerful "comptime" feature that enables developers to do things at compile time. Logically, compile time execution can only operate on compile-time known data. To support this, Zig has a <code>comptime_int</code> and <code>comptime_float</code> type. Consider the following example:</p>
+
+{% highlight zig %}
+var x = 0;
+while (true) {
+  if (someCondition()) break;
+  x += 2;
+}
+{% endhighlight %}
+
+<p>This won't compile. <code>x's</code>  type is inferred as being a <code>comptime_int</code> since the value, <code>0</code>, is known at compile time. The problem here is that a <code>comptime_int</code> must be a <code>const</code>. Of course, if we change the declaration to <code>const x = 0;</code> we'll get a different error because we're trying to add 2 to a <code>const</code>.</p>
+
+<p>The solution is to explicitly define x as a <code>usize</code> (or some other runtime integer type, like <code>u64</code>):</p>
+
+{% highlight zig %}
+var x: usize = 0;
+{% endhighlight %}
+
+<h3>9 - std.testing.expectEqual</h3>
+<p>Possibly the first test that you write will result in a surprising compilation error. Consider this code:</p>
+
+{% highlight zig %}
+fn add(a: i64, b: i64) i64 {
+  return a + b;
+}
+
+test "add" {
+  try std.testing.expectEqual(5, add(2, 3));
+}
+{% endhighlight %}
+
+<p>If I showed you <code>expectEqual's</code> signature, can you tell why it doesn't compile:</p>
+
+{% highlight zig %}
+pub fn expectEqual(expected: anytype, actual: @TypeOf(expected)) !void
+{% endhighlight %}
+
+<p>It might be hard to tell, but the "actual" value is coerced to the same type as the "expected" value. Our above "add" test fails to compile because an <code>i64</code> cannot be coereced to a <code>comptime_int</code>.</p>
+
+<p>One simple solution is to swap our parameters:</p>
+{% highlight zig %}
+test "add" {
+  try std.testing.expectEqual(add(2, 3), 5);
+}
+{% endhighlight %}
+
+<p>And this <em>does</em> work, and a lot of people do this. The main downside is that the failure message has the expected and actual values mixed up.</p>
+
+<p>The correct way to solve this is to cast our expected value to the actual type, using the <code>@as()</code> builtin:</p>
+
+{% highlight zig %}
+test "add" {
+  try std.testing.expectEqual(@as(i64, 5), add(2, 3));
+}
+{% endhighlight %}
+
+<p>Now, you might think this is only a problem with <code>comptime_int</code>, but you'll run into this over and over for other types as well. This test also doesn't compile:</p>
+
+{% highlight zig %}
+test "hashmap: get" {
+  var m = std.StringHashMap([]const u8).init(std.testing.allocator);
+  defer m.deinit();
+  try std.testing.expectEqual(null, m.get("teg"));
+}
+{% endhighlight %}
+
+<p>The return value of <code>get</code> is <code>?[]const u8</code>, which is an optional (aka nullable) string. But our expected value is [correctly] null and a <code>?[]const u8</code> cannot be coerced to <code>null</code>. To fix this, we must coerce <code>null</code> to a <code>?[]const u8</code>:</p>
+
+{% highlight zig %}
+try std.testing.expectEqual(@as(?[]const u8, null), m.get("teg"));
+{% endhighlight %}
+
+
+<h3>10 - Shadowing</h3>
+<p>The Zig documentation states that "Identifiers are never allowed to "hide" other identifiers by using the same name." So if you have <code>const reader = @import("reader.zig");</code> at the top your file, you can't have anything else named <code>reader</code> in the same file.</p>
+
+<p>You'll have to be more creative when coming up with variables that don't shadow existing ones (which, for me, generally means using more obscure names).</p>
