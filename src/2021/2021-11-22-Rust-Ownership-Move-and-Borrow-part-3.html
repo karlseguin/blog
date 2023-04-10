@@ -29,7 +29,7 @@ fn main() {
 
 <p>This code fails to compile: <code>items.last()</code> borrows <code>items</code> but <code>items.push</code> tries to mutate <code>items</code>. The reason this isn't allowed is simple: mutations can render borrowed data invalid. The call to <code>push</code> might require new memory to be allocated resulting in previous aliased data (<code>item</code> in this case) to point to no-longer-valid memory. Rust doesn't allow this.</p>
 
-<p>I don't think it's correct to refer to data as mutable or not. It isn't data which is mutable, but rater then bindings (aka, variables). This is obvious when you take an immutable variable and move it to a mutable variable:</p>
+<p>I don't think it's correct to refer to data as mutable or not. It isn't data which is mutable, but rather the bindings (aka, variables). This is obvious when you take an immutable variable and move it to a mutable variable:</p>
 
 {% highlight rust %}
 fn main() {
