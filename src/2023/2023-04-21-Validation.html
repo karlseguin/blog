@@ -1,0 +1,66 @@
+---
+layout: post
+date: 2023-04-21
+title: "Validation"
+description: "The importance of, and patterns for, collecting validation errors and enforcing data integrity"
+tags: [learning, design]
+---
+
+<p>A good validation error is <strong>developer-friendly</strong>. This means that it is structured and, as a litmus test, should allow a consumer to create a localized error message. Consider:</p>
+
+{% highlight json %}
+[
+  {
+    "code": 1,
+    "field": "user.name",
+  },
+  {
+    "code": 14,
+    "field": "users.0.dob",
+    "data": {"min": 1900, "max": 2023}
+  }
+]
+{% endhighlight %}
+
+<p><code>code</code> tells us the type of error. In the above example <code>code 1</code> means the field is required and <code>code 14</code> means the provided number isn't within the allowed range. <code>data</code> is optional and depends on <code>code</code>. A <code>code 1</code> error never has a <code>data</code> field. A <code>code 14</code> error always has a <code>data</code> field with a <code>min</code> and a <code>max</code>.</p>
+
+<p><code>field</code> is the name of the invalid input. (I go back and forth on whether it should be a flattened string, <code>"users.7.name"</code> or an array, <code>["users", 7, "name"]</code>. I don't know)</p>
+
+<p>A good valiation error is <strong>user-safe</strong>. In addition to the <code>code</code>, <code>data</code> and <code>field</code>, a simple description should be included:</p>
+
+{% highlight json %}
+[
+  {
+    "code": 1,
+    "field": "user.name",
+    "error": "is required"
+  },
+  {
+    "code": 14,
+    "field": "users.0.dob",
+    "data": {"min": 1900, "max": 2023},
+    "error": "must be between 1900 and 2023"
+  }
+]
+{% endhighlight %}
+
+<p><em>user-safe</em> means it can be displayed to end-users as-is. It doesn't contain sensitive data or overly technical jargon. But its generic nature means that it isn't necessary "user-friendly". For example, instead of saying "you cannot have more than 10 tags per product", it likely uses a more generic "must have no more than 10 items".</p>
+
+<p>The description may be localized - it depends how/if the rest of the system handles localization. The description uses correct plural form: it's "1 character", not "1 characters".</p>
+
+<p>A good validation library supports custom validators with <strong>application-specific context.</strong>. The validation of "product.tags" might depend on a customer setting of the user making the request.</p>
+
+<p>A good validation library <strong>exposes the full input and current object being validated</strong>:</p>
+
+{% highlight json %}
+{
+  "columns": [
+    {"name": "status", "type": "int", "default": 0},
+    {"name": "name", "type": "text"}
+  ]
+}
+{% endhighlight %}
+
+<p>The validation of <code>columns.0.default</code> depends on the value of <code>columns.0.type</code>. The custom validator must be able to access <code>current["type"]</code>.</p>
+
+<p>Finally, <strong>validation (and data integrity) are first-class priorities of the whole system</strong>. Sure, for many cases, validation is about making sure the user's input is valid. It's a one and done at the start of an HTTP handler. But don't force it. Put validation where it makes the most sense, where there's the most context. Avoid using exceptions or error values to surface validation errors. Create a "validation context" that you pass around to collect validation errors.</p>
