@@ -4,7 +4,7 @@ permalink: "/atom.xml"
 ---
 <?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
-	<title>Karl Seguin</title>
+	<title>openmymind.net</title>
 	<subtitle>Programming blog exploring Elixir, Go, Testing, Design and Performance</subtitle>
 	<link href="https://www.openmymind.net/atom.xml" rel="self"/>
 	<link href="https://www.openmymind.net/"/>
@@ -13,13 +13,13 @@ permalink: "/atom.xml"
 	<author><name>Karl Seguin</name></author>
 	{%- set posts = collections.all | public | reverse %}
 	{%- for post in posts.slice(0, 20) %}
-	{% set absolutePostUrl %}{{ post.url | url | absoluteUrl(metadata.url) }}{% endset %}
+	{% set absolutePostUrl %}{{ post.url | absoluteUrl(metadata.url) }}{% endset %}
 	<entry>
 		<title>{{ post.data.title }}</title>
-		<link href="{{ absolutePostUrl }}"/>
+		<link href="https://www.openmymind.net{{ absolutePostUrl }}"/>
 		<updated>{{ post.date | dateToRfc3339 }}</updated>
 		<id>{{ absolutePostUrl }}</id>
-		<content type="html">{{ post.templateContent | htmlToAbsoluteUrls(absolutePostUrl) }}</content>
+		<content type="html">{{post.template.frontMatter.content | plainHighlight | htmlToAbsoluteUrls(absolutePostUrl) }}</content>
 	</entry>
 	{%- endfor %}
 </feed>

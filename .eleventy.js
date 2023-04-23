@@ -14,8 +14,14 @@ module.exports = function(config) {
 		return p;
 	});
 
+
 	config.addFilter('last_updated', function(posts) {
 		return posts[0].data.date;
+	});
+
+	config.addFilter('plainHighlight', function(value) {
+		return value.replace(/\s*{%\s*endhighlight\s*%}/g, '</pre>').
+			replace(/\s*{%\s*highlight\s*.*?%}/g, '<pre>');
 	});
 
 	config.addPassthroughCopy('assets');
