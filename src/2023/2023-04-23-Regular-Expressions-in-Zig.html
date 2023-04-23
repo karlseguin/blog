@@ -1,0 +1,133 @@
+---
+layout: post
+date: 2023-04-23
+title: "Regular Expressions in Zig"
+description: "Using posix's regex libary in Zig"
+tags: [zig]
+---
+
+<p>If you're looking to use regular expressions in Zig, you have limited choices. One option worth considering is using Posix's <code>regex.h</code>. For our purposes, we'll be using three functions of the library: <code>regcomp</code>, <code>regexec</code> and <code>regfree</code>. The first takes and initializes a <code>regex_t</code>, the second executes that <code>regex_t</code> against an input and the third frees resources internally allocated when compiling the pattern.</p>
+
+<p><strong>Important Notice:</strong> <code>regex.h</code> internally allocates memory, so there's no way to fully manage memory using a Zig allocator.</p>
+
+<p>Because of <a href="https://github.com/ziglang/zig/issues/1499">this known issue</a> Zig does not properly translate the <code>regex_t</code> structure, so we have to do a bit of work to initialize a value. We can use the <code>alignedAlloc</code> of an <code>Allocator</code> to create a <code>regex_t</code>, but we need to know the size and alignment.</p>
+
+<p>Create a <code>regez.h</code> file. I suggest placing it in <code>lib/regez/regez.h</code> of your project. For now, the content should be:</p>
+
+{% highlight c %}
+#include <regex.h>
+#include <stdalign.h>
+
+const size_t sizeof_regex_t = sizeof(regex_t);
+const size_t alignof_regex_t = alignof(regex_t);
+{% endhighlight %}
+
+<p>We've exposed the size and alignment of <code>regex_t</code>. This is all we need to create a <code>regex_t</code> with a Zig allocator:</p>
+
+{% highlight zig %}
+const re = @cImport(@cInclude("regez.h"));
+const REGEX_T_ALIGNOF = re.sizeof_regex_t;
+const REGEX_T_SIZEOF = re.alignof_regex_t;
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  var slice = try allocator.alignedAlloc(u8, REGEX_T_ALIGNOF, REGEX_T_SIZEOF);
+  const regex = @ptrCast(*re.regex_t, slice.ptr);
+  defer allocator.free(@ptrCast([*]u8, regex)[0..REGEX_T_SIZEOF]);
+  ...
+}
+{% endhighlight %}
+
+<p>We've only created (and freed) a <code>regex_t</code>, we haven't actually compiled a pattern yet, let alone made us of it. Before we do anything with our <code>regex</code>, you might be wondering how to run this Zig program with our custom <code>regez.h</code>.</p>
+
+<p>If you're writing a script and relying on <code>zig run FILE.zig</code>, you can use <code>zig run FILE.zig -Ilib/regez</code> to add the <code>lib/regez</code> directory to the include search path. (The <code>-I</code> argument also works with <code>zig test</code>.) If you're using <code>build.zig</code>, you'll add <code>step.addIncludePath("lib/regez");</code> where <code>step</code> is your test/exe step.</p>
+
+<p>With that out of the way, there are two things left to do. The first is to compile a pattern:</p>
+
+{% highlight zig %}
+if (re.regcomp(regex, "[ab]c", 0) != 0) {
+    // TODO: the pattern is invalid
+}
+defer re.regfree(regex); // IMPORTANT!!
+{% endhighlight %}
+
+<p>The <code>regcomp</code> function takes our <code>regex</code>, the pattern to compile (which has to be a null-terminated string) and bitwise options. Here we pass no options (<code>0</code>). The available options are:</p>
+
+<ul>
+  <li>REG_EXTENDED - Use Extended Regular Expressions.</li>
+  <li>REG_ICASE - Ignore case in match (see XBD Regular Expressions).</li>
+  <li>REG_NOSUB - Report only success/fail in regexec().</li>
+  <li>REG_NEWLINE - Change the handling of newline characters, as described in the text.</li>
+</ul>
+
+<p>So to enable extended regular expressions and ignore case, we'd do:</p>
+
+{% highlight zig %}
+if (re.regcomp(regex, "[ab]c", re.REG_EXTENDED | re.REG_ICASE) != 0) {
+    // TODO: the pattern is invalid
+}
+defer re.regfree(regex); // IMPORTANT!!
+{% endhighlight %}
+
+<p>Notice that we call <code>re.regfree</code>. This is on top of the deferred <code>allocator.free</code> that we already have. This is necessary because <code>regcomp</code> allocates its own memory.</p>
+
+<p>Finally, <code>regexec</code> lets us execute our regular expression against an input. We'll take this in two steps. The first thing we'll do is add a simple <code>isMatch</code> function in our <code>regez.h</code>. The full file now looks like:</p>
+
+{% highlight zig %}
+#include <regex.h>
+#include <stdbool.h>
+#include <stdalign.h>
+
+const size_t sizeof_regex_t = sizeof(regex_t);
+const size_t alignof_regex_t = alignof(regex_t);
+
+bool isMatch(regex_t *re, char const *input) {
+  regmatch_t pmatch[0];
+  return regexec(re, input, 0, pmatch, 0) == 0;
+}
+{% endhighlight %}
+
+<p>Which we can use from Zig with our <code>regex</code> variable and an input:</p>
+
+{% highlight zig %}
+// prints true
+std.debug.print("{any}\n", .{re.isMatch(regex, "ac")});
+
+// prints false
+std.debug.print("{any}\n", .{re.isMatch(regex, "nope")});
+{% endhighlight %}
+
+<p>We can see from the above that <code>regexec</code> takes a <code>regex_t *</code>, an (null-terminated) input and 3 additional parameters. The 3rd parameter is the length of the 4th parameter. The 4th paraemter is an array to store match information. The 5th and final parameter is a bitwise options (which we won't go over, as they're not generally useful).</p>
+
+<p>What if we care about match information? We need to leverage the 3rd and 4th parameters of <code>regexec</code>. The 4th parameter is an array of <code>regmatch_t</code>. This types has two fields: <code>rm_so</code> and <code>rm_se</code> which identifies the start offset and end offset of matches.</p>
+
+<p>Let's change our pattern and look at an example:</p>
+
+{% highlight zig %}
+if (re.regcomp(regex, "hello ?([[:alpha:]]*)", re.REG_EXTENDED | re.REG_ICASE) != 0) {
+  print("Invalid Regular Expression", .{});
+  return;
+}
+
+const input = "hello Teg!";
+var matches: [5]re.regmatch_t = undefined;
+if (re.regexec(regex, input, matches.len, &matches, 0) != 0) {
+  // TODO: no match
+}
+
+for (matches, 0..) |m, i| {
+  const start_offset = m.rm_so;
+  if (start_offset == -1) break;
+
+  const end_offset = m.rm_eo;
+
+  const match = input[@intCast(usize, start_offset)..@intCast(usize, end_offset)];
+  print("matches[{d}] = {s}\n", .{i, match});
+}
+{% endhighlight %}
+
+<p>Our pattern is <code>hello ?([[:alpha:]]*)</code> and our input is <code>hello Teg!</code>. Therefore, the above code will print: <code>matches[0] = hello Teg</code> followed by <code>matches[1] = Teg</code>. The full matching input is always at <code>matches[0]</code>. You can tell from the above code that when <code>rm_so == -1</code>, we have no more matches.</p>
+
+<p>That's pretty much all there is to it. It is worth going over the <a href="https://man7.org/linux/man-pages/man3/regcomp.3.html">regex.h man pages</a>. There's a 4th function, <code>regerror</code>, that will take the error code from <code>regcomp</code> and <code>regexec</code> and provide an error message.</p>
