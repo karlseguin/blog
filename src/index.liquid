@@ -29,6 +29,6 @@ main b {display: inline-block;font-weight: normal;font-size: 18px;color: #555;pa
 <main>
 {%- assign posts = collections.all | public | reverse -%}
 {%- for post in posts %}
-<a href={{ post.url }}>{{ post.data.title }}</a><b>{{ post.date | date: "%d %b %y" }}</b>
+<a href={{ post.url }}>{{ post.data.title }}</a><b>{{ post.date | date: "%b %d, %Y" }}</b>
 {%- endfor -%}
 </main>
