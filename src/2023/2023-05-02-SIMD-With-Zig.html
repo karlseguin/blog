@@ -17,7 +17,7 @@ fn indexOf(haystack: []const u8, needle: u8) ?usize {
 }
 {% endhighlight %}
 
-<p>Or use the <code>std.mem.indexOfSclar</code> function from the standard library, which is essentially the same implementation. This implementation loops through the input and checks each character, one by one, to see if it's equal to our target.</p>
+<p>Or use the <code>std.mem.indexOfScalar</code> function from the standard library, which is essentially the same implementation. This implementation loops through the input and checks each character, one by one, to see if it's equal to our target.</p>
 
 <p>With SIMD, we can leverage CPU instructions to check multiple characters of our input in parallel. Let's do that in Zig.</p>
 

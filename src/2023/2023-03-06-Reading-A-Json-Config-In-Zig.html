@@ -6,6 +6,8 @@ description: "Reading a JSON configuration file in Zig"
 tags: [zig]
 ---
 
+<p>This post was updated on May 18 2023, to reflect changes to std.json currently on the master branch. The original version of the code is commented out.</p>
+
 <p>A while ago, I wrote a <a href="https://github.com/karlseguin/websocket.zig">Websocket Server implementation in Zig</a>. I did it just for fun, which means I didn't have to worry about the boilerplate things that go into creating an actual production application.</p>
 
 <p>More recently, I've jumped back into Zig for something a little more serious (but not really). As part of my learning journey, I wanted to add more polish. One of the things I wanted to do was add configuration options, which meant reading a <code>config.json</code> file.</p>
@@ -132,18 +134,19 @@ fn readConfig(allocator: Allocator, path: []const u8) !Config {
   const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
   defer allocator.free(data);
 
-  // these 2 new lines
-  var stream = std.json.TokenStream.init(data);
+  // Use the following two line if you're using a version of Zig prior to
+  // 0.11.0-dev.3187+40e8c2243 (Mid May 2023)
+  // var stream = std.json.TokenStream.init(data);
+  // return try std.json.parse(Config, &stream, .{.allocator = allocator});
 
-  // 3rd parameter is a ParseOption. Zig can infer the type. The explicit version
-  // would be std.json.ParseOption{.allocator = allocator}
-  return try std.json.parse(Config, &stream, .{.allocator = allocator});
+  // This is the new Zig 0.11 API (available on master as of Mid May 2023)
+  // the last arguments are parse options, here we're using the defaults
+  return try std.json.parseFromSlice(Config, allocator, data, .{});
 }
 {% endhighlight %}
 
-<p>Having this as a single API that encapsulates the need for a "TokenStream" would be nice, but it works....</p>
 
-<p>Except....memory allocations again. Because our <code>Config</code> structure has a string field, we know that <code>std.json.parse</code> is going to have to allocate memory. That's why we pass our allocator to the 3rd parameter. If we had just passed in an empty option (<code>.{}</code>), we'd get a runtime error of type <code>AllocatorRequired</code>.<p>
+<p>This works, except....memory allocations again. Because our <code>Config</code> structure has a string field, we know that <code>std.json.parseFromSlice</code> is going to have to allocate memory. That's why we pass our allocator.<p>
 
 <p>Our code works, but it's leaking memory: <code>config.root</code> needs to be freed! Now in this case, that's pedantic, since we're only creating a single Config and it'll probably exist from start to end. But, for completeness, we can modify our <code>main</code>:</p>
 
@@ -164,10 +167,10 @@ pub fn main() !void {
 <p>The json package has a <code>parseFree</code> function which can free any memory that <code>parse</code> allocated. I'm sure that's useful in complex cases, but in our simple case, I'm not really a fan. If you wanted to, you'd use it as:</p>
 
 {% highlight zig %}
-std.json.parseFree(Config, config, .{.allocator = allocator});
+std.json.parseFree(Config, allocator, config);
 {% endhighlight %}
 
-<p>Importantly, we need to pass the same Type and ParseOptions (the 1st and 3rd parameter) to <code>parseFree</code> as we used when calling <code>parse</code>.</p>
+<p>The <code>allocator</code> we pass to parseFree has to be the same passed to <code>parseFromSlice</code>.</p>
 
 <h3>Default Values</h3>
 
@@ -243,9 +246,7 @@ fn readConfig(allocator: Allocator, path: []const u8) !Config {
   // you should make this bigger.
   const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
   defer allocator.free(data);
-
-  var stream = std.json.TokenStream.init(data);
-  return try std.json.parse(Config, &stream, .{.allocator = allocator});
+  return try std.json.parseFromSlice(Config, allocator, data, .{});
 }
 
 const Config = struct {
