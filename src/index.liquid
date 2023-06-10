@@ -22,9 +22,11 @@ main b {display: inline-block;font-weight: normal;font-size: 18px;color: #555;pa
 
 @media screen and (max-width: 800px) {
 	ul a{padding: 10px}
+	ul li:nth-last-child(2), ul li:last-of-type{display: none}
+
 }
 </style>
-<ul><li><a href=rss.xml>rss</a><li><a href=mailto:blog@karlseguin.com>contact</a><li><a href=https://twitter.com/karlseguin>twitter</a><li><a href=https://www.whysolazy.com>free apis</a><li><a href=https://links.openmymind.net>tech links</a></ul>
+<ul><li><a href=rss.xml>rss</a><li><a href=mailto:blog@karlseguin.com>contact</a><li><a href=https://twitter.com/karlseguin>twitter</a><li><a href=https://www.github.com/karlseguin>github</a><li><a href=https://www.whysolazy.com>free apis</a><li><a href=https://links.openmymind.net>tech links</a></ul>
 <main>
 {%- assign posts = collections.all | public | reverse -%}
 {%- for post in posts %}

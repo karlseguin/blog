@@ -1,0 +1,185 @@
+---
+layout: post
+date: 2023-06-10
+title: "Zig dangling pointers and segfaults"
+description: "A look at the common pitfal of dangling pointers and segfaults in Zig"
+tags: [zig]
+---
+
+<p>If you're coming to Zig from background of garbage collected languages, you have to be ready to stumble and be patient while you acclimatize to your new responsibilities of manually managing memory. It seems to me that the biggest challenge, and the one I still consistently run into, is referencing memory from a stack that is no longer valid. This is known as a dangling pointer.</p>
+
+<p>Consider this example, what's the output?:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  const warning1 = try powerLevel(9000);
+  const warning2 = try powerLevel(10);
+
+  std.debug.print("{s}\n", .{warning1});
+  std.debug.print("{s}\n", .{warning2});
+}
+
+fn powerLevel(over: i32) ![]u8 {
+  var buf: [20]u8 = undefined;
+  return std.fmt.bufPrint(&buf, "over {d}!!!", .{over});
+}
+{% endhighlight %}
+
+<p>I believe the output you get is undefined and might vary based on a number of factors, but I get:</p>
+
+{% highlight text %}
+over 10!!!��
+over 10!!!
+{% endhighlight %}
+
+<p>The issue with the above code, and the reason for the weird output, is that <code>std.fmt.bufPrint</code> writes the formatted output into the supplied <code>&buf</code>. <code>&buf</code> is the address of <code>buf</code> which exists on the stack of the <code>powerLevel</code> function. This is a specific memory address which is only valid while <code>powerLevel</code> is executing. However, both <code>warning1</code> and <code>warning2</code> reference this address and, crucially, do so after the function has returned. <code>warning1</code> and <code>warning2</code> essentially point to invalid addresses.</p>
+
+<p>But if the two variables in <code>main</code> point to an invalid address, why do we get a weird output for <code>warning1</code> and a correct output for <code>warning2</code>? Well, it's often said that a function's stack is destroyed or uninitialized when a function returns. That might be true in some cases. But in my case, what I'm seeing is that the stack memory isn't cleared between function calls, but it is re-initialized on each call. So, in this simple case, while <code>warning2</code> points to a technically invalid address, it was never cleared. <code>warning1</code> also points to the same address, which the second call to <code>powerLevel</code> re-initialized and then wrote the new value to. The reason that we're seeing <code>�</code> is because the slice points to the updated memory but maintains the original length - thus we're seeing into the re-initialized but unwritten <code>buf</code> space.</p>
+
+<p>The above is simple code. It's obvious that <code>buf</code> is scoped to the <code>powerLevel</code> function and that <code>std.fmt.bufPrint</code> returns a pointer to <code>buf's</code> address.</p>
+
+<p>Let's look at another more complex example. This is convoluted, but it encapsulates a scenario I commonly see people asking for help with:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  const res1 = Response.init(allocator);
+  defer res1.deinit();
+
+  const res2 = Response.init(allocator);
+  res2.deinit();
+
+  const warning = try std.fmt.allocPrint(res1.allocator, "over {d}\n", .{9000});
+  std.debug.print("{s}\n", .{warning});
+}
+
+const Response = struct {
+  arena: std.heap.ArenaAllocator,
+  allocator: Allocator,
+
+  fn init(parent_allocator: Allocator) Response {
+    var arena = std.heap.ArenaAllocator.init(parent_allocator);
+    const allocator = arena.allocator();
+    return Response{
+      .arena = arena,
+      .allocator = allocator,
+    };
+  }
+
+  fn deinit(self: Response) void {
+    self.arena.deinit();
+  }
+};
+{% endhighlight %}
+
+<p>If you were to run this code, you'd almost certainly see a segmentation fault (aka, segfault). We create a <code>Response</code> which involves creating an <code>ArenaAllocator</code> and from that, and <code>Allocator</code>. This allocator is then used to format our string. For the purpose of this example, we create a 2nd response and immediately free it. We need this for the same reason that <code>warning1</code> in our first example printed an almost ok value: we want to re-initialize the memory in our <code>init</code> function stack.</p>
+
+<p>At first glance, this code might look ok (it did to me the first and second time that I wrote it!). <code>res2</code> doesn't seem to be problematic, because non of our code is illegally referencing anything on the <code>Response.init</code> stack, right? Sure <code>arena</code> is created there, but we move that into the <code>Response</code>, which is then moved to <code>main</code>, which is where the <code>allocator</code> is used. What's the problem?</p>
+
+<p> The problem is that the <code>allocator</code> created via <code>const allocator = arena.allocator();</code> references the <code>arena</code> at the point of creation, which is to say, the arena that exists on <code>init's</code> stack. Sure we move <code>arena</code> to the <code>Response</code>, but any existing references to <code>arena's</code> stack address become invalid. Without a garbage collector, when we move an object, existing references to the old address become dangling.</p>
+
+<p>And this is where I keep stumbling: it isn't always obvious when this is happening. Maybe I'm missing something obvious, but I don't think there's a way to tell whether <code>arena.allocator()</code> returns something self-contained or returns something dependent on <code>arena</code>.
+
+<p>Knowing this specific issue, what's the solution?. Generally, the answer is that any <code>allocator</code> we create has to be tied to the <code>arena's</code> scope. In the above, rather than creating <code>allocator</code> in <code>init</code> and storing it in <code>Response</code>, we could narrow <code>allocator's</code> scope:</p>
+
+{% highlight zig %}
+const warning = try std.fmt.allocPrint(res1.arena.allocator(), "over {d}\n", .{9000});
+std.debug.print("{s}\n", .{warning});
+{% endhighlight %}
+
+<p>Or, a bit more broadly, scoped to the owner of the <code>arena</code>: <code>res1</code>:
+
+{% highlight zig %}
+const res1 = Response.init(gpa.allocator());
+defer res1.deinit();
+const aa = res.arena.allocator();
+...
+{% endhighlight %}
+
+<p>Finally, if <code>allocator</code> has to share the same (or smaller) scope as <code>arena</code>, we can give the <code>arena</code> a "global" scope by putting it on the heap:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  const res1 = try Response.init(allocator);
+  defer res1.deinit(allocator);
+
+  const res2 = try Response.init(allocator);
+  res2.deinit(allocator);
+
+  const warning = try std.fmt.allocPrint(res1.allocator, "over {d}\n", .{9000});
+  std.debug.print("{s}\n", .{warning});
+}
+
+const Response = struct {
+  // notice this is now a pointer
+  arena: *std.heap.ArenaAllocator,
+  allocator: Allocator,
+
+  // this can now return an error, since our heap allocation can fail
+  fn init(parent_allocator: Allocator) !Response {
+    // create the arena on the heap
+    var arena = try parent_allocator.create(std.heap.ArenaAllocator);
+    arena.* = std.heap.ArenaAllocator.init(parent_allocator);
+    const allocator = arena.allocator();
+
+    return Response{
+      .arena = arena,
+      .allocator = allocator,
+    };
+  }
+
+  fn deinit(self: Response, parent_allocator: Allocator) void {
+    self.arena.deinit();
+
+    // we need to delete the arena from the heap
+    parent_allocator.destroy(self.arena);
+  }
+};
+{% endhighlight %}
+
+<p>Here's one last example, which is, again, something I've run into more than once:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+const User = struct {
+  id: i32,
+};
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  var lookup = std.StringHashMap(User).init(allocator);
+
+  try lookup.put("u1", User{.id = 9001});
+
+  const entry = lookup.getPtr("u1").?;
+
+  // returns true/false if the item was removed
+  _ = lookup.remove("u1");
+
+  std.debug.print("{d}\n", .{entry.id});
+}
+{% endhighlight %}
+
+<p>Same question as before: what does this print? I get -1431655766. Why? Because <code>entry</code> points to memory that's made invalid by our call to <code>remove</code>. If you comment out the <code>remove</code>, it'll print the expected 9001.</p>
+
+<p>Like our first example, in isolation, this is pretty obvious. But consider something like the <a href="https://github.com/karlseguin/cache.zig">cache for Zig</a> that I wrote. The cache uses a <code>StringHashMap</code>, and, when full, items are removed. But what if Thread1 gets entry "u1" from the cache while Thread2 deletes entry "u1"? This is similar to our simplified example above, but less obvious - the issue is only surfaced when two threads interact in a specific manner. As above, part of the solution is to allocate the map value on the heap. So our HashMap now holds <code>*User</code> instead of <code>User</code>. This mean our HashMap doesn't "own" the value (the heap does). If we remove a user from the HashMap, it's only removing the reference to the heap-allocated value, which remains valid.</p>
+
+<p>(That, of course, introduces a new problem: when/how do we delete the heap value? But that's a different blog post, and the answer is: we add reference counting.)</p>
+
+<p>I'd be willing to bet that, if you're new to Zig and coming from a garbage-collected language, you've run into some variation of this. The good news is that it gets easier to spot with practice. The bad news is that, at least for me, I'm pretty sure I'll never be able to eliminate 100% of them from my code. Sometimes it just not obvious to me that I've referenced invalid memory and, more terrifyingly, it doesn't always manifest in a way that's guaranteed to be caught with a test.</p>
