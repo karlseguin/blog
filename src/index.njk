@@ -4,41 +4,40 @@
 <meta charset="utf-8">
 <meta name=referrer content=origin>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<meta name=description content="Programming blog exploring Elixir, Go, Testing, Design and Performance">
+<meta name=description content="Programming blog exploring Zig, Elixir, Go, Testing, Design and Performance">
 <link href=atom.xml rel=alternate type=application/atom+xml>
 
 <style>
 *{padding:0;margin:0;}
 body{font-family:sans-serif;font-size: 20px;display: flex; flex-direction: column;}
-a{text-decoration:none;color:#111;}
+a{text-decoration:none;color:#ff42af;}
 a:hover{text-decoration:underline;color:#000;}
 
 ul{font-size: 85%; list-style:none; display: flex; justify-content: right;}
-ul a{display: inline-block; color:#2c57d7;padding: 10px 20px}
+ul a{display: inline-block; padding: 10px 20px}
 
 main{margin: 0 auto;padding: 10px 0 0 20px;max-width: 1000px}
-main a {display: block;padding-bottom: 5px; color: #2c57d7}
+main a {display: block;padding-bottom: 5px;}
 main b {display: inline-block;font-weight: normal;font-size: 18px;color: #555;padding-bottom: 30px}
 
-.short {border: solid #ddd; border-width: 1px 0;margin-bottom: 20px; padding: 10px;}
-.short p {margin: 15px 0;line-height: 26px}
-.short > a {font-size: 18px;color: #555}
+.s {border-left: 10px solid #ddd; margin-bottom: 30px; padding: 0 10px; margin-left: -20px}
+.s p {margin: 15px 0;line-height: 26px}
+.s > a {font-size: 18px;color: #555}
 code { padding: 0 3px; border-radius: 4px; background: #fffce3; border: 1px solid #e9e9e5;}
 
 @media screen and (max-width: 800px) {
 	ul a{padding: 10px}
 }
 </style>
-<ul><li><a href=rss.xml>rss</a><li><a href=mailto:blog@karlseguin.com>contact</a><li><a href=https://twitter.com/karlseguin>twitter</a><li><a href=https://www.github.com/karlseguin>github</a></ul>
+<ul><li><a href=atom.xml>rss</a><li><a href=mailto:blog@karlseguin.com>contact</a><li><a href=https://twitter.com/karlseguin>twitter</a><li><a href=https://www.github.com/karlseguin>github</a></ul>
 <main>
 {%- set posts = all_posts(collections.all, aolium) -%}
 {%- for post in posts %}
 {%- if post.inline %}
-<div class=short>
+<div class=s>
 	<div>{{ post.content | safe }}</div>
 	<a href={{post.url}}>{{ post.date | post_date }}</a>
 </div>
-
 {%- else -%}
 <a href={{ post.url }}>{{ post.title }}</a><b>{{ post.date | post_date }}</b>
 {%- endif -%}
