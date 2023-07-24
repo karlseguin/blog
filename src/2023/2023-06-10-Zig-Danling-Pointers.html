@@ -79,15 +79,15 @@ const Response = struct {
 };
 {% endhighlight %}
 
-<p>If you were to run this code, you'd almost certainly see a segmentation fault (aka, segfault). We create a <code>Response</code> which involves creating an <code>ArenaAllocator</code> and from that, and <code>Allocator</code>. This allocator is then used to format our string. For the purpose of this example, we create a 2nd response and immediately free it. We need this for the same reason that <code>warning1</code> in our first example printed an almost ok value: we want to re-initialize the memory in our <code>init</code> function stack.</p>
+<p>If you were to run this code, you'd almost certainly see a segmentation fault (aka, segfault). We create a <code>Response</code> which involves creating an <code>ArenaAllocator</code> and from that, an <code>Allocator</code>. This allocator is then used to format our string. For the purpose of this example, we create a 2nd response and immediately free it. We need this for the same reason that <code>warning1</code> in our first example printed an almost ok value: we want to re-initialize the memory in our <code>init</code> function stack.</p>
 
-<p>At first glance, this code might look ok (it did to me the first and second time that I wrote it!). <code>res2</code> doesn't seem to be problematic, because non of our code is illegally referencing anything on the <code>Response.init</code> stack, right? Sure <code>arena</code> is created there, but we move that into the <code>Response</code>, which is then moved to <code>main</code>, which is where the <code>allocator</code> is used. What's the problem?</p>
+<p>At first glance, this code might look ok (it did to me the first and second time that I wrote it!). <code>res2</code> doesn't seem to be problematic, because none of our code is illegally referencing anything on the <code>Response.init</code> stack, right? Sure <code>arena</code> is created there, but we move that into the <code>Response</code>, which is then moved to <code>main</code>, which is where the <code>allocator</code> is used. What's the problem?</p>
 
 <p> The problem is that the <code>allocator</code> created via <code>const allocator = arena.allocator();</code> references the <code>arena</code> at the point of creation, which is to say, the arena that exists on <code>init's</code> stack. Sure we move <code>arena</code> to the <code>Response</code>, but any existing references to <code>arena's</code> stack address become invalid. Without a garbage collector, when we move an object, existing references to the old address become dangling.</p>
 
 <p>And this is where I keep stumbling: it isn't always obvious when this is happening. Maybe I'm missing something obvious, but I don't think there's a way to tell whether <code>arena.allocator()</code> returns something self-contained or returns something dependent on <code>arena</code>.
 
-<p>Knowing this specific issue, what's the solution?. Generally, the answer is that any <code>allocator</code> we create has to be tied to the <code>arena's</code> scope. In the above, rather than creating <code>allocator</code> in <code>init</code> and storing it in <code>Response</code>, we could narrow <code>allocator's</code> scope:</p>
+<p>Knowing this specific issue, what's the solution? Generally, the answer is that any <code>allocator</code> we create has to be tied to the <code>arena's</code> scope. In the above, rather than creating <code>allocator</code> in <code>init</code> and storing it in <code>Response</code>, we could narrow <code>allocator's</code> scope:</p>
 
 {% highlight zig %}
 const warning = try std.fmt.allocPrint(res1.arena.allocator(), "over {d}\n", .{9000});

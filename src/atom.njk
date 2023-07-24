@@ -2,24 +2,24 @@
 layout: null
 permalink: "/atom.xml"
 ---
+{%- set posts = feed_posts(collections.all, aolium) -%}
 <?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet href="/assets/feed.xsl" type="text/xsl"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
 	<title>openmymind.net</title>
-	<subtitle>Programming blog exploring Elixir, Go, Testing, Design and Performance</subtitle>
-	<link href="https://www.openmymind.net/atom.xml" rel="self"/>
+	<subtitle>Programming blog exploring Zig, Elixir, Go, Testing, Design and Performance</subtitle>
+"https://www.openmymind.net/atom.xml" rel="self"/>
 	<link href="https://www.openmymind.net/"/>
-	<updated>{{ collections.posts | getNewestCollectionItemDate | dateToRfc3339 }}</updated>
+	<updated>{{ posts | getNewestCollectionItemDate | dateToRfc3339 }}</updated>
 	<id>https://www.openmymind.net/</id>
 	<author><name>Karl Seguin</name></author>
-	{%- set posts = collections.all | public | reverse %}
-	{%- for post in posts.slice(0, 20) %}
-	{% set absolutePostUrl %}{{ post.url | absoluteUrl(metadata.url) }}{% endset %}
+	{%- for post in posts %}
 	<entry>
-		<title>{{ post.data.title }}</title>
-		<link href="https://www.openmymind.net{{ absolutePostUrl }}"/>
+		<title>{{ post.title }}</title>
+		<link href="{{post.url}}"/>
 		<updated>{{ post.date | dateToRfc3339 }}</updated>
-		<id>{{ absolutePostUrl }}</id>
-		<content type="html">{{post.template.frontMatter.content | plainHighlight | htmlToAbsoluteUrls(absolutePostUrl) }}</content>
+		<id>{{ post.url }}</id>
+		<content type="html">{{post.content | htmlToAbsoluteUrls(post.root) }}</content>
 	</entry>
 	{%- endfor %}
 </feed>
