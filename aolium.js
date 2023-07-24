@@ -11,7 +11,7 @@ function update(aolium) {
 	}
 
 	const merged = added.concat(existing);
-	fs.writeFileSync('src/_data/aolium.json', JSON.stringify(existing, null, 2))
+	fs.writeFileSync('src/_data/aolium.json', JSON.stringify(merged, null, 2))
 	console.log('1');
 }
 
