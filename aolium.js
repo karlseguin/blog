@@ -5,7 +5,7 @@ function update(aolium) {
 	let existing = JSON.parse(fs.readFileSync('src/_data/aolium.json'));
 	const added = merge(aolium, existing)
 
-	if (added == null) {
+	if (added.length === 0) {
 		console.log('0');
 		return;
 	}
@@ -24,7 +24,7 @@ function merge(aolium, existing) {
 
 	for (let i = 0; i < aolium.length; i++) {
 		const a = aolium[i];
-		if (known[a.id]) return null;
+		if (known[a.id]) return added;
 		added.push(a);
 	}
 	return added;
