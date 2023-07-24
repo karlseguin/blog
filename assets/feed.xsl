@@ -14,7 +14,6 @@
 				.entry .created {color: #555; font-size: 16px;margin-top: 10px}
 				.entry:last-of-type{border: 0}
 				.entry h3{margin-bottom:0}
-				.entry p{margin:4px 0;line-height: 26px}
 				pre{overflow: auto; width: 100%; border: 1px solid #e9e9e5; margin-bottom: 20px;padding:10px}
 			</style>
 		</head>
