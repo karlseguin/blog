@@ -5,12 +5,12 @@
 	"keywords": [],
 	"author": "",
 	"devDependencies": {
+		"dayjs": "^1.11.9",
+		"markdown-it": "^13.0.1",
 		"@11ty/eleventy": "^2.0.1",
 		"@11ty/eleventy-plugin-rss": "^1.2.0",
 		"@11ty/eleventy-plugin-syntaxhighlight": "^5.0.0"
 	},
 	"dependencies": {
-		"@11ty/eleventy-fetch": "^4.0.0",
-		"markdown-it": "^13.0.1"
 	}
 }
