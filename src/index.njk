@@ -16,15 +16,16 @@ a:hover{text-decoration:underline;color:#000;}
 ul{font-size: 85%; list-style:none; display: flex; justify-content: right;}
 ul a{display: inline-block; padding: 10px 20px}
 
-main{margin: 20px auto;padding: 10px 0 0 20px;max-width: 760px}
+main{margin: 5px auto;padding: 10px 0 0 20px;max-width: 760px}
 main > div {border-top: 1px solid #ddd; display: flex; margin: 5px 0}
 main > div:first-of-type{border: 0}
 main > div > a { flex: auto; padding: 15px 0;}
-main b {font-weight: normal;font-size: 16px;color: #666;margin-left: auto; align-self: center; white-space: nowrap}
+main > div > a > span {color: #666}
+main > div > b {font-weight: normal;font-size: 16px;color: #666;margin-left: auto; align-self: center; white-space: nowrap}
 div.s + div:not([class=s]) {border-top: 0}
 
 .s {border: 10px solid #eee;padding: 10px;margin:10px -20px}
-.s b {align-self: flex-start;}
+.s > b {align-self: flex-start;}
 main p {margin: 15px 0;line-height: 26px}
 code { padding: 0 3px; border-radius: 4px; background: #fffce3; border: 1px solid #e9e9e5;}
 
@@ -38,8 +39,10 @@ code { padding: 0 3px; border-radius: 4px; background: #fffce3; border: 1px soli
 <main>
 {%- set posts = all_posts(collections.all, aolium) -%}
 {%- for post in posts %}
-{%- if post.inline %}
+{%- if post.type == 'simple' %}
 <div class=s><div>{{ post.content | safe }}</div><b>{{ post.date | post_date }}</b></div>
+{%- elif post.type == 'link'  %}
+<div><a href={{ post.url }}>{{ post.title }}<span> - {{ post.url | extract_domain }}</span></a><b> {{ post.date | post_date }}</b></div>
 {%- else -%}
 <div><a href={{ post.url }}>{{ post.title }}</a><b>{{ post.date | post_date }}</b></div>
 {%- endif -%}

@@ -19,7 +19,7 @@ module.exports = function(config) {
 			let d = new Date(a.created * 1000);
 			d.setTime(d.getTime() + 28800000);
 			return {
-				inline: a.type == 'simple',
+				type: a.type,
 				url: a.type == 'link' ? a.text : a.web_url,
 				content: md.render(a.text),
 				date: d,
@@ -38,6 +38,7 @@ module.exports = function(config) {
 				date: p.date,
 				content: content,
 				root: ROOT_URL,
+				type: 'blog',
 				url: ROOT_URL + p.url,
 			};
 		});
@@ -55,7 +56,13 @@ module.exports = function(config) {
 	});
 
 	config.addFilter('post_date', function(d) {
-		return dayjs(d).format('MMM, DD YYYY');
+		return dayjs(d).format('MMM DD YY	YY');
+	});
+
+	config.addFilter('extract_domain', function(url) {
+		const u = new URL(url)
+		const host = u.hostname;
+		return host.startsWith('www.') ? host.substring(4) : host;
 	});
 
 	config.addPassthroughCopy('assets');
