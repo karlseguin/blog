@@ -16,11 +16,13 @@ module.exports = function(config) {
 	config.addNunjucksGlobal('all_posts', function(local, remote) {
 		const md = new Markdown();
 		remote = remote.map((a) => {
+			let d = new Date(a.created * 1000);
+			d.setTime(n.getTime() + 28800000);
 			return {
 				inline: a.type == 'simple',
 				url: a.type == 'link' ? a.text : a.web_url,
 				content: md.render(a.text),
-				date: new Date(a.created * 1000),
+				date: d,
 				title: a.title,
 				root: 'https://www.aolium.com/karlseguin',
 			};
