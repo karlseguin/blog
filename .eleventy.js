@@ -56,7 +56,7 @@ module.exports = function(config) {
 	});
 
 	config.addFilter('post_date', function(d) {
-		return dayjs(d).format('MMM DD YY	YY');
+		return dayjs(d).format('MMM DD YYYY');
 	});
 
 	config.addFilter('extract_domain', function(url) {
