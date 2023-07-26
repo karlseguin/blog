@@ -171,6 +171,8 @@ try std.json.stringify(.{.x = 123}, .{}, buffer.writer());
 
 <p>And move on to the next compilation error, which is that our <code>Buffer.Writer</code> is missing a <code>writeByte</code> function. If we create an empty <code>writeByte</code> and try again, we'll see that we're missing a <code>writeByteNTimes</code> function. Thankfully, if we do this one more time, we'll find the last function that we're missing: <code>writeAll</code>. Finally, our skeleton compiles:</p>
 
+<p><strong>update:</strong> around July 24th, 2023 the <code>stringify</code> logic was changed and now requires another function, <code>print</code>, which I've included in the snippet.</p>
+
 {% highlight zig %}
 const Buffer = struct {
   const Self = @This();
@@ -188,6 +190,11 @@ const Buffer = struct {
       _ = self;
       _ = b;
       _ = n;
+    }
+
+    // the requirement for print was added in 0.11 dev around July 24th
+    pub fn print(self: Writer, comptime format: []const u8, args: anytype) !void {
+      return std.fmt.format(self, format, args);
     }
 
     pub fn writeAll(self: Writer, b: []const u8) !void {

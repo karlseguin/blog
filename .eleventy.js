@@ -39,7 +39,7 @@ module.exports = function(config) {
 				content: content,
 				root: ROOT_URL,
 				type: 'blog',
-				url: ROOT_URL + p.url,
+				url: p.url,
 			};
 		});
 
