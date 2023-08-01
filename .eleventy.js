@@ -24,6 +24,7 @@ module.exports = function(config) {
 				content: md.render(a.text),
 				date: d,
 				title: a.title,
+				web_url: a.web_url,
 				root: 'https://www.aolium.com/karlseguin',
 			};
 		});

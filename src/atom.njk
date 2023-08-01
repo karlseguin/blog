@@ -19,7 +19,14 @@ permalink: "/atom.xml"
 		<link href="{{post.url}}"/>
 		<updated>{{ post.date | dateToRfc3339 }}</updated>
 		<id>{{ post.url }}</id>
-		<content type="html">{{post.content | htmlToAbsoluteUrls(post.root) }}</content>
+		<content type="html">
+			{%- if post.type == 'link' %}
+			&lt;a href="{{ post.url }}"&gt;{{ post.url }}&lt;/a&gt;
+			{%- else -%}
+			{{ post.content | htmlToAbsoluteUrls(post.root) }}
+			{%- endif -%}
+			&lt;p&gt;&lt;a href="{{ post.web_url }}#new_comment"&gt;Leave a comment&lt;/a&gt;&lt;/p&gt;
+		</content>
 	</entry>
 	{%- endfor %}
 </feed>
