@@ -3,20 +3,20 @@ date: 2023-09-08
 layout: learning_zig
 title: "Learning Zig - Pointers"
 tags: [zig]
-permalink: "/learning_zig/pointers"
+permalink: "/learning_zig/pointers/"
 ---
 
 <div class=pager>
-	<a class=prev href=style_guide>Style Guide</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href="stack_memory">Stack Memory</a>
+	<a class=prev href=/learning_zig/style_guide/>Style Guide</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/stack_memory/>Stack Memory</a>
 </div>
 
 <article>
 	<h1 tabindex=-1 id=pointers><a href=#pointers aria-hidden=true>Pointers</a></h1>
 	<p>Zig doesn't include a garbage collector. The burden of managing memory is on you, the developer. It's a big responsibility as it has a direct impact on the performance, stability and security of your application.</p>
 
-	<p>We'll begin by talking about pointers, which is an important topic to discuss in and of itself, but also as a start to seeing our program's data from a memory-oriented point of view. If you're already comfortable with pointers, heap allocations and dangling pointers, feel free to skip ahead a couple parts to <a href=heap_memory>heap memory & allocators</a>, which is more Zig-specific.</p>
+	<p>We'll begin by talking about pointers, which is an important topic to discuss in and of itself, but also to start training ourselves to see our program's data from a memory-oriented point of view. If you're already comfortable with pointers, heap allocations and dangling pointers, feel free to skip ahead a couple parts to <a href=/learning_zig/heap_memory/>heap memory & allocators</a>, which is more Zig-specific.</p>
 
 	<section>
 		<p>The following code creates a user with a <code>power</code> of 1, and then calls the <code>levelUp</code> function which increments the user's power by 1. Can you guess the output?</p>
@@ -66,11 +66,11 @@ user -> ------------ (id)
         ------------
 {% endhighlight %}
 
-		<p>There are two important things to note. The first is that our <code>user</code> variable points to the beginning of our structure. The second is that the fields are laid out sequentially. Remember that our <code>user</code> also has a type. That type's tells us that <code>id</code> is a 64 bit integer and <code>power</code> is a 32 bit integer. Armed with a reference to the start of our data and the type, the compiler can translate <code>user.power</code> to: <em>access a 32 bit integer located 64 bits from the beginning.</em> That's the power of variables, they reference memory and include all the type information necessary to understand and manipulate the memory in a meaningful way.</p>
+		<p>There are two important things to note. The first is that our <code>user</code> variable points to the beginning of our structure. The second is that the fields are laid out sequentially. Remember that our <code>user</code> also has a type. That type's tells us that <code>id</code> is a 64 bit integer and <code>power</code> is a 32 bit integer. Armed with a reference to the start of our data and the type, the compiler can translate <code>user.power</code> to: <em>access a 32 bit integer located 64 bits from the beginning.</em> That's the power of variables, they reference memory and include the type information necessary to understand and manipulate the memory in a meaningful way.</p>
 
 		<aside>By default, Zig doesn't make guarantees about the memory layout of structures. It could store fields in alphabetic order, by ascending size, or with gaps. It can do what it wants, so long as it's able to translate our code correctly. This freedom can enable certain optimizations. Only if we declare a <code>packed struct</code> will we get strong guarantees about the memory layout. Still, our visualization of <code>user</code> is reasonable and useful.</aside>
 
-		<p>Here's a slightly different visualization which includes memory addresses. The memory address of the start of this data, which is the memory address referenced by the <code>user</code> variable, which also happens to be where the value of the first field, <code>id</code>, is found is just a random number I created. However, given this initial address, all subsequent addresses have a known relative address. Since <code>id</code> is a 64 bit integer, it takes 8 bytes of memory. Therefore, <code>power</code> has to be at $start_address + 8:</p>
+		<p>Here's a slightly different visualization which includes memory addresses. The memory address of the start of this data, which is the memory address referenced by the <code>user</code> variable, which also happens to be where the value of <code>id</code>, our first field, is found is just a random address I came up with. However, given this initial address, all subsequent addresses have a known relative address. Since <code>id</code> is a 64 bit integer, it takes 8 bytes of memory. Therefore, <code>power</code> has to be at $start_address + 8:</p>
 
 {% highlight text %}
 user ->   ------------  (id: 1043368d0)
@@ -188,7 +188,7 @@ pub const User = struct {
 
 		<p>This begs the question: how do we call a method with a pointer receiver? Maybe we have to do something like: <code>&user.levelUp()</code>? Actually, you just call it normally, i.e. <code>user.levelUp()</code>. Zig knows that the method expects a pointer and pass the value correctly (passes it by reference).</p>
 
-		<p>I chose to use a function only for the purpose of being explicit in the lesson.</p>
+		<p>I initially chose a function only to show the address of user being passed.</p>
 
 	<section>
 		<h2 tabindex=-1 id=const_paremeters><a href=#const_paremeters aria-hidden=true>Constant Function Parameters</a></h2>
@@ -243,7 +243,7 @@ fn levelUp(user: *User) void {
 
 		<p>If <code>user</code> is a <code>*User</code>, then what is <code>&user</code>? It's a <code>**User</code>, or a <em>pointer to a pointer to a <code>User</code></em>. I can do this until one of us runs out of memory!</p>
 
-		<p>There are use-cases for multiple levels of indirection, but is isn't anything we need right now. The purpose of this section is to show that pointers aren't special, they're just a value, which is an address, and a type.</p>
+		<p>There <em>are</em> use-cases for multiple levels of indirection, but is isn't anything we need right now. The purpose of this section is to show that pointers aren't special, they're just a value, which is an address, and a type.</p>
 	</section>
 
 	<section>
@@ -432,12 +432,12 @@ pub const User = struct {
 	</section>
 
 	<section>
-		<p>A lot of developers struggle with pointers, there can be something elusive about them. They don't feel concrete like an integer, or string or <code>User</code>. None of this has to be crystal clear for you to move forward. But it is worth mastering, and not just for Zig. These details might be hidden in languages like Ruby, Python and JavaScript, and to a lesser extent C#, Java and Go, but they're still there, impacting how you write code and how that code runs. So take your time, play with examples, add debug print statements to look at variables and their address things will become more clear.</p>
+		<p>A lot of developers struggle with pointers, there can be something elusive about them. They don't feel concrete like an integer, or string or <code>User</code>. None of this has to be crystal clear for you to move forward. But it is worth mastering, and not just for Zig. These details might be hidden in languages like Ruby, Python and JavaScript, and to a lesser extent C#, Java and Go, but they're still there, impacting how you write code and how that code runs. So take your time, play with examples, add debug print statements to look at variables and their address. The more you explore, the clearer it will get.</p>
 	</section>
 </article>
 
 <div class=pager>
-	<a class=prev href=style_guide>Style Guide</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href="stack_memory">Stack Memory</a>
+	<a class=prev href=/learning_zig/style_guide/>Style Guide</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/stack_memory/>Stack Memory</a>
 </div>

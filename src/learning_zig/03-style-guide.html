@@ -3,18 +3,18 @@ date: 2023-09-08
 layout: learning_zig
 title: "Learning Zig - Style Guide"
 tags: [zig]
-permalink: "/learning_zig/style_guide"
+permalink: "/learning_zig/style_guide/"
 ---
 
 <div class=pager>
-	<a class=prev href="language_overview_2">Language Overview - Part 2</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href="pointers">Pointers</a>
+	<a class=prev href="/learning_zig/language_overview_2/">Language Overview - Part 2</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href="/learning_zig/pointers/">Pointers</a>
 </div>
 
 <article>
 	<h1 tabindex=-1 id=styleguide><a href=#styleguide aria-hidden=true>Style Guide</a></h1>
-	<p>In this short part, we'll cover two coding rules enforced by the compiler as well as Zig's naming convention.</p>
+	<p>In this short part, we'll cover two coding rules enforced by the compiler as well as the standard library's naming convention.</p>
 
 	<section>
 		<h2 tabindex=-1 id=unused_variables><a href=#unused_variables aria-hidden=true>Unused Variables</a></h2>
@@ -77,12 +77,12 @@ fn read(stream: std.net.Stream) ![]const u8 {
 }
 {% endhighlight %}
 
-		<p>Our <code>read</code> variable shadows the name of our function. I am not a fan of this rule as it generally leads developers to use short meaningless names. For example, to get this code to compile, I'd change <code>read</code> to <code>n</code>. This is a case where, in my opinion, developers are in a much better position to pick the most readable option.</p>
+		<p>Our <code>read</code> variable shadows our function name. I am not a fan of this rule as it generally leads developers to use short meaningless names. For example, to get this code to compile, I'd change <code>read</code> to <code>n</code>. This is a case where, in my opinion, developers are in a much better position to pick the most readable option.</p>
 	</section>
 
 	<section>
 		<h2 tabindex=-1 id=naming><a href=#naming aria-hidden=true>Naming Convention</a></h2>
-		<p>Besides rules enforced by the compiler, you are, of course, free to follow whatever naming convention you prefer. But it does help to understand Zig's own naming convention since much of the code you'll interact with, from the standard library to third party libraries, make us of it.</p>
+		<p>Besides rules enforced by the compiler, you are, of course, free to follow whatever naming convention you prefer. But it does help to understand Zig's own naming convention since much of the code you'll interact with, from the standard library to third party libraries, makes us of it.</p>
 
 		<p>Zig source code is indented with 4 spaces. I personally use a tab which is objectively better for accessibility.</p>
 
@@ -101,12 +101,12 @@ std.debug.print("{any}\n", .{T});
 	</section>
 
 	<section>
-		<p>The <code>zig</code> binary does have a <code>fmt</code> command which, given a file (or a directory), will format the file based on Zig's own style guide. It doesn't cover everything though, for example it will adjust identation and brace positions, but won't change identifier casing.</p>
+		<p>The <code>zig</code> executable does have a <code>fmt</code> command which, given a file or a directory, will format the file based on Zig's own style guide. It doesn't cover everything though, for example it will adjust identation and brace positions, but won't change identifier casing.</p>
 	</section>
 </article>
 
 <div class=pager>
-	<a class=prev href="language_overview_2">Language Overview - Part 2</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href="pointers">Pointers</a>
+	<a class=prev href="/learning_zig/language_overview_2/">Language Overview - Part 2</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href="/learning_zig/pointers/">Pointers</a>
 </div>

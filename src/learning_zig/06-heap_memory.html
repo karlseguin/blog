@@ -3,13 +3,13 @@ date: 2023-09-08
 layout: learning_zig
 title: "Learning Zig - Heap Memory & Allocators"
 tags: [zig]
-permalink: "/learning_zig/heap_memory"
+permalink: "/learning_zig/heap_memory/"
 ---
 
 <div class=pager>
-	<a class=prev href="stack_memory">Stack Memory</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href=generics>Generics</a>
+	<a class=prev href=/learning_zig/stack_memory/>Stack Memory</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/generics/>Generics</a>
 </div>
 
 <article>
@@ -58,12 +58,12 @@ fn getRandomCount() u8 {
 
 		<p>We'll cover Zig allocators shortly, for now know that the <code>allocator</code> is a <code>std.mem.Allocator</code>. We're using two of its methods: <code>alloc</code> and <code>free</code>. Because we're calling <code>allocator.alloc</code> with a <code>try</code>, we know that it can fail. Currently, the only possible error is <code>OutOfMemory</code>. Its parameters mostly tell us how it works: it wants a type (<code>T</code>) as well as a count and, on success, returns a slice of <code>[]T</code>. This allocation happens at runtime - it has to, our count is only known at runtime.</p>
 
-		<p>As a general rule, every <code>alloc</code> will have a corresponding <code>free</code>. Where <code>alloc</code> allocates memory, <code>free</code> releases it. Don't let this simple code limit your imagination. This <code>try alloc</code> + <code>defer free</code> pattern <em>is</em> common, and for good reason: freeing close to where we allocate is relatively foolproof. But equally common is allocating in one place of our code while freeing in another. As we said before, the heap has no builtin life cycle management. You can allocate memory in an HTTP handler and free it in a background thread, two completely separate parts of the code.</p>
+		<p>As a general rule, every <code>alloc</code> will have a corresponding <code>free</code>. Where <code>alloc</code> allocates memory, <code>free</code> releases it. Don't let this simple code limit your imagination. This <code>try alloc</code> + <code>defer free</code> pattern <em>is</em> common, and for good reason: freeing close to where we allocate is relatively foolproof. But equally common is allocating in one place while freeing in another. As we said before, the heap has no builtin life cycle management. You can allocate memory in an HTTP handler and free it in a background thread, two completely separate parts of the code.</p>
 	</section>
 
 	<section>
 		<h2 tabindex=-1 id=defer><a href=#defer aria-hidden=true>defer & errdefer</a></h2>
-		<p>As a small detour, the above code introduced a new language feature: <code>defer</code> which executes the given code, or block, on scope exit. "Scope exit" includes reaching the end of the scope or returning from the scope. <code>defer</code> isn't strictly related to allocators or memory management; you can use it to execute any code. But the above usage is pretty typical.</p>
+		<p>As a small detour, the above code introduced a new language feature: <code>defer</code> which executes the given code, or block, on scope exit. "Scope exit" includes reaching the end of the scope or returning from the scope. <code>defer</code> isn't strictly related to allocators or memory management; you can use it to execute any code. But the above usage is common.</p>
 
 		<p>Zig's defer is similar to Go's, with one major difference. In Zig, the defer will be run at the end of its containing scope. In Go, defer is run at the end of the containing function. Zig's approach is probably less surprising, unless you're a Go developer.</p>
 
@@ -102,7 +102,7 @@ pub const Game = struct {
 };
 {% endhighlight %}
 
-		<p>Hopefully this highlights two things. First, the usefulness of <code>errdefer</code>. Under normal conditions, <code>players</code> is allocated in <code>init</code> and released in <code>deinit</code>. But there's an edge case where the initialization of <code>history</code> fails. In this case, we not only want to return the error to the caller, which <code>try</code> will do, but we also need to undo the allocation of <code>players</code>.</p>
+		<p>Hopefully this highlights two things. First, the usefulness of <code>errdefer</code>. Under normal conditions, <code>players</code> is allocated in <code>init</code> and released in <code>deinit</code>. But there's an edge case when the initialization of <code>history</code> fails. In this case and only this case we need to undo the allocation of <code>players</code>.</p>
 
 		<p>The second noteworthy aspect of this code is that the life cycle of our two dynamically allocated slices, <code>players</code> and <code>history</code>, is based on our application logic. There's no rule that dictates when <code>deinit</code> has to be called or who has to call it. This is good, because it gives us arbitrary lifetimes, but bad because we can mess it up by never calling <code>deinit</code> or calling it more than once.</p>
 
@@ -133,7 +133,7 @@ pub fn main() !void {
 
 		<p>The last line of this code is prophetic, it <em>won't</em> be printed. This is because we <code>free</code> the same memory twice. This is known as a double-free and is not valid. This might seem simple enough to avoid, but in large projects with complex lifetimes, it can be hard to track down.</p>
 
-		<p>The second rule is that you can't free memory you don't have a reference to. That might sound obvious, but it isn't always clear who "owns" the memory and is responsible for freeing it. The following creates a new lowercase string:</p>
+		<p>The second rule is that you can't free memory you don't have a reference to. That might sound obvious, but it isn't always clear who is responsible for freeing it. The following creates a new lowercase string:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -254,9 +254,9 @@ defer allocator.free(say);
 
 		<p>The other form is when an allocator is passed to <code>init</code>, and then used internally by the object. We saw this above with our <code>Game</code> structure. This is less explicit, since you've given the object an allocator to use, but you don't know which method calls will actually allocate. This approach is more practical for long-lived objects.</p>
 
-		<p>The advantage of injecting the allocator isn't just explicitness, it's also flexibility. <code>std.mem.Allocator</code> is an interface which provides the <code>alloc</code>, <code>free</code>, <code>create</code> and <code>destroy</code> functions, along with a few others. So far we've only see the <code>std.heap.GeneralPurposeAllocator</code>, but other implementations are available in the standard library or as third party libraries</p>
+		<p>The advantage of injecting the allocator isn't just explicitness, it's also flexibility. <code>std.mem.Allocator</code> is an interface which provides the <code>alloc</code>, <code>free</code>, <code>create</code> and <code>destroy</code> functions, along with a few others. So far we've only see the <code>std.heap.GeneralPurposeAllocator</code>, but other implementations are available in the standard library or as third party libraries.</p>
 
-		<aside>Zig doesn't have nice syntactical sugar for creating interface. One pattern for interface-life behaviour are tagged unions, though that's relatively constrained compared to true interfaces. Other patterns have emerged and are used throughout the standard library, such as with <code>std.mem.Allocator</code>. This guide does not explore the interface patterns.</aside>
+		<aside>Zig doesn't have nice syntactical sugar for creating interface. One pattern for interface-life behaviour are tagged unions, though that's relatively constrained compared to true interfaces. Other patterns have emerged and are used throughout the standard library, such as with <code>std.mem.Allocator</code>. This guide does not explore these interface patterns.</aside>
 
 		<p>If you're building a library, then it's best to accept an <code>std.mem.Allocator</code> and let users of your library decide which allocator implementation to use. Otherwise, you'll need to chose the right allocator, and, as we'll see, these are not mutually exclusive. There can be good reason to create different allocators within your program.</p>
 	</section>
@@ -513,13 +513,13 @@ defer list.deinit();
 
 			<p>We don't need to change <code>IntList</code> since it only deals with an <code>std.mem.Allocator</code>. And if <code>IntList</code> <em>did</em> internally create its own arena, that would work too. There's no reason you can't create an arena within an arena.</p>
 
-			<p>As a last quick example, the HTTP server I mentioned above exposes an arena allocator on the <code>Response</code>. Once the response is sent, the arena is cleared. The predictable lifetime of the arena (from request start to request end), makes it an efficient option. Efficient in terms of performance and easy of use.</p>
+			<p>As a last quick example, the HTTP server I mentioned above exposes an arena allocator on the <code>Response</code>. Once the response is sent, the arena is cleared. The predictable lifetime of the arena (from request start to request end), makes it an efficient option. Efficient in terms of performance and ease of use.</p>
 		</section>
 
 	<section>
 		<h2 tabindex=-1 id=fixedbuffer><a href=#fixedbuffer aria-hidden=true>FixedBufferAllocator</a></h2>
 
-		<p>The last allocator that we'll look at is the <code>std.heap.FixedBufferAllocator</code> which allocates memory from a buffer (i.e. <code>[]u8</code>) that we provide. This allocator has two major benefits. First, since all the memory it could possibly use is created upfront, it's fast. Second, it naturally limits how much memory can be allocated. This hard limit can also be seen as a drawback. Another drawbacks is that <code>free</code> and <code>destroy</code> will only work on the last allocated/created item (think of a stack). Freeing the non-last allocation is safe to call, but won't free anything.</p>
+		<p>The last allocator that we'll look at is the <code>std.heap.FixedBufferAllocator</code> which allocates memory from a buffer (i.e. <code>[]u8</code>) that we provide. This allocator has two major benefits. First, since all the memory it could possibly use is created upfront, it's fast. Second, it naturally limits how much memory can be allocated. This hard limit can also be seen as a drawback. Another drawbacks is that <code>free</code> and <code>destroy</code> will only work on the last allocated/created item (think of a stack). Freeing the non-last allocation is safe to call, but won't do anything.</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -551,7 +551,7 @@ pub fn main() !void {
 }
 {% endhighlight %}
 
-		<p>But change our <code>buf</code> to be a <code>[120]u8</code> and you'll get an OutOfMemory error.</p>
+		<p>But change our <code>buf</code> to be a <code>[120]u8</code> and you'll get an <code>OutOfMemory</code> error.</p>
 
 		<p>A common pattern with FixedBufferAllocators, and to a lesser degree ArenaAllocators, is to <code>reset</code> them and reuse them. This frees all previous allocations and allows the allocator to be reused.</p>
 	</section>
@@ -561,7 +561,7 @@ pub fn main() !void {
 
 		<p>More generally, the power and associated responsibilities of heap allocations are hopefully apparent. The ability to allocate arbitrary sized memory with an arbitrary lifetime is essential to most programs.</p>
 
-		<p>However, because of the complexity that comes with dynamic memory, you should keep an eye out for alternatives. For example, above we used <code>std.fmt.allocPrint</code> but the standard library also has an <code>std.fmt.bufPrint</code>. The latter takes a buffer instead of an allocator:</p>
+		<p>However, because of the complexity that comes with dynamic memory, you should keep an eye open for alternatives. For example, above we used <code>std.fmt.allocPrint</code> but the standard library also has an <code>std.fmt.bufPrint</code>. The latter takes a buffer instead of an allocator:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -599,11 +599,10 @@ pub fn main() !void {
 
 		<p>The goal isn't to eliminate all dynamic allocations. It wouldn't work, as these alternatives only make sense in specific cases. But now you have many options at your disposal. From stack frames to a general purpose allocator, and all the things in between, like static buffers, streaming writers and specialized allocators.</p>
 	</section>
-
 </article>
 
 <div class=pager>
-	<a class=prev href="stack_memory">Stack Memory</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href=generics>Generics</a>
+	<a class=prev href=/learning_zig/stack_memory/>Stack Memory</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/generics/>Generics</a>
 </div>

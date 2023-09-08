@@ -3,13 +3,13 @@ date: 2023-09-08
 layout: learning_zig
 title: "Learning Zig - Stack Memory"
 tags: [zig]
-permalink: "/learning_zig/stack_memory"
+permalink: "/learning_zig/stack_memory/"
 ---
 
 <div class=pager>
-	<a class=prev href="pointers">Pointers</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href=heap_memory>Heap Memory & Allocators</a>
+	<a class=prev href=/learning_zig/pointers/>Pointers</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/heap_memory/>Heap Memory & Allocators</a>
 </div>
 
 <article>
@@ -24,12 +24,12 @@ permalink: "/learning_zig/stack_memory"
 
 		<p>The second area of memory is the call stack, the topic for this part. The third area is the heap, the topic for our next part.</p>
 
-		<aside>There isn't a real physical difference between the areas of memory, it's a concept created by the OS and the program.</aside>
+		<aside>There isn't a real physical difference between the areas of memory, it's a concept created by the OS and the executable.</aside>
 	</section>
 
 	<section>
 		<h2 tabindex=-1 id=stack_frames><a href=#stack_frames aria-hidden=true>Stack Frames</a></h2>
-		<p>All of the data we've seen so far has been constants stored in the global data section of our binary or local variables. "Local" indicates that the variable is only valid within the scope where it's declared. In Zig, scopes begin and end with curly braces, <code>{ ... }</code>. Most variables are scoped to a function, including function parameters, or a control-flow block, like an <code>if</code>. But, as we've seen, you can create arbitrary blocks.</p>
+		<p>All of the data we've seen so far have been constants stored in the global data section of our binary or local variables. "Local" indicates that the variable is only valid within the scope where it's declared. In Zig, scopes begin and end with curly braces, <code>{ ... }</code>. Most variables are scoped to a function, including function parameters, or a control-flow block, like an <code>if</code>. But, as we've seen, you can create arbitrary blocks and thus, arbitrary scopes.</p>
 
 		<p>In the previous part, we visualized the memory of our <code>main</code> and <code>levelUp</code> functions, each with a <code>User</code>:</p>
 
@@ -93,13 +93,13 @@ main: user ->    -------------  (id: 1043368d0)
                  -------------
 {% endhighlight %}
 
-			<p>When a function is called, its entire stack frame is pushed onto the call stack. This is one of the reasons it's important to know the size of every type. While we might not know the length of our user's name until that specific line of code is executed (assuming it wasn't a constant string literal), we do know that our function has a <code>User</code> and, in addition the other fields, we'll need 8 bytes for <code>name.len</code> and 8 bytes <code>name.ptr</code>.</p>
+			<p>When a function is called, its entire stack frame is pushed onto the call stack. This is one of the reasons we need to know the size of every type. While we might not know the length of our user's name until that specific line of code is executed (assuming it wasn't a constant string literal), we do know that our function has a <code>User</code> and, in addition the other fields, we'll need 8 bytes for <code>name.len</code> and 8 bytes <code>name.ptr</code>.</p>
 
 			<p>When the function returns, its stack frame, which was the last pushed onto the call stack, is popped off. Something amazing just happened: the memory used by <code>levelUp</code> has been automatically freed! While technically that memory could be returned to the OS, as far as I know, no implementations actually shrinks the call stack (implementations will dynamically grow it when necessary though). Still, the memory used to store <code>levelUp's</code> stack frame is now free to be used within our process for another stack frame.</p>
 
 			<aside>In a normal program, the call stack can grow quite large. Between all the framework code and libraries that a typical program uses, you end up with deeply nested functions. Normally, that isn't a problem, but now and again, you might have run into some type of stack overflow error. This happens when our call stack has run out of space. More often than not, this happens with recursive functions - a function that calls itself.</aside>
 
-			<p>Like our global data, the call stack is managed by the OS and our program. On program start, and for each thread we start thereafter, a call stack is created (the size of which can normally be configured in the OS). The call stack exists for the life of the program or, in the case of a thread, the life of the thread. On program or thread exit, the call stack is freed. But where our global data has all of the programs global data, the call stack only has stack frames for the currently executing hierarchy of functions. This is efficient both in terms of memory usage as well as the simplicity of pushing and popping stack frames on and off the stack.</p>
+			<p>Like our global data, the call stack is managed by the OS and the executable. On program start, and for each thread we start thereafter, a call stack is created (the size of which can normally be configured in the OS). The call stack exists for the life of the program or, in the case of a thread, the life of the thread. On program or thread exit, the call stack is freed. But where our global data has all of the programs global data, the call stack only has stack frames for the currently executing hierarchy of functions. This is efficient both in terms of memory usage as well as the simplicity of pushing and popping stack frames on and off the stack.</p>
 	</section>
 
 	<section>
@@ -164,15 +164,14 @@ fn read() !void {
 	</section>
 
 	<section>
-		<p>The simple way to solve our initial bug is to change <code>init</code> so that it returns a <code>User</code> rather than a <code>*User</code> (pointer to a user). We'd then be able to <code>return user;</code> rather than <code>return &amp;user;</code>. But that won't always be possible. Data often has to live beyond the rigid boundaries of function scopes. For that we have the third memory area, the heap, the topic of the next part.</p>
+		<p>The simple way to solve our initial bug is to change <code>init</code> so that it returns a <code>User</code> rather than a <code>*User</code> (pointer to a <code>User</code>). We'd then be able to <code>return user;</code> rather than <code>return &amp;user;</code>. But that won't always be possible. Data often has to live beyond the rigid boundaries of function scopes. For that we have the third memory area, the heap, the topic of the next part.</p>
 
-		<p>Before diving into the heap, know that we'll see one final example of dangling pointers before the end of this series. At that point, we'll have covered enough of the language to give a sightly less convoluted example. I want to revisit this topic because, for developers coming from garbage collected languages, this is likely to cause bugs and frustration. It is something you <strong>will</strong> get a handle on. It comes down to being aware of where and when data exists.</p>
+		<p>Before diving into the heap, know that we'll see one final example of dangling pointers before the end of this guide. At that point, we'll have covered enough of the language to give a sightly less convoluted example. I want to revisit this topic because, for developers coming from garbage collected languages, this is likely to cause bugs and frustration. It is something you <strong>will</strong> get a handle on. It comes down to being aware of where and when data exists.</p>
 	</section>
-
 </article>
 
 <div class=pager>
-	<a class=prev href="pointers">Pointers</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href=heap_memory>Heap Memory & Allocators</a>
+	<a class=prev href=/learning_zig/pointers/>Pointers</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/heap_memory/>Heap Memory & Allocators</a>
 </div>

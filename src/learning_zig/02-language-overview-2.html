@@ -3,26 +3,26 @@ date: 2023-09-08
 layout: learning_zig
 title: "Learning Zig - Language Overview - Part 2"
 tags: [zig]
-permalink: "/learning_zig/language_overview_2"
+permalink: "/learning_zig/language_overview_2/"
 ---
 
 <div class=pager>
-	<a class=prev href=language_overview_1>Language Overview - Part 1</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href=style_guide>Style Guide</a>
+	<a class=prev href=/learning_zig/language_overview_1/>Language Overview - Part 1</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/style_guide/>Style Guide</a>
 </div>
 
 <article>
 	<h1 tabindex=-1 id=language_overview><a href=#language_overview aria-hidden=true>Language Overview - Part 2</a></h1>
-	<p>This part continues where the previous left off: familiarizing ourselves with the language. Together with the first part, what we explore here makes up the bulk of the language.</p>
+	<p>This part continues where the previous left off: familiarizing ourselves with the language. We'll explore Zig's control flow and types beyond structures. Together with the first part, we'll have covered most of the language's syntax allowing us to tackle more of the language and the standard library.</p>
 
 	<section>
 		<h2 tabindex=-1 id=control_flow><a href=#control_flow aria-hidden=true>Control Flow</a></h2>
-		<p>Zig's control flow is likely familiar but it does synergize with aspects of the language we've yet to explore. We'll start with a quick overview of control flow and come back when we discover features that have special control flow behavior.</p>
+		<p>Zig's control flow is likely familiar, but with additional synergies with aspects of the language we've yet to explore. We'll start with a quick overview of control flow and come back when discussing features that elicit special control flow behavior.</p>
 
 		<p>You will notice that instead of the logical operators <code>&&</code> and <code>||</code>, we use <code>and</code> and <code>or</code>. Like in most languages, <code>and</code> and <code>or</code> control the flow of execution: they short-circuit. The right side of an <code>and</code> isn't evaluated if the left side is <code>false</code>, and the right side of an <code>or</code> isn't evaluated if the left side is <code>true</code>. In Zig, control flow is done with keywords, and thus <code>and</code> and <code>or</code> are used.</p>
 
-		<p>Also, the comparison operator, <code>==</code>, does not work between slices, such as <code>[]const u8</code>, i.e. strings. In most cases, you'll use <code>std.mem.eql(u8, str1, str2)</code> which will compare the length and then bytes of the two strings.</p>
+		<p>Also, the comparison operator, <code>==</code>, does not work between slices, such as <code>[]const u8</code>, i.e. strings. In most cases, you'll use <code>std.mem.eql(u8, str1, str2)</code> which will compare the length and then bytes of the two slices.</p>
 
 		<p>Zig's <code>if</code>, <code>else if</code> and <code>else</code> are commonplace:</p>
 
@@ -147,7 +147,7 @@ fn indexOf(haystack: []const u32, needle: u32) ?usize {
 
 		<aside>This is a sneak peak at nullable types.</aside>
 
-		<p>The end of the range is inferred by the length of <code>haystack</code>. Though, we could punish ourselves and write: <code>0..hastack.len</code>. <code>for</code> loops don't support the more generic <code>init; compare; step</code> idiom. For this, we rely on <code>while</code>.</p>
+		<p>The end of the range is inferred by the length of <code>haystack</code>,  though we could punish ourselves and write: <code>0..hastack.len</code>. <code>for</code> loops don't support the more generic <code>init; compare; step</code> idiom. For this, we rely on <code>while</code>.</p>
 
 		<p>Because <code>while</code> is simpler, taking the form of <code>while (condition) { }</code>, we have greater control over the iteration. For example, when counting the number of escape sequence in a string, we need to increment our iterator by 2 to avoid double counting a <code>\\</code>:</p>
 
@@ -263,7 +263,7 @@ const Number = union {
 };
 {% endhighlight %}
 
-		<p>A union can only have one field set at a time. Furthermore, it's an error to try to access an unset field. Since we've set the <code>int</code> field, if we then tried to access <code>n.float</code>, we'd get an error. One of our fields, <code>nan</code>, has a <code>void</code> type. How would we set its value? Use <code>{}</code>: </p>
+		<p>A union can only have one field set at a time; it's an error to try to access an unset field. Since we've set the <code>int</code> field, if we then tried to access <code>n.float</code>, we'd get an error. One of our fields, <code>nan</code>, has a <code>void</code> type. How would we set its value? Use <code>{}</code>: </p>
 
 {% highlight zig %}
 const n = Number{.nan = {}};
@@ -398,7 +398,7 @@ const OpenError = error {
 };
 {% endhighlight %}
 
-		<p>A function, including the special <code>main</code>, can now return this error:</p>
+		<p>A function, including <code>main</code>, can now return this error:</p>
 
 {% highlight zig %}
 pub fn main() void {
@@ -435,7 +435,7 @@ pub fn main() !void {
 
 		<p>Our completely explicit an implicit approaches aren't exactly equivalents. For example, references to functions with implicit error sets require using the special <code>anyerror</code> type. Library developers might see advantages to being more explicit, such as self-documenting code. Still, I think both the implicit error sets and the inferred error union are pragmatic; I make heavy use of both.</p>
 
-		<p>The real value of error unions is the built-in language support, in the shape of <code>catch</code> and <code>try</code>. A function that returns an error union can include a <code>catch</code> clause. For example, an http server library might have code that looks like:</p>
+		<p>The real value of error unions is the built-in language support in the shape of <code>catch</code> and <code>try</code>. A function call that returns an error union can include a <code>catch</code> clause. For example, an http server library might have code that looks like:</p>
 
 {% highlight zig %}
 action(req, res) catch |err| {
@@ -480,7 +480,7 @@ action(req, res) catch |err| return err;
 try action(req, res);
 {% endhighlight %}
 
-		<p>This is particularly useful given that error must be handled. Most likely you'll do so with a <code>try</code> or <code>catch</code>.</p>
+		<p>This is particularly useful given that <strong>error must be handled</strong>. Most likely you'll do so with a <code>try</code> or <code>catch</code>.</p>
 
 		<aside>Go developers will notice that <code>try</code> takes fewer keystrokes than <code>if err != nil { return err }</code>.</aside>
 
@@ -530,12 +530,12 @@ pub const Save = struct {
 	</section>
 
 	<section>
-		<p>While Zig has more depth, and some of the language features have greater capabilities, what we've seen in these first two parts is a significant part of the language. It will serve as a foundation, allowing us to explore more complex topics without getting too distracted by syntax. You're hopefully in a better place to read Zig code and tackle new problems with it.</p>
+		<p>While Zig has more depth, and some of the language features have greater capabilities, what we've seen in these first two parts is a significant part of the language. It will serve as a foundation, allowing us to explore more complex topics without getting too distracted by syntax.</p>
 	</section>
 </article>
 
 <div class=pager>
-	<a class=prev href=language_overview_1>Language Overview - Part 1</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href=style_guide>Style Guide</a>
+	<a class=prev href=/learning_zig/language_overview_1/>Language Overview - Part 1</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/style_guide/>Style Guide</a>
 </div>

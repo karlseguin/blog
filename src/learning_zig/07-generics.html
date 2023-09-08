@@ -3,13 +3,13 @@ date: 2023-09-08
 layout: learning_zig
 title: "Learning Zig - Generics"
 tags: [zig]
-permalink: "/learning_zig/generics"
+permalink: "/learning_zig/generics/"
 ---
 
 <div class=pager>
-	<a class=prev href=heap_memory>Heap Memory & Allocators</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href=coding_in_zig>Coding In Zig</a>
+	<a class=prev href=/learning_zig/heap_memory/>Heap Memory & Allocators</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/coding_in_zig/>Coding In Zig</a>
 </div>
 
 <article>
@@ -109,7 +109,7 @@ fn List(comptime T: type) type {
 
 		<p>The above <code>struct</code> is almost identical to our <code>IntList</code> except <code>i64</code> has been replaced with <code>T</code>. That <code>T</code> might seem special, but it's just a variable name. We could have called it <code>item_type</code>. However, following Zig's naming convention, variables of type <code>type</code> are PascalCase.</p>
 
-		<aside>For good or bad, using a single letter to represent a type parameter is much older than Zig. <code>T</code> is a common default in most languages, but you will see context-specific variations, such as hash maps using <code>K</code> and <code>V</code> for their key and value parameter types respectively.</aside>
+		<aside>For good or bad, using a single letter to represent a type parameter is much older than Zig. <code>T</code> is a common default in most languages, but you will see context-specific variations, such as hash maps using <code>K</code> and <code>V</code> for their key and value parameter types.</aside>
 
 		<p>If you aren't sure about our skeleton, consider the two places we use <code>T</code>: <code>items: []T</code> and <code>allocator.alloc(T, 4)</code>. When we want to use this generic type, we'll create an instance using:</p>
 
@@ -213,13 +213,11 @@ fn List(comptime T: type) type {
 
 	<section>
 		<p>We could create more complex examples, with multiple type parameters and more advanced algorithms. But, in the end, the core generic code would be no different than the simple examples above. In the next part we'll touch on generics again when we look at the standard library's <code>ArrayList(T)</code> and <code>StringHashMap(V)</code>.</p>
-
 	</section>
-
 </article>
 
 <div class=pager>
-	<a class=prev href=heap_memory>Heap Memory & Allocators</a>
-	<a class=home href=/learning_zig>Intro</a>
-	<a class=next href=coding_in_zig>Coding In Zig</a>
+	<a class=prev href=/learning_zig/heap_memory/>Heap Memory & Allocators</a>
+	<a class=home href=/learning_zig/>Intro</a>
+	<a class=next href=/learning_zig/coding_in_zig/>Coding In Zig</a>
 </div>
