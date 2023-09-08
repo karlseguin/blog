@@ -27,10 +27,10 @@ fn indexOf(haystack: []const u8, needle: u8) ?usize {
 
 {% highlight zig %}
 const vector_len = 8;
-const vector_needles = @splat(vector_len, @as(u8, 'o'));
+const vector_needles: @Vector(vector_len, u8) = @splat(@as(u8, 'o'));
 {% endhighlight %}
 
-<p>Our <code>@as</code> cast is a very Zig-specicific thing. <code>'o'</code> on its own is a <code>comptime_int</code>. If we try to use that, we'll get an error message: <em>expected integer, float, bool, or pointer for the vector element type</em>. So we coerce the type to a <code>u8</code>. The more important part of the above code is the <code>@splat</code> builtin, which creates a vector of length <code>vector_len</code> with each element containing the specified value. If we were to print <code>vector_needles</code>, we'd see 'o' eight times (the ASCII value of 'o' is 111):</p>
+<p>Our <code>@as</code> cast is a very Zig-specicific thing. <code>'o'</code> on its own is a <code>comptime_int</code>. If we try to use that, we'll get an error message: <em>expected integer, float, bool, or pointer for the vector element type</em>. So we coerce the type to a <code>u8</code>. The more important part of the above code is the <code>@splat</code> builtin, which creates a vector with each element containing the specified value. The length of the created vector is inferred from the type we're assigning to, which above is <code>@Vector(vector_len, u8)</code> If we were to print <code>vector_needles</code>, we'd see 'o' eight times (the ASCII value of 'o' is 111):</p>
 
 {% highlight text %}
 { 111, 111, 111, 111, 111, 111, 111, 111 }
@@ -69,7 +69,7 @@ const matches = vector_haystack == vector_needles;
 
 {% highlight zig %}
 const vector_len = 8;
-const vector_needles = @splat(vector_len, @as(u8, 'o'));
+const vector_needles: @Vector(vector_len, u8) = @splat(@as(u8, 'o'));
 
 const haystack = "Hello Jo";
 const vector_haystack: @Vector(vector_len, u8) = haystack.*;
@@ -121,7 +121,7 @@ const indexes = std.simd.iota(u8, vector_len);
 <p>It's ok if it isn't immediately obvious how that helps. Our next vector will be even weirder:</p>
 
 {% highlight zig %}
-const nulls = @splat(vector_len, @as(u8, 255));
+const nulls: @Vector(vector_len, u8) = @splat(@as(u8, 255));
 {% endhighlight %}
 
 <p>We've seen <code>@splat</code> already, so we know the output to this is:</p>
@@ -171,7 +171,7 @@ fn firstIndexOf(haystack: []const u8, needle: u8) ?usize {
 
 
   // {111, 111, 111, 111, 111, 111, 111, 111}
-  const vector_needles = @splat(vector_len, @as(u8, needle));
+  const vector_needles: @Vector(vector_len, u8) = @splat(@as(u8, needle));
 
   // Because we're implementing our own std.simd.firstTrue
   // we can move the following two vectors, indexes and null
@@ -181,7 +181,7 @@ fn firstIndexOf(haystack: []const u8, needle: u8) ?usize {
   const indexes = std.simd.iota(u8, vector_len);
 
   // {255, 255, 255, 255, 255, 255, 255, 255}
-  const nulls = @splat(vector_len, @as(u8, 255));
+  const nulls: @Vector(vector_len, u8) = @splat(@as(u8, 255));
 
   var pos: usize = 0;
   var left = haystack.len;
