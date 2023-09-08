@@ -1,0 +1,112 @@
+---
+date: 2023-09-08
+layout: learning_zig
+title: "Learning Zig - Style Guide"
+tags: [zig]
+permalink: "/learning_zig/style_guide"
+---
+
+<div class=pager>
+	<a class=prev href="language_overview_2">Language Overview - Part 2</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href="pointers">Pointers</a>
+</div>
+
+<article>
+	<h1 tabindex=-1 id=styleguide><a href=#styleguide aria-hidden=true>Style Guide</a></h1>
+	<p>In this short part, we'll cover two coding rules enforced by the compiler as well as Zig's naming convention.</p>
+
+	<section>
+		<h2 tabindex=-1 id=unused_variables><a href=#unused_variables aria-hidden=true>Unused Variables</a></h2>
+		<p>Zig does not allow variables to go unused. The following gives two compile-time errors:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	const sum = add(8999, 2);
+}
+
+fn add(a: i64, b: i64) i64 {
+	// notice this is a + a, not a + b
+	return a + a;
+}
+{% endhighlight %}
+
+		<p>The first error is because <code>sum</code> is an <em>unused local constant</em>. The second error is because <code>b</code> is an <em>unused function parameter</em>. For this code, these are obvious bugs. But you might have legitimate reasons for having unused variables and function parameters. In such cases, you can assign the variables to underscore (<code>_</code>):</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	_ = add(8999, 2);
+
+	// or
+
+	sum = add(8999, 2);
+	_ = sum;
+}
+
+fn add(a: i64, b: i64) i64 {
+	_ = b;
+	return a + a;
+}
+{% endhighlight %}
+
+<p>As an alternative to doing <code>_ = b;</code>, we could have named the function parameter <code>_</code>, though, in my opinion, this leaves a reader guessing what the unused parameter is:</p>
+
+{% highlight zig %}
+fn add(a: i64, _: i64) i64 {
+{% endhighlight %}
+
+		<p>Notice that <code>std</code> is also unused but does not generate an error. At some point in the future, expect Zig to also treat this as a compile-time error.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=shadowing><a href=#shadowing aria-hidden=true>Shadowing</a></h2>
+		<p>Zig doesn't allow one identifier to "hide" another by using the same name. This code, to read from a socket, isn't valid:</p>
+
+{% highlight zig %}
+fn read(stream: std.net.Stream) ![]const u8 {
+	var buf: [512]u8 = undefined;
+	const read = try stream.read(&buf);
+	if (read == 0) {
+		return error.Closed;
+	}
+	return buf[0..read];
+}
+{% endhighlight %}
+
+		<p>Our <code>read</code> variable shadows the name of our function. I am not a fan of this rule as it generally leads developers to use short meaningless names. For example, to get this code to compile, I'd change <code>read</code> to <code>n</code>. This is a case where, in my opinion, developers are in a much better position to pick the most readable option.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=naming><a href=#naming aria-hidden=true>Naming Convention</a></h2>
+		<p>Besides rules enforced by the compiler, you are, of course, free to follow whatever naming convention you prefer. But it does help to understand Zig's own naming convention since much of the code you'll interact with, from the standard library to third party libraries, make us of it.</p>
+
+		<p>Zig source code is indented with 4 spaces. I personally use a tab which is objectively better for accessibility.</p>
+
+		<p>Function names are camelCase and variables are lowercase_with_underscores (aka snake case). Types are PascalCase. There is an interesting intersection between these three rules. Variables which reference a type, or functions which return a type, follow the type rule and are PascalCase. We already saw this, though you might have missed it.</p>
+
+{% highlight zig %}
+std.debug.print("{any}\n", .{@TypeOf(.{.year = 2023, .month = 8})});
+{% endhighlight %}
+
+		<p>We've seen other builtin functions: <code>@import</code>, <code>@rem</code> and <code>@intCast</code>. Since these are functions they are camelCase. <code>@TypeOf</code> is also a builtin function, but it's PascalCase, why? Because it returns a type and thus the type naming convention is used. Were we to assign the result of <code>@TypeOf</code> to a variable, using Zig's naming convetion, that variable should be PascalCase also:</p>
+
+{% highlight zig %}
+const T = @TypeOf(3)
+std.debug.print("{any}\n", .{T});
+{% endhighlight %}
+	</section>
+
+	<section>
+		<p>The <code>zig</code> binary does have a <code>fmt</code> command which, given a file (or a directory), will format the file based on Zig's own style guide. It doesn't cover everything though, for example it will adjust identation and brace positions, but won't change identifier casing.</p>
+	</section>
+</article>
+
+<div class=pager>
+	<a class=prev href="language_overview_2">Language Overview - Part 2</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href="pointers">Pointers</a>
+</div>

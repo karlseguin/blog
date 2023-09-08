@@ -1,0 +1,676 @@
+---
+date: 2023-09-08
+layout: learning_zig
+title: "Learning Zig - Coding in Zig"
+tags: [zig]
+permalink: "/learning_zig/coding_in_zig"
+---
+
+<div class=pager>
+	<a class=prev href=generics>Generics</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href=conclusion>Conclusion</a>
+</div>
+
+<article>
+	<section>
+		<h1 tabindex=-1 id=coding><a href=#coding aria-hidden=true>Coding In Zig</a></h1>
+		<p>With much of the language now covered, we're going to wrap things up by revisiting a few topics and looking at a few more practical aspects of using Zig. In doing so, we're going to introduce more of the standard library and present less trivial code snippets. </p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=danling_pointers><a href=#danling_pointers aria-hidden=true>Dangling Pointers</a></h2>
+
+		<p>We begin by looking at more examples of dangling pointers. This might seem like an odd thing to focus on, but if you're coming from a garbage collected language, this is likely the biggest challenge you'll face.</p>
+
+		<p>Can you figure out what the following outputs?</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	var lookup = std.StringHashMap(User).init(allocator);
+	defer lookup.deinit();
+
+	const goku = User{.power = 9001};
+
+	try lookup.put("Goku", goku);
+	const entry = lookup.getPtr("Goku").?;
+
+	// returns an optional, .? would panic if "Goku"
+	// wasn't in our hashmap
+	const entry = lookup.getPtr("Goku").?;
+
+	std.debug.print("Goku's power is: {d}\n", .{entry.power});
+
+	// returns true/false depending on if the item was removed
+	_ = lookup.remove("Goku");
+
+	std.debug.print("Goku's power is: {d}\n", .{entry.power});
+}
+
+const User = struct {
+	power: i32,
+};
+{% endhighlight %}
+
+		<p>When I ran this, I got:</p>
+
+{% highlight text %}
+Goku's power is: 9001
+Goku's power is: -1431655766
+{% endhighlight %}
+
+		<p>This code introduce's Zig's generic <code>std.StringHashMap</code> which is a specialized version of <code>std.AutoHashMap</code> with the key type set to <code>[]const u8</code>. Even if you aren't 100% sure what's going on, it's a good guess that my output relates to the fact that our second <code>print</code> happens after we <code>remove</code> the entry from <code>lookup</code>. Comment out the call to <code>remove</code>, and the output is normal.</p>
+
+		<p>They key to understanding the above code is to be aware of where data/memory exists, or, put differently, who <em>owns</em> it. Remember that Zig arguments are passed-by-value, that is, we pass a [shallow] copy of the value. The <code>User</code> in our <code>lookup</code> is not the same memory referenced by <code>goku</code>. Our above code has <strong>two</strong> users, each with their own owner. <code>goku</code> is owned by <code>main</code>, and its copy is owned by <code>lookup</code>.</p>
+
+		<p>The <code>getPtr</code> method returns a pointer to the value in the map, in our case, it returns a <code>*User</code>. Herein lies the problem, <code>remove</code> makes our <code>entry</code> pointer invalid. In this example, the proximity of <code>getPtr</code> and <code>remove</code> makes the issue somewhat obvious. But it isn't hard to imagine code calling <code>remove</code> without knowing that a reference to the entry is being held somewhere else.</p>
+
+		<aside>When I wrote this example, I wasn't sure what would happen. It was possible for <code>remove</code> to be implemented by setting an internal flag, delaying actual removal until a later event. If that had been the case, the above might have "worked" in our simple cases, but would have failed with more complicated usage. That sounds terrifyingly difficult to debug.</aside>
+
+		<p>Besides not calling <code>remove</code>, we can fix this a few different ways. The first is that we could use <code>get</code> instead of <code>getPtr</code>. This would return a <code>User</code> instead of a <code>*User</code> and thus would return copy of the value in <code>lookup</code>. We'd then have three <code>Users</code>.</p>
+
+		<ol class=inline>
+			<li>Our original <code>goku</code>, tied to the function.
+			<li>The copy in <code>lookup</code>, owned by the lookup.
+			<li>And a copy of our copy, <code>entry</code>, also tied to the function.
+		</ol>
+
+		<p>Because <code>entry</code> would now be its own independent copy of the user, removing it from <code>lookup</code> would not invalid it.</p>
+
+
+		<p>Another option is to change <code>lookup's</code> type from <code>StringHashMap(User)</code> to <code>StringHashMap(*const User)</code>. This code works:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	// User -> *const User
+	var lookup = std.StringHashMap(*const User).init(allocator);
+	defer lookup.deinit();
+
+	const goku = User{.power = 9001};
+
+	// goku -> &goku
+	try lookup.put("Goku", &goku);
+
+	// getPtr -> get
+	const entry = lookup.get("Goku").?;
+
+	std.debug.print("Goku's power is: {d}\n", .{entry.power});
+	_ = lookup.remove("Goku");
+	std.debug.print("Goku's power is: {d}\n", .{entry.power});
+}
+
+const User = struct {
+	power: i32,
+};
+{% endhighlight %}
+
+		<p>There are a number of subtleties in the above code. First of all, we now have a single <code>User</code>, <code>goku</code>. The value in <code>lookup</code> and <code>entry</code> are both references to <code>goku</code>. Our call to <code>remove</code> still removes the value from our <code>lookup</code>, but that value is just the address of <code>user</code>, it isn't <code>user</code> itself. If we had stuck with <code>getPtr</code>, we'd get an invalid <code>**User</code>, invalid because of <code>remove</code>. In both solutions, we had to use <code>get</code> instead of <code>getPtr</code>, but in this case, we're just copying the address, not the full <code>User</code>. For large objects, that can be a significant difference.</p>
+
+		<p>With everything in a single function and a small value like <code>User</code>, this still feels like an artificially created problem. We need an example that legitimately makes data ownership an immediate concern.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=ownership><a href=#ownership aria-hidden=true>Ownership</a></h2>
+
+		<p>I love hash maps because they're something everyone knows and everyone uses. They also have a lot of different use cases, most of which you've probably experienced first hand. While they can be used as short lived lookups, they're often long-lived and thus require equally long-lived values.</p>
+
+		<p>This code populates our <code>lookup</code> with names you enter in the terminal. An empty name stops the prompt loop. Finally, it detects whether "Leto" was one of the supplied names.</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	var lookup = std.StringHashMap(User).init(allocator);
+	defer lookup.deinit();
+
+	// stdin is an std.io.Reader
+	// the opposite of an std.io.Writer, which we already saw
+	const stdin = std.io.getStdIn().reader();
+
+	// stdout is an std.io.Writer
+	const stdout = std.io.getStdOut().writer();
+
+	var i: i32 = 0;
+	while (true) : (i += 1) {
+		var buf: [30]u8 = undefined;
+		try stdout.print("Please enter a name: ", .{});
+		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |name| {
+			if (name.len == 0) {
+				break;
+			}
+			try lookup.put(name, .{.power = i});
+		}
+	}
+
+	const has_leto = lookup.contains("Leto");
+	std.debug.print("{any}\n", .{has_leto});
+}
+
+const User = struct {
+	power: i32,
+};
+{% endhighlight %}
+
+		<p>The code is case sensitive, but no mater how perfectly we type "Leto", <code>contains</code> always returns <code>false</code>. Let's debug this by iterating through <code>lookup</code> and dumping the keys and values:</p>
+
+{% highlight zig %}
+// Place this code after the while loop
+
+var it = lookup.iterator();
+while (it.next()) |kv| {
+	std.debug.print("{s} == {any}\n", .{kv.key_ptr.*, kv.value_ptr.*});
+}
+{% endhighlight %}
+
+		<p>This iterator pattern is common in Zig, and relies on the synergy between <code>while</code> and optional types. Our iterator item returns pointers to our key and value, hence we dereference them with <code>.*</code> to access the actual value rather than the address. The output will depend on what you enter, but I got:</p>
+
+{% highlight text %}
+Please enter a name: Paul
+Please enter a name: Teg
+Please enter a name: Leto
+Please enter a name:
+
+�� == learning.User{ .power = 1 }
+
+��� == learning.User{ .power = 0 }
+
+��� == learning.User{ .power = 2 }
+false
+{% endhighlight %}
+
+		<p>The values look ok, but not the keys. If you're not sure what's happening, it's probably my fault. Earlier, I intentionally misdirected your attention. I said that hash maps are often long-lived and thus require long-lived <em>values</em>. The truth is that they require long-lived values <strong>as well as</strong> long-lived keys! Notice that <code>buf</code> is defined inside our <code>while</code> loop. When we call <code>put</code>, we're giving our hash map a key that has a far shorter lifetime than the hash map itself. Moving <code>buf</code> <em>outside</em> the <code>while</code> loop solves our lifetime issue, but that buffer is reused in each iteration. It still won't work because we're mutating the underlying key data.</p>
+
+		<p>For our above code, there's really only one solution: our <code>lookup</code> must take ownership of the keys. We need to add one line and change another:</p>
+
+{% highlight zig %}
+// replace the existing lookup.put with these two lines
+const owned_name = try allocator.dupe(u8, name);
+
+// name -> owned_name
+try lookup.put(owned_name, .{.power = i});
+{% endhighlight %}
+
+		<p><code>dupe</code> is a method of <code>std.mem.Allocator</code> that we haven't seen before. It allocates a duplicate of the given value. The code now works because our keys, now on the heap, outlive <code>lookup</code>. In fact, we've done too good a job of extending the lifetime of those strings: we've introduced memory leaks.</p>
+
+		<p>You might have thought that when when we called <code>lookup.deinit</code>, our keys and values would be freed for us. But there's no one-size-fits-all solution that <code>StringHashMap</code> could use. First, the keys could be string literals, which cannot be freed. Second, they could have been created with a different allocator. Finally, while more advanced, there are legitimate cases where keys might not be owned by the hash map.</p>
+
+		<p>The only solution is to free the keys ourselves. At this point, it would probably make sense to create our own <code>UserLookup</code> type and encapsulate this cleanup logic in our <code>deinit</code> function. We'll keep things messy:</p>
+
+{% highlight zig %}
+// replace the existing:
+//   defer lookup.deinit();
+// with:
+defer {
+	var it = lookup.keyIterator();
+	while (it.next()) |key| {
+		allocator.free(key.*);
+	}
+	lookup.deinit();
+}
+{% endhighlight %}
+
+		<p>Our <code>defer</code> logic, the first we've seen with a block, frees each key and then deinitializes <code>lookup</code>. We're using <code>keyIterator</code> to only iterate the keys. The iterator value is a pointer to the key entry in the hash map, a <code>*[]const u8</code>. We want to free the actual value, since that's what we allocated via <code>dupe</code>, so we dereference the value using <code>.*</code>.</p>
+
+		<p>I promise, we're done talking about dangling pointers and memory management. What we've discussed might still be unclear or too abstract. It's fine to revisit this when you have a more hands on problem to solve. That said, if you plan on writing anything non-trivial, this is something you'll almost certainly need to master. When you're feeling up to it, I urge you to take the prompt loop example and play with it on your own. Introduce a <code>UserLookup</code> type that encapsulate all of the memory management we had to do. Try having <code>*User</code> values instead of <code>User</code>, creating the  users on the heap and freeing them like we did the keys. Write tests that covers your new structure, using the <code>std.testing.allocator</code> to make sure you aren't leaking any memory.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=arraylist><a href=#arraylist aria-hidden=true>ArrayList</a></h2>
+		<p>You'll be glad to know that you can forget about our <code>IntList</code> and the generic alternative we created. Zig has a proper dynamic array implementation: <code>std.ArrayList(T)</code>.</p>
+
+		<p>It's pretty standard stuff, but it's such a commonly needed and used data structure that it's worth seeing it in action:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	var arr = std.ArrayList(User).init(allocator);
+	defer {
+		for (arr.items) |user| {
+			user.deinit(allocator);
+		}
+		arr.deinit();
+	}
+
+	// stdin is an std.io.Reader
+	// the opposite of an std.io.Writer, which we already saw
+	const stdin = std.io.getStdIn().reader();
+
+	// stdout is an std.io.Writer
+	const stdout = std.io.getStdOut().writer();
+
+	var i: i32 = 0;
+	while (true) : (i += 1) {
+		var buf: [30]u8 = undefined;
+		try stdout.print("Please enter a name: ", .{});
+		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |name| {
+			if (name.len == 0) {
+				break;
+			}
+			const owned_name = try allocator.dupe(u8, name);
+			try arr.append(.{.name = owned_name, .power = i});
+		}
+	}
+
+	var has_leto = false;
+	for (arr.items) |user| {
+		if (std.mem.eql(u8, "Leto", user.name)) {
+			has_leto = true;
+			break;
+		}
+	}
+
+	std.debug.print("{any}\n", .{has_leto});
+}
+
+const User = struct {
+	name: []const u8,
+	power: i32,
+
+	fn deinit(self: User, allocator: Allocator) void {
+		allocator.free(self.name);
+	}
+};
+{% endhighlight %}
+
+		<p>Above is a reproduction of our hash map code, but using an <code>ArrayList(User)</code>. All of the same lifetime and memory management rules apply. Notice that we're still creating a <code>dupe</code> of the name, and we're still freeing each name before we <code>deinit</code> the <code>ArrayList</code>.</p>
+
+		<p>This is a good time to point out that Zig doesn't have properties or private fields. You can see this when we access <code>arr.items</code> to iterate through the values. The reason for not having properties is to eliminate a source of surprises. In Zig, if it looks like a field access, it <strong>is</strong> a field access. Personally, I think the lack of private fields is a mistake, but it's certainly something we can work around. I've taken to prefixing field with underscore to signal "internal use only".</p>
+
+		<p>Because the string "type" is a <code>[]u8</code> or <code>[]const u8</code>, an <code>ArrayList(u8)</code> is the appropriate type for a string builder, like .NET's <code>StringBuilder</code> or Go's <code>strings.Builder</code>. In fact, you'll often use this when a function takes an <code>Writer</code> and you want a string. We previous saw an example which used <code>std.json.stringify</code> to output JSON to stdout. Here's how you'd use an <code>ArrayList(u8)</code> to it into a variable:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	var out = std.ArrayList(u8).init(allocator);
+	defer out.deinit();
+
+	try std.json.stringify(.{
+		.this_is = "an anonymous struct",
+		.above = true,
+		.last_param = "are options",
+	}, .{.whitespace = .indent_2}, out.writer());
+
+	std.debug.print("{s}\n", .{out.items});
+}
+{% endhighlight %}
+
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=anytype><a href=#anytype aria-hidden=true>Anytype</a></h2>
+		<p>In part 1, we briefly talked about <code>anytype</code>. It's a pretty useful form of compile-time duck-typing. Here's a simple logger:</p>
+
+{% highlight zig %}
+pub const Logger = struct {
+	level: Level,
+
+	const Level = enum {
+		debug,
+		info,
+		@"error",
+		fatal,
+	};
+
+	fn info(logger: Logger, msg: []const u8, out: anytype) !void {
+		if (@intFromEnum(logger.level) <= @intFromEnum(Level.info)) {
+			try out.writeAll(msg);
+		}
+	}
+};
+{% endhighlight %}
+
+		<p>The <code>out</code> parameter of our <code>info</code> function has the type <code>anytype</code>. This means that our <code>Logger</code> can log messages to any structure that has a <code>writeAll</code> method accepting a <code>[]const u8</code> and returning a <code>!void</code>. This isn't a runtime feature. Type checking happens at compile-time and for each type used, a correctly typed function is created. If we try to call <code>info</code> with a type that doesn't have all the of the necessary functions (in this case just <code>writeAll</code>), we'll get a compile time error:</p>
+
+{% highlight zig %}
+var l = Logger{.level = .info};
+try l.info("sever started", true);
+{% endhighlight %}
+
+		<p>Giving us: <em>no field or member function named 'writeAll' in 'bool'</em>. Using the <code>writer</code> of an <code>ArrayList(u8)</code> works:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	var l = Logger{.level = .info};
+
+	var arr = std.ArrayList(u8).init(allocator);
+	defer arr.deinit();
+
+	try l.info("sever started", arr.writer());
+	std.debug.print("{s}\n", .{arr.items});
+}
+{% endhighlight %}
+
+		<p>One massive drawback of <code>anytype</code> is documentation. Here's the signature for the <code>std.json.stringify</code> function we've used a few times:</p>
+
+{% highlight zig %}
+// I **hate** multi-line function definitions
+// But I'll make an exception for a guide which
+// you might be reading on a small screen.
+
+fn stringify(
+	value: anytype,
+	options: StringifyOptions,
+	out_stream: anytype
+) @TypeOf(out_stream).Error!void
+{% endhighlight %}
+
+		<p>The first parameter, <code>value: anytype</code> is kind of obvious. It's the value to serialize and it can be anything (actually, there are some things Zig's JSON serializer can't serialize). We can guess that the <code>out_stream</code> is <em>where</em> to write the JSON, but your guess is as good as mine about what methods it needs to implement. The only way to figure it out is to read the source code or, alternatively, pass a dummy value and use the compiler errors as our documentation. This is something that might get improved with better auto document generators. But, not for the first time, I wish Zig has interfaces.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=typeof><a href=#typeof aria-hidden=true>@TypeOf</a></h2>
+		<p>In previous parts, we used <code>@TypeOf</code> to help us examine the type of various variables. From our usage, you'd be forgiven for thinking that it returns the name of the type as string. However, given that it's a PascalCase function, you should know better: it returns a <code>type</code>.</p>
+
+		<p>One of my favorite usage of <code>anytype</code> is to pair it with the <code>@TypeOf</code> and <code>@hasField</code> builtin functions for writing test helpers. Although every <code>User</code> type that we've seen has been very simple, I'll ask you to imagine a more complex structures with many fields. In many of our tests, we need a <code>User</code>, but we only want to specify the fields relevant to the test. Let's create a <code>userFactory</code>:</p>
+
+{% highlight zig %}
+fn userFactory(data: anytype) User {
+	const T = @TypeOf(data);
+	return .{
+		.id = if (@hasField(T, "id")) data.id else 0,
+		.power = if (@hasField(T, "power")) data.power else 0,
+		.active  = if (@hasField(T, "active")) data.name else true,
+		.name  = if (@hasField(T, "name")) data.name else "",
+	};
+}
+
+pub const User = struct {
+	id: u64,
+	power: u64,
+	active: bool,
+	name: [] const u8,
+};
+{% endhighlight %}
+
+			<p>A default user can be created by calling <code>userFactory(.{})</code>, or we can override specific fields with <code>userFactory(.{.id = 100, .active = false})</code>. It's a small pattern, but I really like it. It's also a nice baby step into the world of metaprogramming.</p>
+
+			<p>More commonly <code>@TypeOf</code> is paired with <code>@typeInfo</code>, which returns an <code>std.builtin.Type</code>. This is a powerful tagged union that fully describes a type. The <code>std.json.stringify</code> function recursively uses this on the provided <code>value</code> to figure out how to serialize it.</p>
+		</section>
+
+	<section>
+		<h2 tabindex=-1 id=build><a href=#build aria-hidden=true>Zig Build</a></h2>
+		<p>If you've read through this entire guide waiting for insight into setting up more complex projects, with multiple dependencies and various targets, you're about to be disappointed. Zig has a powerful build system, so much so that an increasing number of non-Zig projects are making use of it, such as libsodium. Unfortunately, all of that power means that, for simpler needs, it isn't the easiest to use, or understand.</p>
+
+		<aside>The truth is, I don't understand Zig's build system well enough to explain it.</aside>
+
+		<p>Still, we can at least get a brief overview. To run our Zig code, we've used <code>zig run learning.zig</code>. Once, we also used <code>zig test learning.zig</code> to run a test. The <code>run</code> and <code>test</code> commands are fine for playing around, but it's the  <code>build</code> command you'll need for anything more complex. The <code>build</code> command relies on a <code>build.zig</code> file with the special <code>build</code> entrypoint. Here's a skeleton:</p>
+
+{% highlight zig %}
+// build.zig
+
+const std = @import("std");
+
+pub fn build(b: *std.Build) !void {
+	_ = b;
+}
+{% endhighlight %}
+
+
+		<p>Every build has a default "install" step, which you can now run with <code>zig build install</code>, but since our file is mostly empty, you won't get any meaningful artifacts. We need to tell our build about our program's entry point, which is in <code>learning.zig</code>:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn build(b: *std.Build) !void {
+	const target = b.standardTargetOptions(.{});
+	const optimize = b.standardOptimizeOption(.{});
+
+	// setup executable
+	const exe = b.addExecutable(.{
+		.name = "learning",
+		.target = target,
+		.optimize = optimize,
+		.root_source_file = .{ .path = "learning.zig" },
+	});
+	b.installArtifact(exe);
+}
+{% endhighlight %}
+
+		<p>Now if you run <code>zig build install</code>, you'll get a binary at <code>./zig-out/bin/learning</code>. Using the standard targets and optimizations allows us to override the default as command line arguments. For example to build a size-optimized version of our program for Windows, we'd do:</p>
+
+{% highlight zig %}
+zig build install -Doptimize=ReleaseSmall -Dtarget=x86_64-windows-gnu
+{% endhighlight %}
+
+		<p>An executable will often have two addition steps, beyond the default "install":  "run" and "test". A library might have a single "test" step. For a basic argument-less <code>run</code>, we need to add four lines to the end of our build:</p>
+
+{% highlight zig %}
+// add after: b.installArtifact(exe);
+
+const run_cmd = b.addRunArtifact(exe);
+run_cmd.step.dependOn(b.getInstallStep());
+
+const run_step = b.step("run", "Start learning!");
+run_step.dependOn(&run_cmd.step);
+{% endhighlight %}
+
+		<p>This creates two dependencies via the two calls to <code>dependOn</code>. The first ties our new run command to the built-in install step. The second ties the "run" step to our newly created "run" command. You might be wondering why you need a run command as well as a run step. I believe this separation exists to support more complicates setups: steps that depend on multiple commands, or commands that are used across multiple steps. If you run <code>zig build --help</code> and scroll to the top, you'll see our new "run" step. You can now run the program by executing <code>zig build run</code>.</p>
+
+		<p>To add a "test" step, you'll duplicate most of the run code we just added, but rather than <code>b.addExecutable</code>, you'll kick things off with <code>b.addTest</code>:</p>
+
+{% highlight zig %}
+const tests = b.addTest(.{
+	.target = target,
+	.optimize = optimize,
+	.root_source_file = .{ .path = "learning.zig" },
+});
+
+const test_cmd = b.addRunArtifact(tests);
+test_cmd.step.dependOn(b.getInstallStep());
+const test_step = b.step("test", "Run the tests");
+test_step.dependOn(&test_cmd.step);
+{% endhighlight %}
+
+		<p>We gave this step the name of "test". Running <code>zig build --help</code> should now show another available step, "test". Since we don't have any tests, it's hard to tell whether this is working or not. Within <code>learning.zig</code>, add:</p>
+
+{% highlight zig %}
+test "dummy build test" {
+	try std.testing.expectEqual(false, true);
+}
+{% endhighlight %}
+
+		<p>Now when you run <code>zig build test</code>, you should get a test failure. If you fix the test and run <code>zig build test</code> again, you won't get any output. By default, Zig's test runner only outputs on failure. Use <code>zig build test --summary all</code> if, like me, pass or fail, you always want a summary.</p>
+
+		<p>This is the minimal configuration you'll need to get up and running. But rest easy knowing that if you need to build it, Zig can probably handle it. Finally, you can, and probably should, use <code>zig init-exe</code> or <code>zig init-lib</code> within your project root to have Zig create a well-documented build.zig file for you.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=dependencies><a href=#dependencies aria-hidden=true>Third Party Dependencies</a></h2>
+
+		<p>Zig's built-in package manager is relatively new and, as a consequence, has a number of rough edges. While there is room for improvements, it's usable as is. There are two parts we need to look at: creating a package and using packages. We'll go through this in full.</p>
+
+		<p>First, create a new folder named <code>calc</code> and create three files. The first is <code>add.zig</code>, with the following content:</p>
+
+{% highlight zig %}
+// Oh, a hidden lesson, look at the type of b
+// and the return type!!
+
+pub fn add(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+	return a + b;
+}
+
+const testing = @import("std").testing;
+test "add" {
+	try testing.expectEqual(@as(i32, 32), add(30, 2));
+}
+{% endhighlight %}
+
+		<p>It's a bit silly, a whole package just to add two values, but it will let us focus on the packaging aspect. Next we'll add an equally silly: <code>calc.zig</code>:</p>
+
+{% highlight zig %}
+pub const add = @import("add.zig").add;
+
+test {
+	// By default, only tests in the specified file
+	// are included. This magic line of code will
+	// cause a reference to all nested containers
+	// to be tested.
+	@import("std").testing.refAllDecls(@This());
+}
+
+{% endhighlight %}
+
+		<p>We're splitting this up between <code>calc.zig</code> and <code>add.zig</code> to prove that <code>zig build</code> will automatically build and package all of our project files. Finally, we can add a <code>build.zig</code>:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn build(b: *std.Build) !void {
+	const target = b.standardTargetOptions(.{});
+	const optimize = b.standardOptimizeOption(.{});
+
+	const tests = b.addTest(.{
+		.target = target,
+		.optimize = optimize,
+		.root_source_file = .{ .path = "calc.zig" },
+	});
+
+	const test_cmd = b.addRunArtifact(tests);
+	test_cmd.step.dependOn(b.getInstallStep());
+	const test_step = b.step("test", "Run the tests");
+	test_step.dependOn(&test_cmd.step);
+}
+{% endhighlight %}
+
+		<p>This is all a repetition of what we saw in the previous section. With this, you can run <code>zig build test --summary all</code>.</p>
+
+		<p>Back to our <code>learning</code> project and our previously created <code>build.zig</code>. We'll begin by adding a our local <code>calc</code> as a dependency. We need to make three additions. First, we'll create a module pointing to our <code>calc.zig</code>:</p>
+
+{% highlight zig %}
+// You can put this near the top of the build
+// function, before the call to addExecutable.
+
+const calc_module = b.addModule("calc", .{
+	.source_file = .{ .path = "PATH_TO_CALC_PROJECT/calc.zig" },
+});
+{% endhighlight %}
+
+			<p>You'll need to adjust the path to <code>calc.zig</code>. We now need to add this module to both our existing <code>exe</code> and <code>tests</code> variables:</p>
+
+{% highlight zig %}
+const exe = b.addExecutable(.{
+	.name = "learning",
+	.target = target,
+	.optimize = optimize,
+	.root_source_file = .{ .path = "learning.zig" },
+});
+// add this
+exe.addModule("calc", calc_module);
+b.installArtifact(exe);
+
+....
+
+const tests = b.addTest(.{
+	.target = target,
+	.optimize = optimize,
+	.root_source_file = .{ .path = "learning.zig" },
+});
+// add this
+tests.addModule("calc", calc_module);
+{% endhighlight %}
+
+			<p>From within your project, you're now able to <code>@import("calc")</code>:</p>
+
+{% highlight zig %}
+const calc = @import("calc");
+...
+calc.add(1, 2);
+{% endhighlight %}
+
+			<p>Adding a remote dependency takes a bit more effort. First, we need to go back to the <code>calc</code> project and define a module. You might think that the project itself is a module, but a project can expose multiple module, so we need to explicitly create it. We use the same <code>addModule</code>, but discard the return value. Simply calling <code>addModule</code> is enough to define the module which other projects will then be able to import.</p>
+
+{% highlight zig %}
+_ = b.addModule("calc", .{
+	.source_file = .{ .path = "calc.zig" },
+});
+{% endhighlight %}
+
+
+			<p>This is the only change we need to make to our library. Because this is an exercise in having a remote dependency, I've pushed this <code>calc</code> project to Github so that we can import it into our learning project. It's available at <a href="https://github.com/karlseguin/calc.zig">https://github.com/karlseguin/calc.zig</a>.</p>
+
+			<p>Back in our learning project, we need a new file, <code>build.zig.zon</code>. "ZON" stands for Zig Object Notation and it allows Zig data to be expressed in a human readable format, and for that human readable format to be turned into Zig code. The contents of the <code>build.zig.zon</code> will be:</p>
+
+{% highlight zig %}
+.{
+  .name = "learning",
+  .version = "0.0.0",
+  .dependencies = .{
+    .calc = .{
+      .url = "https://github.com/karlseguin/calc.zig/archive/e43c576da88474f6fc6d971876ea27effe5f7572.tar.gz",
+      .hash = "12ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+  },
+}
+{% endhighlight %}
+
+		<p>There are two questionable values in this file, the first is <code>e43c576da88474f6fc6d971876ea27effe5f7572</code> within the <code>url</code>. This is simply the git commit hash. The second is the value of <code>hash</code>. As far as I know, there's currently no great way to tell what this value should be, so we use a dummy value for the time being.</p>
+
+		<p>To use this dependency, we need to make one change to our <code>build.zig</code>:</p>
+
+{% highlight zig %}
+
+// replace this:
+const calc_module = b.addModule("calc", .{
+	.source_file = .{ .path = "calc/calc.zig" },
+});
+
+// with this:
+const calc_dep = b.dependency("calc", .{.target = target,.optimize = optimize});
+const calc_module = calc_dep.module("calc");
+{% endhighlight %}
+
+		<p>In <code>build.zig.zon</code> we named the dependency <code>calc</code>, and that's the dependency that we're loading here. From within this dependency, we're grabbing the <code>calc</code> module, which is what we named the module in <code>calc's</code> <code>build.zig</code>.</p>
+
+		<p>If you try to run <code>zig build test</code>, you should see an error:</p>
+
+{% highlight text %}
+error: hash mismatch:
+expected:
+12ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+
+found:
+122053da05e0c9348d91218ef015c8307749ef39f8e90c208a186e5f444e818672d4
+{% endhighlight %}
+
+		<p>Copy and paste the correct hash back into the <code>build.zig.zon</code> and try running <code>zig build test</code> again. Everything should now be working.</p>
+
+		<p>It sounds like a lot, and I hope things get streamlined. But it's mostly something you can copy and paste from other projects and, once setup, you can move on.</p>
+
+		<p>A word of warning, I've found Zig's caching of dependencies to on the aggressive side. If you try to update a dependency but Zig doesn't seem to detect the change...well, I nuke the project's <code>zig-cache</code> folder as well as <code>~/.cache/zig</code>.</p>
+	</section>
+
+	<section>
+		<p>We've covered a lot of ground, exploring a few core data structures and bringing large chunks of previous parts together. Our code has become a little more complex, focusing less on specific syntax and looking more like real code. I'm excited by the possibility that, despite this complexity, the code mostly made sense. It it didn't, don't give up. Pick an example and break it, add print statements, write some tests for it. Get hands on with the code, making your own, and then come back and read over those parts that didn't make sense.</p>
+	</section>
+</article>
+
+<div class=pager>
+	<a class=prev href=generics>Generics</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href=conclusion>Conclusion</a>
+</div>

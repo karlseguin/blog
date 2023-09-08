@@ -13,18 +13,18 @@ tags: [learning]
 <p>I'm currently in the midst of the biggest change to Viki's platform since our March launch. I'm making it so that any service can return a list of ids, and our top router/cache will hydrate these with the actual data. For example, the recommendation service can return:</p>
 
 {% highlight javascript %}
-  ["5840c", "1933c", "323c", "485c"]
+s["5840c", "1933c", "323c", "485c"]
 {% endhighlight %}
 
 <p>Which the router, using its already cached content, will convert to:</p>
 
 {% highlight javascript %}
-  [
-    {"id": "5840c", "title": "Astro Boy", ....},
-    {"id": "1933c", ....},
-    {"id": "323c", ....},
-    {"id": "485c", ....}
-  ]
+[
+  {"id": "5840c", "title": "Astro Boy", ....},
+  {"id": "1933c", ....},
+  {"id": "323c", ....},
+  {"id": "485c", ....}
+]
 {% endhighlight %}
 
 <p>It's a pretty big change. But it's such a great fit for our architecture. It's a great fit for many of the upcoming features we're planning, but it was also a great fit from day one...I just didn't see it (Albert did, but much too late for us to seriously consider it before launch). Now, when "5840c" gets updated, all the lists will immediately reflect whatever change was made. Furthermore, any system can now return ids without having to worry about anything else (like what the data should look like).</p>

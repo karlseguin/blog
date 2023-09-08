@@ -11,20 +11,20 @@ tags: [c, data structures]
 <p>Here's the C code that we're going to learn from:</p>
 
 {% highlight clike %}
-  char *the = malloc(4 * sizeof(char));
-  char *cat = malloc(4 * sizeof(char));
+char *the = malloc(4 * sizeof(char));
+char *cat = malloc(4 * sizeof(char));
 
-  the[0] = 't';
-  the[1] = 'h';
-  the[2] = 'e';
-  the[3] = '\0';
+the[0] = 't';
+the[1] = 'h';
+the[2] = 'e';
+the[3] = '\0';
 
-  cat[0] = 'c';
-  cat[1] = 'a';
-  cat[2] = 't';
-  cat[3] = '\0';
+cat[0] = 'c';
+cat[1] = 'a';
+cat[2] = 't';
+cat[3] = '\0';
 
-  printf("%s", &the[4]);
+printf("%s", &the[4]);
 {% endhighlight %}
 
 <p>I want to draw your attention to the fact that <code>the</code> only has enough space allocated to hold 4 characters, which we fill with the value 'the\0'. (\0 is just how C knows that it has reached the end of the string, I'll blog about that some other time). However, notice that we're actually trying to print a string starting outside the bounds of <code>the</code>.</p>
@@ -42,10 +42,10 @@ tags: [c, data structures]
 <p>This Wild Wild West approach to memory access is the cause for many security vulnerabilities, normally in the shape of a buffer overflow. Consider the following code: </p>
 
 {% highlight clike %}
-  char *name = malloc(10 * sizeof(char));
-  printf("enter your name: ");
-  gets(name);
-  printf("you entered: %s", name);
+char *name = malloc(10 * sizeof(char));
+printf("enter your name: ");
+gets(name);
+printf("you entered: %s", name);
 {% endhighlight %}
 
 <p>The <code>gets</code> function doesn't do any bound checking, which means it'll read from STDIN as much as we type. If we type 15 characters, it'll store all 15, meaning 5 characters will overwrite memory which wasn't meant for <code>name</code>. What if the memory you are able to overwrite is critical? Data stored in memory isn't just for reading and writing, it's often executed, say in the form of the address of a function to execute.</p>
@@ -53,10 +53,10 @@ tags: [c, data structures]
 <p>The solution is to use something like <code>fgets</code> rather than <code>gets</code>, which let's us specify a size:</p>
 
 {% highlight clike %}
-  char *name = malloc(10 * sizeof(char));
-  printf("enter your name: ");
-  fgets(name, 10, stdin);
-  printf("you entered: %s", name);
+char *name = malloc(10 * sizeof(char));
+printf("enter your name: ");
+fgets(name, 10, stdin);
+printf("you entered: %s", name);
 {% endhighlight %}
 
 <p>You can see how raw and unguarded access to memory requires much more care. But it also provides great performance and less memory. Even if an array is now a somewhat complex object, I think there's value in thinking of them as little more than a continuous block of memory of which we only know (and need to know) its starting address.</p>

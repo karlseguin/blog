@@ -1,0 +1,609 @@
+---
+date: 2023-09-08
+layout: learning_zig
+title: "Learning Zig - Heap Memory & Allocators"
+tags: [zig]
+permalink: "/learning_zig/heap_memory"
+---
+
+<div class=pager>
+	<a class=prev href="stack_memory">Stack Memory</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href=generics>Generics</a>
+</div>
+
+<article>
+	<section>
+		<h1 tabindex=-1 id=heap_memory><a href=#heap_memory aria-hidden=true>Heap Memory and Allocators</a></h1>
+
+		<p>Everything we've seen so far has been constrained by requiring an upfront size. Arrays always have a compile-time known length (in fact, the length is part of the type). All of our strings have been string literals, which have a compile-time known length.</p>
+
+		<p>Furthermore, the two types of memory management strategies we've seen, global data and the call stack, while simple and efficient, are limiting. Neither can deal with dynamically sized data and both are rigid with respect to data lifetimes.</p>
+
+		<p>This part is divided into two themes. The first is a general overview of our third memory area, the heap. The other is Zig's straightforward but unique approach to managing heap memory. Even if you're familiar with heap memory, say from using C's <code>malloc</code>, you'll want to read the first part as it is quite specific to Zig.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=heap><a href=#heap aria-hidden=true>The Heap</a></h2>
+		<p>The heap is the third and final memory area at our disposal. Compared to both global data and the call stack, the heap is a bit of a wild west: anything goes. Specifically, within the heap, we can create memory at runtime with a runtime known size and have complete control over its lifetime.</p>
+
+		<p>The call stack is amazing because of the simple and predictable way it manages data (by pushing and popping stack frames). This benefit is also a drawback: data has a lifetime tied to its place on the call stack. The heap is the exact opposite. It has no built-in life cycle, so our data can live for as long or as short as necessary. And that benefit is its drawback: it has no built-in life cycle, so if we don't free data no one will.</p>
+
+		<p>Let's look at an example:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	// we'll be talking about allocators shortly
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	// ** The next two lines are the important ones **
+	var arr = try allocator.alloc(usize, getRandomCount());
+	defer allocator.free(arr);
+
+	for (0..arr.len) |i| {
+		arr[i] = i;
+	}
+	std.debug.print("{any}\n", .{arr});
+}
+
+fn getRandomCount() u8 {
+	const seed = std.time.timestamp();
+	var random = std.rand.DefaultPrng.init(@intCast(seed));
+	return random.random().uintAtMost(u8, 5) + 5;
+}
+{% endhighlight %}
+
+		<p>We'll cover Zig allocators shortly, for now know that the <code>allocator</code> is a <code>std.mem.Allocator</code>. We're using two of its methods: <code>alloc</code> and <code>free</code>. Because we're calling <code>allocator.alloc</code> with a <code>try</code>, we know that it can fail. Currently, the only possible error is <code>OutOfMemory</code>. Its parameters mostly tell us how it works: it wants a type (<code>T</code>) as well as a count and, on success, returns a slice of <code>[]T</code>. This allocation happens at runtime - it has to, our count is only known at runtime.</p>
+
+		<p>As a general rule, every <code>alloc</code> will have a corresponding <code>free</code>. Where <code>alloc</code> allocates memory, <code>free</code> releases it. Don't let this simple code limit your imagination. This <code>try alloc</code> + <code>defer free</code> pattern <em>is</em> common, and for good reason: freeing close to where we allocate is relatively foolproof. But equally common is allocating in one place of our code while freeing in another. As we said before, the heap has no builtin life cycle management. You can allocate memory in an HTTP handler and free it in a background thread, two completely separate parts of the code.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=defer><a href=#defer aria-hidden=true>defer & errdefer</a></h2>
+		<p>As a small detour, the above code introduced a new language feature: <code>defer</code> which executes the given code, or block, on scope exit. "Scope exit" includes reaching the end of the scope or returning from the scope. <code>defer</code> isn't strictly related to allocators or memory management; you can use it to execute any code. But the above usage is pretty typical.</p>
+
+		<p>Zig's defer is similar to Go's, with one major difference. In Zig, the defer will be run at the end of its containing scope. In Go, defer is run at the end of the containing function. Zig's approach is probably less surprising, unless you're a Go developer.</p>
+
+		<p>A relative of <code>defer</code> is <code>errdefer</code> which similarly executes the given code or block on scope exit, but only when an error is returned. This is useful when doing more complex setup and having to undo a previous allocation because of an error.</p>
+
+		<p>The following example is a jump in complexity. It showcases both <code>errdefer</code> and a common pattern that sees <code>init</code> allocating and <code>deinit</code> freeing:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub const Game = struct {
+	players: []Player,
+	history: []Move,
+	allocator: Allocator,
+
+	fn init(allocator: Allocator, player_count: usize) !Game {
+		var players = try allocator.alloc(Player, player_count);
+		errdefer allocator.free(players);
+
+		// store 10 most recent moves per player
+		var history = try allocator.alloc(Move, player_count * 10);
+
+		return .{
+			.players = players,
+			.history = history,
+			.allocator = allocator,
+		};
+	}
+
+	fn deinit(game: Game) void {
+		const allocator = game.allocator;
+		allocator.free(game.players);
+		allocator.free(game.history);
+	}
+};
+{% endhighlight %}
+
+		<p>Hopefully this highlights two things. First, the usefulness of <code>errdefer</code>. Under normal conditions, <code>players</code> is allocated in <code>init</code> and released in <code>deinit</code>. But there's an edge case where the initialization of <code>history</code> fails. In this case, we not only want to return the error to the caller, which <code>try</code> will do, but we also need to undo the allocation of <code>players</code>.</p>
+
+		<p>The second noteworthy aspect of this code is that the life cycle of our two dynamically allocated slices, <code>players</code> and <code>history</code>, is based on our application logic. There's no rule that dictates when <code>deinit</code> has to be called or who has to call it. This is good, because it gives us arbitrary lifetimes, but bad because we can mess it up by never calling <code>deinit</code> or calling it more than once.</p>
+
+		<aside>The names <code>init</code> and <code>deinit</code> aren't special. They're just what the Zig standard library uses and what the community has adopted. In some cases, including in the standard library, <code>open</code> and <code>close</code>, or other more appropriate names, are used.</aside>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=memory_leaks><a href=#memory_leaks aria-hidden=true>Double Free & Memory Leaks</a></h2>
+
+		<p>Just above, I mentioned that there were no rules that govern when something has to be freed. But that's not entirely true, there are a few important rules, they're just not enforced except by your own meticulousness.</p>
+
+		<p>The first rule is that you can't free the same memory twice.</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	var arr = try allocator.alloc(usize, 4);
+	allocator.free(arr);
+	allocator.free(arr);
+
+	std.debug.print("This won't get printed\n", .{});
+}
+{% endhighlight %}
+
+		<p>The last line of this code is prophetic, it <em>won't</em> be printed. This is because we <code>free</code> the same memory twice. This is known as a double-free and is not valid. This might seem simple enough to avoid, but in large projects with complex lifetimes, it can be hard to track down.</p>
+
+		<p>The second rule is that you can't free memory you don't have a reference to. That might sound obvious, but it isn't always clear who "owns" the memory and is responsible for freeing it. The following creates a new lowercase string:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+fn allocLower(allocator: Allocator, str: []const u8) ![]const u8 {
+	var dest = try allocator.alloc(u8, str.len);
+
+	for (str, 0..) |c, i| {
+		dest[i] = switch (c) {
+			'A'...'Z' => c + 32,
+			else => c,
+		};
+	}
+
+	return dest;
+}
+{% endhighlight %}
+
+		<p>The above code is fine. But the following usage isn't:</p>
+
+{% highlight zig %}
+// For this specific code, we should have used std.ascii.eqlIgnoreCase
+fn isSpecial(allocator: Allocator, name: [] const u8) !bool {
+	const lower = try allocLower(allocator, name);
+	return std.mem.eql(u8, lower, "admin");
+}
+{% endhighlight %}
+
+		<p>This is a memory leak. The memory created in <code>allocLower</code> is never freed. Not only that, but once <code>isSpecial</code> returns, it can never be freed. In languages with garbage collectors, when data becomes unreachable, it'll eventually be freed by the garbage collector. But in the above code, once <code>isSpecial</code> returns, we lose our only reference to the allocated memory, the <code>lower</code> variable. The memory is gone until our process exits. Our function might only leak a few bytes, but if it's a long running process and this function is called repeatedly, it <em>will</em> add up and we'll eventually run out of memory.</p>
+
+		<p>At least in the case of double free, we'll get a hard crash. Memory leaks can be insidious. It isn't just that the root cause can be difficult to identify. Really small leaks or leaks in infrequently executed code, can even be hard to detect. This is such a common problem that Zig does provide help, which we'll see when talking about allocators.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=create><a href=#create aria-hidden=true>create & destroy</a></h2>
+		<p>The <code>alloc</code> method of <code>std.mem.Allocator</code> returns a slice with the length that was passed as the 2nd parameter. If you want a single value, you'll use <code>create</code> and <code>destroy</code> instead of <code>alloc</code> and <code>free</code>. A few parts back, when learning about pointers, we created a <code>User</code> and tried to increment its power. Here's the working heap-based version of that code using <code>create:</code></p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	// again, we'll talk about allocators soon!
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	// create a User on the heap
+	var user = try allocator.create(User);
+
+	// free the memory allocated for the user at the end of this scope
+	defer allocator.destroy(user);
+
+	user.id = 1;
+	user.power = 100;
+
+	// this line has been added
+	levelUp(user);
+	std.debug.print("User {d} has power of {d}\n", .{user.id, user.power});
+}
+
+fn levelUp(user: *User) void {
+	user.power += 1;
+}
+
+pub const User = struct {
+	id: u64,
+	power: i32,
+};
+{% endhighlight %}
+
+		<p>The <code>create</code> method takes a single parameter, the type (<code>T</code>). It returns a pointer to that type or an error, i.e. <code>!*T</code>. Maybe you're wondering what would happen if we created our <code>user</code> but didn't set the <code>id</code> and/or <code>power</code>. This is like setting those fields to <code>undefined</code> and the behavior is, well, undefined.</p>
+
+		<p>When we explored dangling pointers, we had a function incorrectly return the address of the local user:</p>
+
+{% highlight zig %}
+pub const User = struct {
+	fn init(id: u64, power: i32) *User{
+		var user = User{
+			.id = id,
+			.power = power,
+		};
+		// this is a dangling pointer
+		return &user;
+	}
+};
+{% endhighlight %}
+
+		<p>In this case, it might have made more sense to return a <code>User</code>. But sometimes you <em>will</em> want a function to return a pointer to something it creates. You'll do this when you want a lifetime to be free from the call stack's rigidity. To solve our dangling pointer above, we could have used <code>create</code>:</p>
+
+{% highlight zig %}
+// our return type changed, since init can now fail
+// *User -> !*User
+fn init(allocator: std.mem.Allocator, id: u64, power: i32) !*User{
+	var user = try allocator.create(User);
+	user.* = .{
+		.id = id,
+		.power = power,
+	};
+	return user;
+}
+{% endhighlight %}
+
+		<p>I've introduce new syntax, <code>user.* = .{...}</code>. It's a bit weird, and I don't love it, but you will see it. The right side is something you've already seen: it's a structure initializer with an inferred type. We could have been explicit and used: <code>user.* = User{...}</code>. The left side, <code>user.*</code>, is how we dereference a pointer. <code>&</code> takes a <code>T</code> and gives us <code>*T</code>. <code>.*</code> is the opposite, applied to a value of type <code>*T</code> it gives us <code>T</code>. Remember that <code>create</code> returns a <code>!*User</code>, so our <code>user</code> is of type <code>*User</code>.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=allocators><a href=#allocators aria-hidden=true>Allocators</a></h2>
+		<p>One of Zig's core principle is <em>no hidden memory allocations</em>. Depending on your background, that might not sound too special. But it's a sharp contrast to what you'll find in C where memory is allocated with the standard library's <code>malloc</code> function. In C, if you want to know whether or not a function allocates memory, you need to read the source and look for calls to <code>malloc</code>.</p>
+
+		<p>Zig doesn't have a default allocator. In all of the above examples, functions that allocated memory took an <code>std.mem.Allocator</code> parameter.  By convention, this is usually the first parameter. All of Zig's standard library, and most third party libraries, require the caller to provide an allocator if they intend to allocate memory.</p>
+
+		<p>This explicitness can take one of two forms. In simple cases, the allocator is provided on each function call. There are many examples of this, but  <code>std.fmt.allocPrint</code> is one you'll likely need sooner or later. It's similar to the <code>std.debug.print</code> we've been using, but allocates and returns a string instead of writing it to stderr:</p>
+
+{% highlight zig %}
+const say = std.fmt.allocPrint(allocator, "It's over {d}!!!", .{user.power});
+defer allocator.free(say);
+{% endhighlight %}
+
+		<p>The other form is when an allocator is passed to <code>init</code>, and then used internally by the object. We saw this above with our <code>Game</code> structure. This is less explicit, since you've given the object an allocator to use, but you don't know which method calls will actually allocate. This approach is more practical for long-lived objects.</p>
+
+		<p>The advantage of injecting the allocator isn't just explicitness, it's also flexibility. <code>std.mem.Allocator</code> is an interface which provides the <code>alloc</code>, <code>free</code>, <code>create</code> and <code>destroy</code> functions, along with a few others. So far we've only see the <code>std.heap.GeneralPurposeAllocator</code>, but other implementations are available in the standard library or as third party libraries</p>
+
+		<aside>Zig doesn't have nice syntactical sugar for creating interface. One pattern for interface-life behaviour are tagged unions, though that's relatively constrained compared to true interfaces. Other patterns have emerged and are used throughout the standard library, such as with <code>std.mem.Allocator</code>. This guide does not explore the interface patterns.</aside>
+
+		<p>If you're building a library, then it's best to accept an <code>std.mem.Allocator</code> and let users of your library decide which allocator implementation to use. Otherwise, you'll need to chose the right allocator, and, as we'll see, these are not mutually exclusive. There can be good reason to create different allocators within your program.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=gpa><a href=#gpa aria-hidden=true>General Purpose Allocator</a></h2>
+		<p>As the name implies, the <code>std.heap.GeneralPurposeAllocator</code> is an all around "general purpose", thread-safe allocator that can serve as your application's main allocator. For many programs, this will be the only allocator needed. On program start, an allocator is created and passed to functions that need it. The sample code from my HTTP server library is a good example:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const httpz = @import("httpz");
+
+pub fn main() !void {
+	// create our general purpose allocator
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+	// get an std.mem.Allocator from it
+	const allocator = gpa.allocator();
+
+	// pass our allocator to functions and libraries that require it
+	var server = try httpz.Server().init(allocator, .{.port = 5882});
+
+	var router = server.router();
+	router.get("/api/user/:id", getUser);
+
+	// blocks the current thread
+	try server.listen();
+}
+{% endhighlight %}
+
+			<p>We create the <code>GeneralPurposeAllocator</code>, get an <code>std.mem.Allocator</code> from it and pass it to the <code>init</code> function of the HTTP server. In a more complex project, <code>allocator</code> would get passed to multiple parts of the code, each of those possibly passing it to their own functions, objects and dependencies.</p>
+
+			<p>You might notice that the syntax around the creation of <code>gpa</code> is a little strange. What is this: <code>GeneralPurposeAllocator(.{}){}</code>? It's all things we've seen before, just smashed together. <code>std.heap.GeneralPurposeAllocator</code> is a function, and since it's using PascalCase, we know that it returns a type. (We'll talk more about generics in the next part). Knowing that it returns a type, maybe this more explicit version will be easier to decipher:</p>
+
+{% highlight zig %}
+const T = std.heap.GeneralPurposeAllocator(.{});
+var gpa = T{};
+
+// is the same as:
+
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+{% endhighlight %}
+
+		<p>Maybe you're still unsure about the meaning of <code>.{}</code>. This is also something we've seen before: it's a struct initializer with an implicit type. What's the type and where are the fields? The type is an <code>std.heap.general_purpose_allocator.Config</code> though it isn't directly exposed like this, which is one reason we aren't explicit. No fields are set because the <code>Config</code> struct defines defaults, which we'll be using. This is a common pattern with configuration / options. In fact, we see it again a few lines down when we pass <code>.{.port = 5882}</code> to <code>init</code>. In this case, we're using the default value for all but one field, the <code>port</code>.</p>
+	</section>
+
+
+	<section>
+		<h2 tabindex=-1 id=testing><a href=#testing aria-hidden=true>std.testing.allocator</a></h2>
+
+		<p>Hopefully you were sufficiently troubled when we talked about memory leaks and then eager to learn more when I mentioned that Zig could help. This help comes from the <code>std.testing.allocator</code>, which is an <code>std.mem.Allocator</code>. Currently it's implemented using the <code>GeneralPurposeAllocator</code> with added integration in Zig's test runner, but that's an implementation detail. The important thing is that if we use <code>std.testing.allocator</code> in our tests, we can catch most memory leaks.</p>
+
+		<p>You're likely already familiar with dynamic arrays, often called ArrayLists. In many dynamic programming languages all arrays are dynamic arrays. Dynamic arrays support a variable number of elements. Zig has a proper generic ArrayList, but we'll create one specifically to hold integers and to demonstrate leak detection:</p>
+
+{% highlight zig %}
+pub const IntList = struct {
+	pos: usize,
+	items: []i64,
+	allocator: Allocator,
+
+	fn init(allocator: Allocator) !IntList {
+		return .{
+			.pos = 0,
+			.allocator = allocator,
+			.items = try allocator.alloc(i64, 4),
+		};
+	}
+
+	fn deinit(self: IntList) void {
+		self.allocator.free(self.items);
+	}
+
+	fn add(self: *IntList, value: i64) !void {
+		const pos = self.pos;
+		const len = self.items.len;
+
+		if (pos == len) {
+			// we've run out of space
+			// create a new slice that's twice as large
+			var larger = try self.allocator.alloc(i64, len * 2);
+
+			// copy the items we previously added to our new space
+			@memcpy(larger[0..len], self.items);
+
+			self.items = larger;
+		}
+
+		self.items[pos] = value;
+		self.pos = pos + 1;
+	}
+};
+{% endhighlight %}
+
+		<p>The interesting part happens in <code>add</code> when <code>pos == len</code> indicating that we've filled our current array and need to create a larger one. We can use <code>IntList</code> like so:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	var list = try IntList.init(allocator);
+	defer list.deinit();
+
+	for (0..10) |i| {
+		try list.add(@intCast(i));
+	}
+
+	std.debug.print("{any}\n", .{list.items[0..list.pos]});
+}
+{% endhighlight %}
+
+		<p>The code runs and prints the correct result. However, even though we <em>did</em> call <code>deinit</code> on <code>list</code>, there's a memory leak. It's ok if you didn't catch it because we're going to write a test and use <code>std.testing.allocator</code>:</p>
+
+{% highlight zig %}
+const testing = std.testing;
+test "IntList: add" {
+	// We're using testing.allocator here!
+	var list = try IntList.init(testing.allocator);
+	defer list.deinit();
+
+	for (0..5) |i| {
+		try list.add(@intCast(i+10));
+	}
+
+	try testing.expectEqual(@as(usize, 5), list.pos);
+	try testing.expectEqual(@as(i64, 10), list.items[0]);
+	try testing.expectEqual(@as(i64, 11), list.items[1]);
+	try testing.expectEqual(@as(i64, 12), list.items[2]);
+	try testing.expectEqual(@as(i64, 13), list.items[3]);
+	try testing.expectEqual(@as(i64, 14), list.items[4]);
+}
+{% endhighlight %}
+
+		<aside><code>@as</code> is a built-in that performs type coercion. If you're wondering why our test had to use so many of them, you aren't the only one. Technically it's because the second parameter, the "actual", is coerced to the first, the "expected". In the above, our "expected" are all <code>comptime_int</code>, which causes issues. Many, myself included, find this a <a href="https://github.com/ziglang/zig/issues/4437">strange and unfortunate behavior</a>.</aside>
+
+		<p>If you're following along, place the test in the same file as <code>IntList</code> and <code>main</code>. Zig tests are normally written in the same file, often near the code, they're testing. When we use <code>zig test learning.zig</code> to run our test, we get an amazing failure:</p>
+
+{% highlight text %}
+Test [1/1] test.IntList: add... [gpa] (err): memory address 0x101154000 leaked:
+/code/zig/learning.zig:26:32: 0x100f707b7 in init (test)
+   .items = try allocator.alloc(i64, 2),
+                               ^
+/code/zig/learning.zig:55:29: 0x100f711df in test.IntList: add (test)
+ var list = try IntList.init(testing.allocator);
+
+... MORE STACK INFO ...
+
+[gpa] (err): memory address 0x101184000 leaked:
+/code/test/learning.zig:40:41: 0x100f70c73 in add (test)
+   var larger = try self.allocator.alloc(i64, len * 2);
+                                        ^
+/code/test/learning.zig:59:15: 0x100f7130f in test.IntList: add (test)
+  try list.add(@intCast(i+10));
+{% endhighlight %}
+
+		<p>We have multiple memory leaks. Thankfully the testing allocator tells us exactly where the leaking memory was allocated. Are you able to spot the leak now? If not, remember that, in general, every <code>alloc</code> should have a corresponding <code>free</code>. Our code calls <code>free</code> once, in <code>deinit</code>. However, <code>alloc</code> is called once in <code>init</code> and then every time <code>add</code> is called and we need more space. Every time we <code>alloc</code> more space, we need to <code>free</code> the previous <code>self.items</code>:</p>
+
+{% highlight zig %}
+// existing code
+var larger = try self.allocator.alloc(i64, len * 2);
+@memcpy(larger[0..len], self.items);
+
+// Added code
+// free the previous allocation
+self.allocator.free(self.items);
+{% endhighlight %}
+
+		<p>Adding this last line, after copying the items to our <code>larger</code> slice, solves the problem. If you run <code>zig test learning.zig</code>, there should be no error.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=arena><a href=#arena aria-hidden=true>ArenaAllocator</a></h2>
+		<p>The GeneralPurposeAllocator is a reasonable default because it works well in all possible cases. But within a program, you might run into allocation patterns which can benefit from more specialized allocators. One example is the need for of short-lived state which can be discarded when processing is completed. Parsers often have such a requirement. A skeleton <code>parse</code> function might look like:</p>
+
+{% highlight zig %}
+fn parse(allocator: Allocator, input: []const u8) !Something {
+	var state = State{
+		.buf = try allocator.alloc(u8, 512),
+		.nesting = try allocator.alloc(NestType, 10),
+	};
+	defer allocator.free(state.buf);
+	defer allocator.free(state.nesting);
+
+	return parseInternal(allocator, state, input);
+}
+{% endhighlight %}
+
+			<p>While this isn't too hard to manage, <code>parseInternal</code> might need other short lived allocations which will need to be freed. As an alternative, we could create an ArenaAllocator which allows us to free all allocations in one shot:</p>
+
+
+{% highlight zig %}
+fn parse(allocator: Allocator, input: []const u8) !Something {
+	// create an ArenaAllocator from the supplied allocator
+	var arena = std.heap.ArenaAllocator.init(allocator);
+
+	// this will free anything created from this arena
+	defer arena.deinit();
+
+	// create an std.mem.Allocator from the arena, this will be
+	// the allocator we'll use internally
+	const aa = arena.allocator();
+
+	var state = State{
+		// we're using aa here!
+		.buf = try aa.alloc(u8, 512),
+
+		// we're using aa here!
+		.nesting = try aa.alloc(NestType, 10),
+	};
+
+	// we're passing aa here, so any we're guaranteed that
+	// any other allocation will be in our arena
+	return parseInternal(aa, state, input);
+}
+{% endhighlight %}
+
+			<p>The <code>ArenaAllocator</code> takes a child allocator, in this case the allocator that was passed into <code>init</code>, and creates a new <code>std.mem.Allocator</code>. When this new allocator is used to allocate or create memory, we don't need to call <code>free</code> or <code>destroy</code>. Everything will be released when we call <code>deinit</code> on the <code>arena</code>. In fact, the <code>free</code> and <code>destroy</code> of an ArenaAllocator do nothing.</p>
+
+			<p>The <code>ArenaAllocator</code> has to be used carefully. Since there's no way to free individual allocations, you need to be sure that the arena's <code>deinit</code> will be called within a reasonable memory growth. Interestingly, that knowledge can either be internal or external. For example, in our above skeleton, leveraging an ArenaAllocator makes sense from within the Parser since the details of the state's lifetime is an internal matter.</p>
+
+			<aside>Allocators like the ArenaAllocator that have a mechanism for freeing all previous allocations can break the rule that every <code>alloc</code> should have a corresponding <code>free</code>. However, if you receive an <code>std.mem.Allocator</code> you should not make any assumptions about the underlying implementation.</aside>
+
+			<p>The same can't be said for our <code>IntList</code>. It can be used to store 10 or 10 million values. It can have a lifetime measured in milliseconds or weeks. It's in no position to decide the type of allocator to use. It's the code making use of <code>IntList</code> that has this knowledge. Originally, we managed our <code>IntList</code> like so:</p>
+
+{% highlight zig %}
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
+
+var list = try IntList.init(allocator);
+defer list.deinit();
+{% endhighlight %}
+
+			<p>We could have opted to supply an ArenaAllocator instead:</p>
+
+{% highlight zig %}
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
+
+var arena = std.heap.ArenaAllocator.init(allocator);
+defer arena.deinit();
+const aa = arena.allocator();
+
+var list = try IntList.init(aa);
+
+// I'm honestly torn on whether or not we should call list.deinit.
+// Technically, we don't have to since we call defer arena.deinit() above.
+defer list.deinit();
+
+...
+{% endhighlight %}
+
+			<p>We don't need to change <code>IntList</code> since it only deals with an <code>std.mem.Allocator</code>. And if <code>IntList</code> <em>did</em> internally create its own arena, that would work too. There's no reason you can't create an arena within an arena.</p>
+
+			<p>As a last quick example, the HTTP server I mentioned above exposes an arena allocator on the <code>Response</code>. Once the response is sent, the arena is cleared. The predictable lifetime of the arena (from request start to request end), makes it an efficient option. Efficient in terms of performance and easy of use.</p>
+		</section>
+
+	<section>
+		<h2 tabindex=-1 id=fixedbuffer><a href=#fixedbuffer aria-hidden=true>FixedBufferAllocator</a></h2>
+
+		<p>The last allocator that we'll look at is the <code>std.heap.FixedBufferAllocator</code> which allocates memory from a buffer (i.e. <code>[]u8</code>) that we provide. This allocator has two major benefits. First, since all the memory it could possibly use is created upfront, it's fast. Second, it naturally limits how much memory can be allocated. This hard limit can also be seen as a drawback. Another drawbacks is that <code>free</code> and <code>destroy</code> will only work on the last allocated/created item (think of a stack). Freeing the non-last allocation is safe to call, but won't free anything.</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	var buf: [150]u8 = undefined;
+	var fa = std.heap.FixedBufferAllocator.init(&buf);
+	defer fa.reset();
+
+	const allocator = fa.allocator();
+
+	const json = try std.json.stringifyAlloc(allocator, .{
+		.this_is = "an anonymous struct",
+		.above = true,
+		.last_param = "are options",
+	}, .{.whitespace = .indent_2});
+
+	std.debug.print("{s}\n", .{json});
+}
+{% endhighlight %}
+
+		<p>The above prints:</p>
+
+{% highlight text %}
+{
+  "this_is": "an anonymous struct",
+  "above": true,
+  "last_param": "are options"
+}
+{% endhighlight %}
+
+		<p>But change our <code>buf</code> to be a <code>[120]u8</code> and you'll get an OutOfMemory error.</p>
+
+		<p>A common pattern with FixedBufferAllocators, and to a lesser degree ArenaAllocators, is to <code>reset</code> them and reuse them. This frees all previous allocations and allows the allocator to be reused.</p>
+	</section>
+
+	<section>
+		<p>By not having a default allocator, Zig is both transparent and flexible with respect to allocations. The <code>std.mem.Allocator</code> interface is powerful, allowing specialized allocators to wrap more general ones, as we saw with the <code>ArenaAllocator</code>.</p>
+
+		<p>More generally, the power and associated responsibilities of heap allocations are hopefully apparent. The ability to allocate arbitrary sized memory with an arbitrary lifetime is essential to most programs.</p>
+
+		<p>However, because of the complexity that comes with dynamic memory, you should keep an eye out for alternatives. For example, above we used <code>std.fmt.allocPrint</code> but the standard library also has an <code>std.fmt.bufPrint</code>. The latter takes a buffer instead of an allocator:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	const name = "Leto";
+
+	var buf: [100]u8 = undefined;
+	const greeting = try std.fmt.bufPrint(&buf, "Hello {s}", .{name});
+
+	std.debug.print("{s}\n", .{greeting});
+}
+{% endhighlight %}
+
+		<p>This API moves the memory management burden to the caller. If we had a longer <code>name</code>, or a smaller <code>buf</code>, our <code>bufPrint</code> could return an <code>NoSpaceLeft</code> error. But there are plenty of scenarios where an application has known limits, such as a maximum name length. In those cases <code>bufPrint</code> is safer and faster.</p>
+
+		<p>Another possible alternative to dynamic allocations is streaming data to an <code>std.io.Writer</code>. Like our <code>Allocator</code>, <code>Writer</code> is an interface implemented by many types, such as files. Above, we used <code>stringifyAlloc</code> to serialize JSON into a dynamically allocated string. We could have used <code>stringify</code> and provided a <code>Writer</code>:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+	const out = std.io.getStdOut();
+
+	try std.json.stringify(.{
+		.this_is = "an anonymous struct",
+		.above = true,
+		.last_param = "are options",
+	}, .{.whitespace = .indent_2}, out.writer());
+}
+{% endhighlight %}
+
+
+		<aside>While allocators are often the given as the first parameter of a function, writers are normally the last. <span style="font-family: monospace;">ಠ_ಠ</span></aside>
+
+		<p>In many cases, wrapping our writer in an <code>std.io.BufferedWriter</code> would give a nice performance boost.</p>
+
+		<p>The goal isn't to eliminate all dynamic allocations. It wouldn't work, as these alternatives only make sense in specific cases. But now you have many options at your disposal. From stack frames to a general purpose allocator, and all the things in between, like static buffers, streaming writers and specialized allocators.</p>
+	</section>
+
+</article>
+
+<div class=pager>
+	<a class=prev href="stack_memory">Stack Memory</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href=generics>Generics</a>
+</div>

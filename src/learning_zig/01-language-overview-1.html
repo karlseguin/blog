@@ -1,0 +1,463 @@
+---
+date: 2023-09-08
+layout: learning_zig
+title: "Learning Zig - Language Overview - Part 1"
+tags: [zig]
+permalink: "/learning_zig/language_overview_1"
+---
+<div class=pager>
+	<a class=prev href=/learning_zig>Intro</a>
+	<a class=next href=language_overview_2>Language Overview - Part 2</a>
+</div>
+
+<article>
+	<h1 tabindex=-1 id=language_overview><a href=#language_overview aria-hidden=true>Language Overview - Part 1</a></h1>
+	<p>Zig is a strongly typed compiled language. It supports generics, has powerful compile-time metaprogramming capabilities and <strong>does not</strong> include a garbage collector. Many people consider Zig a modern alternative to C. As such, the language's syntax is C-like. We're talking semicolon terminated statements and curly brace delimited blocks.</p>
+
+	<p>Here's what Zig code looks like:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+// This code won't compile if `main` isn't `pub` (public)
+pub fn main() void {
+	const user = User{
+		.power = 9001,
+		.name = "Goku",
+	};
+
+	std.debug.print("{s}'s power is {d}\n", .{user.name, user.power});
+}
+
+pub const User = struct {
+	power: u64,
+	name: []const u8,
+};
+{% endhighlight %}
+
+	<p>If you save the above as <em>learning.zig</em> and run <code>zig run learning.zig</code>, you should see: <code>Goku's power is 9001</code>.</p>
+
+	<p>This is a simple example, something you might be able to follow even if it's your first time seeing Zig. Still, we're going to go over it line by line.</p>
+
+	<aside>See the <a href="/learning_zig	/#install">installing zig</a> section to quickly get up and running.</aside>
+
+	<section>
+		<h2 tabindex=-1 id=importing><a href=#importing aria-hidden=true>Importing</a></h2>
+		<p>Very few programs are written as a single file without a standard library or external libraries. Our first program is no exception and uses Zig's standard library to print our output. Zig's import system is straightforward and relies on the <code>@import</code> function and <code>pub</code> keyword (to make code accessible outside the current file).</p>
+
+		<aside>Functions that begin with <code>@</code> are builtin functions. They are provided by the compiler as opposed to the standard library.</aside>
+
+		<p>We import a module by specifying the module name. Zig's standard library is available using the "std" name. To import a specific file, we use its path relative to the file doing the importing. For example if we moved the <code>User</code> struct into its own file, say <em>models/user.zig</em>:</p>
+
+{% highlight zig %}
+// models/user.zig
+pub const User = struct {
+	power: u64,
+	name: []const u8,
+};
+{% endhighlight %}
+
+	<p>We'd then import it via:</p>
+
+{% highlight zig %}
+// main.zig
+const User = @import("models/user.zig").User;
+{% endhighlight %}
+
+		<aside>If our <code>User</code> struct wasn't marked as <code>pub</code> we'd get the following error: <em>'User' is not marked 'pub'</em>.</aside>
+
+		<p><i>models/user.zig</i> can export more than one thing. For example, we could also export a constant:</p>
+
+{% highlight zig %}
+// models/user.zig
+pub const MAX_POWER = 100_000;
+
+pub const User = struct {
+	power: u64,
+	name: []const u8,
+};
+{% endhighlight %}
+
+		<p>In which case, we could import both:</p>
+
+{% highlight zig %}
+const user = @import("models/user.zig");
+const User = user.User;
+const MAX_POWER = user.MAX_POWER
+{% endhighlight %}
+
+		<p>At this point, you might have more questions than answers. In the above snippet, what's <code>user</code>? We haven't seen it yet, but what if we use <code>var</code> instead of <code>const</code>? Or maybe you're wondering how to use third party libraries. These are all good questions, but to answer them, we first need to learn more about Zig. For now we'll have to be satisfied with what we've learned: how to import Zig's standard library, how to import other files and how to export definitions.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=comments><a href=#comments aria-hidden=true>Comments</a></h2>
+		<p>The next line our Zig example is a comment:</p>
+
+{% highlight zig %}
+// This code won't compile if `main` isn't `pub` (public)
+{% endhighlight %}
+
+		<p>Zig doesn't have multi-line comments, like C's <code>/* ... */</code>.</p>
+
+		<p>There is experimental support for automated document generation based on comments. If you've seen Zig's <a href="https://ziglang.org/documentation/master/std">standard library documentation</a>, then you've seen this in action. <code>//!</code> is known as a top-level document comment and can be placed at the top of the file. A triple-slash comment (<code>///</code>), known as a document comment, can go in specific places such as before a declaration. You'll get a compiler error if you try to use either type of document comment in the wrong place.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=functions><a href=#functions aria-hidden=true>Functions</a></h2>
+		<p>Our next line of code is the start of our <code>main</code> function:</p>
+
+{% highlight zig %}
+pub fn main() void
+{% endhighlight %}
+
+		<p>Every executable needs a function named <code>main</code>: it's the entry point into the program. If we renamed <code>main</code> to something else, like <code>doIt</code>, and tried to run <code>zig run learning.zig</code>, we'd get an error saying that <em>'learning' has no member named 'main'</em>.</p>
+
+		<p>Ignoring <code>main's</code> special role as our program's entry point, it's a really basic function: it takes no parameters and returns nothing, aka <code>void</code>. The following is <em>slightly</em> more interesting:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	const sum = add(8999, 2);
+	std.debug.print("8999 + 2 = {d}\n", .{sum});
+}
+
+fn add(a: i64, b: i64) i64 {
+	return a + b;
+}
+{% endhighlight %}
+
+		<p>C and C++ programmers will notice that Zig doesn't require forward declarations, i.e. <code>add</code> is called <em>before</em> it's defined.</p>
+
+		<p>The next thing to note is the <code>i64</code> type: a 64-bit signed integer. Some other numeric types are: <code>u8</code>, <code>i8</code>, <code>u16</code>, <code>i16</code>, <code>u32</code>, <code>i32</code>, <code>u47</code>, <code>i47</code>, <code>u64</code>, <code>i64</code>, <code>f32</code> and <code>f64</code>. The inclusion of <code>u47</code> and <code>i47</code> isn't a test to make sure you're still awake; Zig supports arbitrary bit-width integers. Though you probably won't use these often, they can come in handy. One type you <em>will</em> use often is <code>usize</code> which is an unsigned pointer sized integer and generally the type that represents the length/size of something.</p>
+
+		<aside>
+		In addition to <code>f32</code> and <code>f64</code>, Zig also supports <code>f16</code>, <code>f80</code> and <code>f128</code> floating point types.
+		</aside>
+
+		<p>While there's no good reason to do so, if we change the implementation of <code>add</code> to:</p>
+
+	{% highlight zig %}
+fn add(a: i64, b: i64) i64 {
+	a += b;
+	return a;
+}
+	{% endhighlight %}
+
+		<p>We'll get an error on <code>a += b;</code>: <em>cannot assign to constant</em>. This is an important lesson that we'll revisit in greater detail later: function parameters are constants.</p>
+
+		<p>For the sake of improved readability, there is no function overloading (the same function named defined with different parameter types and/or number of parameters). For now, that's all we need to know about functions.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=structures><a href=#structures aria-hidden=true>Structures</a></h2>
+		<p>The next line of code is the creation of a <code>User</code>, a type which is defined at the end of our snippet. The definition of <code>User</code> is:</p>
+
+{% highlight zig %}
+pub const User = struct {
+	power: u64,
+	name: []const u8,
+};
+{% endhighlight %}
+
+		<aside>Since our program is a single file and therefore <code>User</code> is only used in the file where it's defined, we didn't need to make it <code>pub</code>.</aside>
+
+		<p>Struct fields are terminated with a comma and can be given a default value:</p>
+
+{% highlight zig %}
+pub const User = struct {
+	power: u64 = 0,
+	name: []const u8,
+};
+{% endhighlight %}
+
+		<p>When we create a struct, <strong>every</strong> field has to be set. For example, in the original definition, where <code>power</code> had no default value, the following would give an error: <em>missing struct field: power</em></p>
+
+{% highlight zig %}
+const user = User{.name = "Goku"};
+{% endhighlight %}
+
+		<p>However, with our default value, the above compiles fine.</p>
+
+		<p>Structs can have methods, they can contain declarations (including other structs) and they might even contain zero fields, at which point they act more like a namespace.</p>
+
+{% highlight zig %}
+pub const User = struct {
+	power: u64 = 0,
+	name: []const u8,
+
+	pub const SUPER_POWER = 9000;
+
+	fn diagnose(user: User) void {
+		if (user.power >= SUPER_POWER) {
+			std.debug.print("it's over {d}!!!", .{SUPER_POWER});
+		}
+	}
+};
+{% endhighlight %}
+
+		<p>Methods are just normal functions that can be called with a dot syntax. Both of these work:</p>
+
+{% highlight zig %}
+// call diagnose on user
+user.diagnose();
+
+// The above is syntactical sugar for:
+User.diagnose(user);
+{% endhighlight %}
+
+		<p>Most of the time you'll use the dot syntax, but methods as syntactical sugar over normal functions can come in handy. </p>
+
+		<aside>The <code>if</code> statement is the first control flow we've seen. It's pretty straightforward, right? We'll explore this in more detail in the next part.</aside>
+
+		<p><code>diagnose</code> is defined within our <code>User</code> type and accepts a <code>User</code> as its first parameter. As such, we can call it with the dot syntax. But functions within a structure don't <em>have</em> to follow this pattern. One common example is having an <code>init</code> function to initiate our structure:</p>
+
+{% highlight zig %}
+pub const User = struct {
+	power: u64 = 0,
+	name: []const u8,
+
+	pub fn init(name: []const u8, power: u64) User {
+		return User{
+			.name = name,
+			.power = power,
+		};
+	}
+}
+{% endhighlight %}
+
+		<p>The use of <code>init</code> is merely a convention and in some cases <code>open</code> or some other name might make more sense. If you're like me and not a C++ programmer, the syntax to initalize fields, <code>.$field = $value,</code> might be a little odd, but you'll get used to it in no time.</p>
+
+		<p>When we created "Goku" we declared the <code>user</code> variable as <code>const</code>:</p>
+
+{% highlight zig %}
+const user = User{
+	.power = 9001,
+	.name = "Goku",
+};
+{% endhighlight %}
+
+		<p>This means we can't modify <code>user</code>. To modify a variable, it should be declared using <code>var</code>. Also, you might have noticed that <code>user's</code> type is inferred based on what's assigned to it. We could be explicit:</p>
+
+{% highlight zig %}
+const user: User = User{
+	.power = 9001,
+	.name = "Goku",
+};
+{% endhighlight %}
+
+		<p>We'll see cases where we have to be explicit about a variable's type, but most of the time, code is more readable without the explicit type. The type inference works the other way too. This is equivalent to both of the above snippets:</p>
+
+{% highlight zig %}
+const user: User = .{
+	.power = 9001,
+	.name = "Goku",
+};
+{% endhighlight %}
+
+	<p>This usage is pretty unusual though. One place where it's more common is when returning a structure from a function. Here the type can be inferred from the function's return type. Our <code>init</code> function would more likely be written like so:</p>
+
+{% highlight zig %}
+pub fn init(name: []const u8, power: u64) User {
+	// instead of return User{...}
+	return .{
+		.name = name,
+		.power = power,
+	};
+}
+{% endhighlight %}
+
+	<p>Like most things we've explored so far, we'll revisit structs in the future when talking about other parts of the language. But, for the most part, they're straightforward.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=arrays><a href=#arrays aria-hidden=true>Arrays and Slices</a></h2>
+		<p>We could gloss over the last line of our code, but given that our little snippet contains two strings, "Goku" and "{s}'s power is {d}\n", you're likely curious about strings in Zig. To better understand strings, let's first explore arrays and slices.</p>
+
+		<p>Arrays are fixed sized with a length known at compile time. The length is part of the type, thus an array of 4 signed integers, <code>[4]i32</code>, is a different type than an array of 5 signed integers, <code>[5]i32</code>.</p>
+
+		<p>The array length can be inferred from the initialization. In the following code, all three variables are of type <code>[5]i32</code>:</p>
+
+{% highlight zig %}
+const a = [5]i32{1, 2, 3, 4, 5};
+
+// we already saw this .{...} syntax with structs
+// it works with arrays too
+const b: [5]i32 = .{1, 2, 3, 4, 5};
+
+// use _ to let the compiler infer the length
+const c = [_]i32{1, 2, 3, 4, 5};
+{% endhighlight %}
+
+		<p>A slice on the other hand is a pointer to an array with a length. The length is known at runtime. We'll go over pointers in a later part, but you can think of a slice as a view into the array.</p>
+
+		<aside>If you're familiar with Go, you might have noticed that slices in Zig are a bit different: they <strong>don't</strong> have a capacity, only a pointer and a length.</aside>
+
+		<p>Given the following,</p>
+
+{% highlight zig %}
+const a = [_]i32{1, 2, 3, 4, 5};
+const b = a[1..4];
+{% endhighlight %}
+
+		<p>I'd love to be able to tell you that <code>b</code> is a slice with a length of 3 and a pointer to <code>a</code>. But because we "sliced" our array using values that are known at compile time, i.e. <code>1</code> and <code>4</code>, our length, <code>3</code>, is also known at compile time. Zig figures all this out and thus <code>b</code> isn't a slice, but rather a pointer to an array of integers with a length of 3. Specifically, its type is <code>*const [3]i32</code>. So this demonstrate of a slice is foiled by Zig's cleverness.</p>
+
+		<p>In real code, you'll likely use slices more than arrays. For better or worse, programs tend to have more runtime information than compile time information. In a small example though, we have to trick the compiler to get what we want:</p>
+
+{% highlight zig %}
+const a = [_]i32{1, 2, 3, 4, 5};
+var end: usize = 4;
+const b = a[1..end];
+{% endhighlight %}
+
+		<p><code>b</code> is now a proper slice, specifically its type is <code>[]const i32</code>. You can see that the length of the slice isn't part of the type, because the length is a runtime property, and types are always fully known at compile time. When creating a slice, we can omit the upper bound to create a slice to the end of whatever we're slicing (either an array or a slice), e.g. <code>const c = b[2..];</code>.</p>
+
+		<aside>If we had declared <code>end</code> as a <code>const</code> then it would have become a compile-time known value, which would have resulted in a compile-time known length for <code>b</code> and thus created a pointer to an array, not a slice. I find this a little confusing, but it isn't something that comes up too often and it isn't too hard to master. I would have loved to skip over it at this point, but couldn't figure out an honest way to avoid this detail.</aside>
+
+		<p>Learning Zig has taught me that types are very descriptive. It isn't just an integer or a boolean, or even an array of signed 32 bit integers. Types also contain other important pieces of information. We've talked about the length being part of an array's type, and many of the examples have shown how the const-ness is also part of it. For example, in our last example, <code>b's</code> type is <code>[]const i32</code>. You can see this for yourself with the following code:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	const a = [_]i32{1, 2, 3, 4, 5};
+	var end: usize = 4;
+	const b = a[1..end];
+	std.debug.print("{any}", .{@TypeOf(b)});
+}
+{% endhighlight %}
+
+		<p>If we tried to write into <code>b</code>, such as <code>b[2] = 5;</code> we'd get a compile time error: <em>cannot assign to constant</em>. This is because of <code>b's</code> type.</p>
+
+		<p>To solve this, you might be tempted to make this change:</p>
+
+{% highlight zig %}
+// replace const with var
+var b = a[1..end];
+{% endhighlight %}
+
+	<p>but you'll get the same error, why? As a hint, what's <code>b's</code> type, or more generically, what is <code>b</code>? A slice is a length and pointer to [part of] an array. A slice's type is always derived from the underlying array. Whether <code>b</code> is declared <code>const</code> or not, the underlying array is of type <code>[5]const i32</code> and so b must be of type <code>[]const i32</code>. If we want to be able to write into <code>b</code>, we need to change <code>a</code> from a <code>const</code> to a <code>var</code>.</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	var a = [_]i32{1, 2, 3, 4, 5};
+	var end: usize = 4;
+	const b = a[1..end];
+	b[2] = 99;
+}
+{% endhighlight %}
+
+		<p>This works because our slice is no longer <code>[]const i32</code> but rather <code>[]i32</code>. You might reasonably be wondering why this works when <code>b</code> is still a <code>const</code>. But the const-ness of <code>b</code> relates to <code>b</code> itself, not the data that <code>b</code> points to. Well, I'm not sure that's a great explanation, but for me, this code highlights the difference:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	var a = [_]i32{1, 2, 3, 4, 5};
+	var end: usize = 4;
+	const b = a[1..end];
+	b = b[1..];
+}
+{% endhighlight %}
+
+		<p>This won't compile; as the compiler tells us, we <em>cannot assign to constant</em>. But if we had done <code>var b = a[1..end];</code>, then the code would have worked because <code>b</code> itself is no longer a constant.</p>
+
+		<p>We'll discover more about arrays and slices while looking at other aspects of the language, not the least of which are strings.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=strings><a href=#strings aria-hidden=true>Strings</a></h2>
+
+		<p>I wish I could say that Zig has a <code>string</code> type and it's awesome. Unfortunately it does not, and they are not. At its simplest, Zig strings are sequences (i.e. arrays or slices) of bytes (<code>u8</code>). We actually saw this with the definition of the <code>name</code> field: <code>name: []const u8,</code>.</p>
+
+		<p>By convention, and by convention only, such strings should only contain UTF-8 values, since Zig source code is itself UTF-8 encoded. But this is not enforced and there's really no difference between a <code>[]const u8</code> that represents an ASCII or UTF-8 string, and a <code>[]const u8</code> which represents arbitrary binary data. How could there be, they are the same type.</p>
+
+		<p>From what we learned about arrays and slices, you'd be correct in guessing that <code>[]const u8</code> is a slice to a constant array of bytes (where a byte is an unsigned 8-bit integer). But nowhere in our code did we slice an array, or even have an array, right? All we did was assign "Goku" to <code>user.power</code>. How did that work?</p>
+
+		<p>String literals, those you see in the source code, have a compile-time known length. The compiler knows that "Goku" has a length of 4. So you'd be close in thinking that "Goku" is best represented by an array, something like <code>[4]const u8</code>. But string literals have a couple special properties. They are stored in a special place within the binary and deduplicated. Thus, a variable to a string literal is going to be a pointer to this special location. That means that "Goku"'s type is closer to <code>*const [4]u8</code>, a pointer to a constant array of 4 bytes.</p>
+
+		<p>There's more. String literals are null terminated. That is to say, they always have a <code>\0</code> at the end. Null-terminated strings are important when interacting with C. In memory, "Goku" would actually look like: <code>{'G', 'o', 'k', 'u', 0}</code>, so you might think the type is <code>*const [5]u8</code>. But this would be ambiguous at best, and dangerous at worse (you could overwrite the null terminator). Instead, Zig has a distinct syntax to represent null terminated arrays. "Goku" has the type: <code>*const [4:0]u8</code>, pointer to a null-terminated array of 4 bytes. While talking about strings we're focusing on null-terminated arrays of bytes (since that's how strings are typically represented in C), the syntax is more generic: <code>[LENGTH:SENTINEL]</code> where "SENTINEL" is the special value found at the end of the array. So, while I can't think of why you'd need it, the following is completely valid:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	// an array of 3 booleans with false as the sentinel value
+	const a = [3:false]bool{false, true, false};
+
+	// This line is more advanced, and is not going to get explained!
+	std.debug.print("{any}\n", .{std.mem.asBytes(&a).*});
+}
+{% endhighlight %}
+
+		<p>Which outputs: <code>{ 0, 1, 0, 0}</code>.</p>
+
+		<aside>I hesitate to include this example, since the last line is pretty advanced and I don't intend to explain it. On the flip side, it's a working example that you can run and play with to better examine some of what we've discussed so far, if you're so inclined.</aside>
+
+		<p>If I've done an acceptable job of explaining this, there's likely still one thing you're unsure about. If "Goku" is a <code>*const [4:0]u8</code>, how come we were able to assign it to a <code>power</code>, a <code>[]const u8</code>? The answer is simple: Zig will coerce the type for you. It'll do this between a few different types, but it's most obvious with strings. It means that if a function has a <code>[]const u8</code> parameter, or a structure has a <code>[]const u8</code> field, string literals can be used. Because null terminated strings are arrays, and arrays have a known length, this coercion is cheap, i.e. it <strong>does not</strong> require iterating through the string to find the null terminator.</p>
+
+		<p>So, when talking about strings, we usually mean a <code>[]const u8</code>. When necessary we explicitly state a null terminated string, which can be automatically coerced into a <code>[]const u8</code>. But do remember that a <code>[]const u8</code> is also used to represent arbitrary binary data, and as such, Zig doesn't have the notion of a string that higher level programming languages do. Furthermore, Zig's standard library only has a very basic unicode module.</p>
+
+		<p>Of course, in a real program, most strings (and more generically, arrays) aren't know at compile time. The classic example being user input, which isn't know when the program is being compiled. This is something that we'll have to revisit when talking about memory. But the short answer is that, for such data, which is of an unknown value at compile time, and thus an unknown length, we'll be dynamically allocating memory at runtime. Our string variables, still of type <code>[]const u8</code> will be slices that point to this dynamically allocated memory.</p>
+
+	</section>
+	<section>
+		<h2 tabindex=-1 id=comptime><a href=#comptime aria-hidden=true>comptime and anytype</a></h2>
+		<p>There's a lot more than meets the eye going on in our last unexplored line of code:</p>
+
+{% highlight zig %}
+std.debug.print("{s}'s power is {d}\n", .{user.name, user.power});
+{% endhighlight %}
+
+		<p>We're only going to skim over it, but it does provide an opportunity to highlight some of Zig's more powerful features. These are things you should at least be aware of, even if you haven't mastered them.</p>
+
+		<p>The first is Zig's concept of compile-time execution, or <code>comptime</code>. This is the core to Zig's metaprogramming capabilities and, as the name implies, revolves around running code at compile time, rather than runtime. Throughout this guide, we'll only scratch the surface of what's possible with <code>comptime</code>, but it is something that's constantly there.</p>
+
+		<p>You might be wondering what it is about the above line that requires compile-time execution. The definition of the <code>print</code> function requires our first parameter, the string format, to be comptime-known:</p>
+
+{% highlight zig %}
+// notice the "comptime" before the "fmt" variable
+pub fn print(comptime fmt: []const u8, args: anytype) void {
+{% endhighlight %}
+
+		<p>And the reason for this is that <code>print</code> does extra compile-time checks that you wouldn't get in most other languages. What kind of checks? Well, say you changed the format to <code>"it's over {d}\n"</code>, but kept the two arguments. You'd get a compile time error: <em>unused argument in 'it's over {d}'</em>. It'll also do type checks: change the format string to <code>"{s}'s power is {s}\n"</code> and you'll get an <em>invalid format string 's' for type 'u64'</em>. These checks would not be possible to do at compile time if the string format wasn't known at compile time. Thus the requirement for a comptime-known value.</p>
+
+		<p>The one place where <code>comptime</code> will immediately impact your coding is the default types for integer and float literals, the special <code>comptime_int</code> and <code>comptime_float</code>. This line of code isn't valid: <code>var i = 0;</code>. You'll get a compile-time error: <em> variable of type 'comptime_int' must be const or comptime</em>. <code>comptime</code> code can only work with data that is known at compile time and, for integers and floats, such data is identified by the special <code>comptime_int</code> and <code>comptime_float</code> types. A value of this type can be used in compile time execution. But you're likely not going to spend the majority of your time writing code for compile time execution, so it isn't a particularly useful default. What you'll need to do is give your variables an explicit type:</p>
+
+{% highlight zig %}
+var i: usize = 0;
+var j: f64 = 0;
+{% endhighlight %}
+
+		<aside>Note, this error only happened before we used <code>var</code>. Had we used <code>const</code>, we wouldn't have had the error since the entire point of the error is that a <code>comptime_int</code> <em>must</em> be const.</aside>
+
+		<p>In a future part, we'll examine comptime a bit more when exploring generics.</p>
+
+		<p>The other special thing about our line of code is the strange <code>.{user.name, user.power}</code>, which, from the above definition of <code>print</code>, we know maps to a variable of type <code>anytype</code>. This type should not be confused with something like Java's <code>Object</code> or Go's <code>any</code> (aka <code>interface{}</code>). Rather, at compile time, Zig will create a version of the <code>print</code> function specifically for all types that was pass to it.</p>
+
+		<p>This begs the question: what <em>are</em> we passing to it? We've seen the <code>.{...}</code> notation before, when letting the compiler infer the type of our structure. This is similar: it creates an anonymous structure literal. Consider this code:</p>
+
+{% highlight zig %}
+pub fn main() void {
+	std.debug.print("{any}\n", .{@TypeOf(.{.year = 2023, .month = 8})});
+}
+{% endhighlight %}
+
+	<p>which prints:</p>
+
+	{% highlight "text" %}
+	struct{comptime year: comptime_int = 2023, comptime month: comptime_int = 8}
+	{% endhighlight %}
+
+		<p>Here we gave our anonymous struct field names, <code>year</code> and <code>month</code>. In our original code, we didn't. In that case, the field names are automatically generated as "0", "1", "2", etc. The <code>print</code> function expects a structure with such fields and uses the ordinal position in the string format to get the appropriate argument.</p>
+
+		<p>Zig doesn't have function overloading, and it doesn't have vardiadic functions (functions with an arbitrary number of arguments). But it does have a compiler capable of creating specialized functions based on the types passed, including types inferred and created by the compiler itself.</p>
+	</section>
+</article>
+
+<div class=pager>
+	<a class=prev href=/learning_zig>Intro</a>
+	<a class=next href=language_overview_2>Language Overview - Part 2</a>
+</div>

@@ -300,7 +300,7 @@ static void increment(sqlite3_context *context, int argc, sqlite3_value **argv) 
 <h3>Follow Up Exercise</h3>
 <p>There are two additional enhancements you might be interested in exploring on your own. The first is expanding our increment function to take a 2nd (possibly optional) parameter to indicate how much to increment our value by (defaulting to 1). The second is to add type strictness. As-is, the return value for <code>increment('teg')</code> will be <code>1</code>, as <code>sqlite3_value_int</code> will return <code>0</code> when called on a non-integer value (or a value that cannot be coerced to an integer (e.g. passing the a string argument of '9002' would return 9003)). We could use the <code>sqlite3_value_type</code> function on <code>argv[0]</code> to determine the type and handle non-integer values. In such cases, instead of using the <code>sqlite3_result_int</code> to store an integer value in our context, we could use <code>sqlite3_result_error</code> to store an error.</p>
 
-<div id=pager>
-  <a class=prev></a>
+<div class=pager>
+  <span></span>
   <a class=next href=/Writing-A-Custom-Sqlite-Function-Part-2/>Part 2</a>
 </div>

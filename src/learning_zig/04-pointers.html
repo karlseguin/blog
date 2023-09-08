@@ -1,0 +1,443 @@
+---
+date: 2023-09-08
+layout: learning_zig
+title: "Learning Zig - Pointers"
+tags: [zig]
+permalink: "/learning_zig/pointers"
+---
+
+<div class=pager>
+	<a class=prev href=style_guide>Style Guide</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href="stack_memory">Stack Memory</a>
+</div>
+
+<article>
+	<h1 tabindex=-1 id=pointers><a href=#pointers aria-hidden=true>Pointers</a></h1>
+	<p>Zig doesn't include a garbage collector. The burden of managing memory is on you, the developer. It's a big responsibility as it has a direct impact on the performance, stability and security of your application.</p>
+
+	<p>We'll begin by talking about pointers, which is an important topic to discuss in and of itself, but also as a start to seeing our program's data from a memory-oriented point of view. If you're already comfortable with pointers, heap allocations and dangling pointers, feel free to skip ahead a couple parts to <a href=heap_memory>heap memory & allocators</a>, which is more Zig-specific.</p>
+
+	<section>
+		<p>The following code creates a user with a <code>power</code> of 1, and then calls the <code>levelUp</code> function which increments the user's power by 1. Can you guess the output?</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	var user = User{
+		.id = 1,
+		.power = 100,
+	};
+
+	// this line has been added
+	levelUp(user);
+	std.debug.print("User {d} has power of {d}\n", .{user.id, user.power});
+}
+
+fn levelUp(user: User) void {
+	user.power += 1;
+}
+
+pub const User = struct {
+	id: u64,
+	power: i32,
+};
+{% endhighlight %}
+
+		<p>That was a unkind trick; the code won't compile: <em>cannot assign to constant</em>. We saw in part 1 that function parameters are constants, thus <code>user.power += 1;</code> is not valid. To fix the compile-time error, we could change the <code>levelUp</code> function to:</p>
+
+{% highlight zig %}
+fn levelUp(user: User) void {
+	var u = user;
+	u.power += 1;
+}
+{% endhighlight %}
+
+		<p>Which will compile, but our output is <em>User 1 has power of 100</em>, even though the intent of our code is clearly for <code>levelUp</code> to increase the user's power to <code>101</code>. What's happening?</p>
+
+		<p>To understand, it helps to think about data with respect to memory, and variables as labels that associate a type with a specific memory location. For example, in <code>main</code>, we create a <code>User</code>. A simple visualization of this data in memory would be:</p>
+
+{% highlight text %}
+user -> ------------ (id)
+        |    1     |
+        ------------ (power)
+        |   100    |
+        ------------
+{% endhighlight %}
+
+		<p>There are two important things to note. The first is that our <code>user</code> variable points to the beginning of our structure. The second is that the fields are laid out sequentially. Remember that our <code>user</code> also has a type. That type's tells us that <code>id</code> is a 64 bit integer and <code>power</code> is a 32 bit integer. Armed with a reference to the start of our data and the type, the compiler can translate <code>user.power</code> to: <em>access a 32 bit integer located 64 bits from the beginning.</em> That's the power of variables, they reference memory and include all the type information necessary to understand and manipulate the memory in a meaningful way.</p>
+
+		<aside>By default, Zig doesn't make guarantees about the memory layout of structures. It could store fields in alphabetic order, by ascending size, or with gaps. It can do what it wants, so long as it's able to translate our code correctly. This freedom can enable certain optimizations. Only if we declare a <code>packed struct</code> will we get strong guarantees about the memory layout. Still, our visualization of <code>user</code> is reasonable and useful.</aside>
+
+		<p>Here's a slightly different visualization which includes memory addresses. The memory address of the start of this data, which is the memory address referenced by the <code>user</code> variable, which also happens to be where the value of the first field, <code>id</code>, is found is just a random number I created. However, given this initial address, all subsequent addresses have a known relative address. Since <code>id</code> is a 64 bit integer, it takes 8 bytes of memory. Therefore, <code>power</code> has to be at $start_address + 8:</p>
+
+{% highlight text %}
+user ->   ------------  (id: 1043368d0)
+          |    1     |
+          ------------  (power: 1043368d8)
+          |   100    |
+          ------------
+{% endhighlight %}
+
+		<p>To verify this for yourself, I'd like to introduce the addressof operator: <code>&</code>. As the name implies, the addressof operator returns the address of an variable (it can also return the address of a function, isn't that something?!). Keeping the existing <code>User</code> definition, try this <code>main</code>:
+
+{% highlight zig %}
+pub fn main() void {
+	var user = User{
+		.id = 1,
+		.power = 100,
+	};
+	std.debug.print("{*}\n{*}\n{*}\n", .{&user, &user.id, &user.power});
+}
+{% endhighlight %}
+
+		<p>This code prints the address of <code>user</code>, <code>user.id</code> and <code>user.power</code>. You might get different results based on your platform and other factors, but hopefully you'll see that the address of <code>user</code> and <code>user.id</code> are the same, while <code>user.power</code> is at an 8 byte offset. I got: </p>
+
+{% highlight text %}
+learning.User@1043368d0
+u64@1043368d0
+i32@1043368d8
+{% endhighlight %}
+
+		<p>The addressof operator returns a pointer to a value. A pointer to a value is a distinct type. The address of a value of type <code>T</code> is a <code>*T</code>. We pronounce that <em>a pointer to T</em>. Therefore, if we take the address of <code>user</code>, we'll get a <code>*User</code>, or a pointer to <code>User</code>:</p>
+
+{% highlight zig %}
+pub fn main() void {
+	var user = User{
+		.id = 1,
+		.power = 100,
+	};
+
+	const user_p = &user;
+	std.debug.print("{any}\n", .{@TypeOf(user_p)});
+}
+{% endhighlight %}
+
+		<p>Our original goal was to increase our user's <code>power</code> by 1, via the <code>levelUp</code> function. We got the code to compile, but when we printed <code>power</code> it was still the original value. It's a bit of a leap, but let's change the code to print the address of <code>user</code> in <code>main</code> and in <code>levelUp</code>:</p>
+
+{% highlight zig %}
+pub fn main() void {
+	const user = User{
+		.id = 1,
+		.power = 100,
+	};
+
+	// added this
+	std.debug.print("main: {*}\n", .{&user});
+
+	levelUp(user);
+	std.debug.print("User {d} has power of {d}\n", .{user.id, user.power});
+}
+
+fn levelUp(user: User) void {
+	// add this
+	std.debug.print("levelUp: {*}\n", .{&user});
+	var u = user;
+	u.power += 1;
+}
+{% endhighlight %}
+
+		<p>If you run this, you'll get two different addresses. This means that the <code>user</code> being modified in <code>levelUp</code> is different than the <code>user</code> in <code>main</code>. This happens because Zig passes a copy of the value. That might seem like a strange default, but one of the benefit is that the caller of a function can be sure that the function won't modify the parameter (because it can't). In a lot of cases, that's a good thing to have guaranteed. Of course, sometimes, like with <code>levelUp</code>, we <em>want</em> the function to modify a parameter. To achieve this, we need <code>levelUp</code> to act on the actual <code>user</code> in <code>main</code>, not a copy. We can do this by passing the address of our user into the function:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	var user = User{
+		.id = 1,
+		.power = 100,
+	};
+
+	// user -> &user
+	levelUp(&user);
+	std.debug.print("User {d} has power of {d}\n", .{user.id, user.power});
+}
+
+// User -> *User
+fn levelUp(user: *User) void {
+	user.power += 1;
+}
+
+pub const User = struct {
+	id: u64,
+	power: i32,
+};
+{% endhighlight %}
+
+		<p>We had to make two changes. The first is calling <code>levelUp</code> with the address of user, i.e. <code>&user</code>, instead of <code>user</code>. This means that our function no longer receives a <code>User</code>. Instead, it receives a <code>*User</code>, which was our second change.</p>
+
+		<p>The code now works as intended. There are still many subtleties with function parameters and our memory model in general, but we're making progress. Now might be a good time to mention that, aside from the specific syntax, none of this is unique to Zig. The model that we're exploring here is the most common, some languages might just hide much of the details, and thus flexibility, from developers.</p>
+
+
+	<section>
+		<h2 tabindex=-1 id=methods><a href=#methods aria-hidden=true>Methods</a></h2>
+
+		<p>More than likely, you'd have written <code>levelUp</code> as a method of the <code>User</code> structure:</p>
+
+{% highlight zig %}
+pub const User = struct {
+	id: u64,
+	power: i32,
+
+	fn levelUp(user: *User) void {
+		user.power += 1;
+	}
+};
+{% endhighlight %}
+
+		<p>This begs the question: how do we call a method with a pointer receiver? Maybe we have to do something like: <code>&user.levelUp()</code>? Actually, you just call it normally, i.e. <code>user.levelUp()</code>. Zig knows that the method expects a pointer and pass the value correctly (passes it by reference).</p>
+
+		<p>I chose to use a function only for the purpose of being explicit in the lesson.</p>
+
+	<section>
+		<h2 tabindex=-1 id=const_paremeters><a href=#const_paremeters aria-hidden=true>Constant Function Parameters</a></h2>
+
+		<p>I more than implied that, by default, Zig will pass a copy of a value (called "pass by value"). Shortly we'll see that the reality is a bit more subtle (hint: what about complex values with nested objects?)</p>
+
+		<p>Even sticking with simple types, the truth is that Zig can pass parameters however it wants, so long as it can guarantee that the intent of the code is preserved. In our original <code>levelUp</code>, where the parameter was a <code>User</code>, Zig could have passed a copy of the user or a reference to <code>main.user</code>, as long as it could guarantee that the function would not mutate it. (I know we ultimately <em>did</em> want it mutated, but by making the type <code>User</code>, we were telling the compiler that we didn't).</p>
+
+		<p>This freedom allows Zig to use the most optimal strategy based on the parameter type. Small types, like <code>User</code> can be cheaply passed by value (i.e. copied). Larger types might be cheaper to pass by reference. Zig can use any approach, so long as intent of the code is preserved. To some degree, this is made possible by having constant function parameters.</p>
+
+		<p>Now you know one of the reasons function parameters are constants.</p>
+
+		<aside>Maybe you're wondering how passing by reference could ever be slower, even compared to copying a really small structure. We'll see this more clearly next, but the gist is that doing <code>user.power</code> when <code>user</code> is a pointer adds a tiny bit of overhead. The compiler has to weigh the cost of copying versus the cost of accessing fields indirectly through a pointer.</aside>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=pointer_to_pointer><a href=#pointer_to_pointer aria-hidden=true>Pointer to Pointer</a></h2>
+
+		<p>We previous looked at what the memory of <code>user</code> within our <code>main</code> function looked like. Now that we've changed <code>levelUp</code>  what would its memory look like?:</p>
+
+{% highlight text %}
+main:
+user -> ------------  (id: 1043368d0)  <---
+        |    1     |                      |
+        ------------  (power: 1043368d8)  |
+        |   100    |                      |
+        ------------                      |
+                                          |
+        .............  empty space        |
+        .............  or other data      |
+                                          |
+levelUp:                                  |
+user -> -------------  (*User)            |
+        | 1043368d0 |----------------------
+        -------------
+{% endhighlight %}
+
+		<p>Within <code>levelUp</code>, <code>user</code> is a pointer to a <code>User</code>. Its value is an address. Not just any address, of course, but the address of <code>main.user</code>. It's worth being explicit that the <code>user</code> variable in <code>levelUp</code> represents a concrete value. This value happens to be an address. And, it's not <em>just</em> an address, it's also a type, a <code>*User</code>. It's all very consistent, it doesn't matter if we're talking about pointers or not: variables associate type information with an address. The only special thing about pointers is that, when we use the dot syntax, e.g. <code>user.power</code>, Zig, knowing that <code>user</code> is a pointer, will automatically follow the address.</p>
+
+		<aside>Some languages require a different symbol when accessing a field through a pointer.</aside>
+
+		<p>What's important to understand is that the <code>user</code> variable in <code>levelUp</code> itself exists in memory at some address. Just like we did before, we can see this for ourselves:</p>
+
+{% highlight zig %}
+fn levelUp(user: *User) void {
+	std.debug.print("{*}\n{*}\n", .{&user, user});
+	user.power += 1;
+}
+{% endhighlight %}
+
+		<p>The above prints the address the <code>user</code> variable references as well as its value, which is the address of the <code>user</code> in <code>main</code>.</p>
+
+		<p>If <code>user</code> is a <code>*User</code>, then what is <code>&user</code>? It's a <code>**User</code>, or a <em>pointer to a pointer to a <code>User</code></em>. I can do this until one of us runs out of memory!</p>
+
+		<p>There are use-cases for multiple levels of indirection, but is isn't anything we need right now. The purpose of this section is to show that pointers aren't special, they're just a value, which is an address, and a type.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=nested_pointers><a href=#nested_pointers aria-hidden=true>Nested Pointers</a></h2>
+
+		<p>Up until now, our <code>User</code> has been simple, containing two integers. It's easy to visualize its memory and, when we talk about "copying", there isn't any ambiguity. But what happens when <code>User</code> becomes more complex and contains a pointer?</p>
+
+{% highlight zig %}
+pub const User = struct {
+	id: u64,
+	power: i32,
+	name: []const u8,
+};
+{% endhighlight %}
+
+	<p>We've added <code>name</code> which is a slice. Recall that a slice is a length and a pointer. If we initialized our <code>user</code> with the name of <code>"Goku"</code>, what would it look like in memory?</p>
+
+{% highlight text %}
+user -> -------------  (id: 1043368d0)
+        |     1     |
+        -------------  (power: 1043368d8)
+        |    100    |
+        -------------  (name.len: 1043368dc)
+        |     4     |
+        -------------  (name.ptr: 1043368e4)
+  ------| 1182145c0 |
+  |     -------------
+  |
+  |     .............  empty space
+  |     .............  or other data
+  |
+  --->  -------------  (1182145c0)
+        |    'G'    |
+        -------------
+        |    'o'    |
+        -------------
+        |    'k'    |
+        -------------
+        |    'u'    |
+        -------------
+{% endhighlight %}
+
+		<p>The new <code>name</code> field is slice which is made up of a <code>len</code> and <code>ptr</code> field. These are laid out in sequence along with all the other fields. On a 64 bit platform both <code>len</code> and <code>ptr</code> will be 64 bits, or 8 bytes. The interesting part is the value of <code>name.ptr</code>: it's an address to some other place in memory.</p>
+
+		<aside>Since we used a string literal, <code>user.name.ptr</code> will point to a specific location within the area where all the constants are stored inside our binary.</aside>
+
+		<p>Types can get much more complex than this with deep nesting. But simple or complex, they all behave the same. Specifically, if we go back to our original code where <code>levelUp</code> took a plain <code>User</code> and Zig provided a copy, how would that look now that we have a nested pointer?</p>
+
+		<p>The answer is that only a shallow copy of the value is made. Or, as some put it, only the memory immediately addressable by the variable is copied. It might seem like <code>levelUp</code> would get a half-baked copy of <code>user</code>, possibly with an invalid <code>name</code>. But remember that a pointer, like our <code>user.name.ptr</code> is a value, and that value is an address. A copy of an address is still the same address:</p>
+
+{% highlight text %}
+main: user ->    -------------  (id: 1043368d0)
+                 |     1     |
+                 -------------  (power: 1043368d8)
+                 |    100    |
+                 -------------  (name.len: 1043368dc)
+                 |     4     |
+                 -------------  (name.ptr: 1043368e4)
+                 | 1182145c0 |-------------------------
+levelUp: user -> -------------  (id: 1043368ec)       |
+                 |     1     |                        |
+                 -------------  (power: 1043368f4)    |
+                 |    100    |                        |
+                 -------------  (name.len: 1043368f8) |
+                 |     4     |                        |
+                 -------------  (name.ptr: 104336900) |
+                 | 1182145c0 |-------------------------
+                 -------------                        |
+                                                      |
+                 .............  empty space           |
+                 .............  or other data         |
+                                                      |
+                 -------------  (1182145c0)        <---
+                 |    'G'    |
+                 -------------
+                 |    'o'    |
+                 -------------
+                 |    'k'    |
+                 -------------
+                 |    'u'    |
+                 -------------
+{% endhighlight %}
+
+		<p>From the above, we can see that shallow copying will work. Since a pointer's value is an address, copying the value means we get the same address. This has important implications with respect to mutability. Our function can't mutate the fields directly accessible by <code>main.user</code> since it got a copy, but it does have access to the same <code>name</code>, so can it mutate that? In this specific case, no, <code>name</code> is a <code>const</code>. Plus, our value "Goku" is a string literal which are always immutable. But, with a bit of work, we can see the implication of shallow copying:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	var name = [4]u8{'G', 'o', 'k', 'u'};
+	var user = User{
+		.id = 1,
+		.power = 100,
+		// slice it, [4]u8 -> []u8
+		.name = name[0..],
+	};
+	levelUp(user);
+	std.debug.print("{s}\n", .{user.name});
+}
+
+fn levelUp(user: User) void {
+	user.name[2] = '!';
+}
+
+pub const User = struct {
+	id: u64,
+	power: i32,
+	// []const u8 -> []u8
+	name: []u8
+};
+{% endhighlight %}
+
+		<p>The above code prints "Go!u". We had to change <code>name's</code> type from <code>[]const u8</code> to <code>[]u8</code> and instead of a string literal, which are always immutable, create an array and slice it. Some might see inconsistency here. Passing by value prevents a function from mutating immediate fields, but fields with a value behind a pointer. If we <em>did</em> want <code>name</code> to be immutable, we should have declare it as a <code>[]const u8</code> instead of a <code>[]u8</code>.</p>
+
+		<p>Some languages have different implementation, but many languages work exactly like this (or very close). While all of this might seem  esoteric, it's fundamental to day to day programming. The good news is that you can master this using simple examples and snippets; it doesn't get more complicated as other parts of the system grows in complexity.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=recursive_structures><a href=#recursive_structures aria-hidden=true>Recursive Structures</a></h2>
+
+		<p>Sometimes you need a structure to be recursive. Keeping our existing code, let's add an optional <code>manager</code> of type <code>?User</code> to our <code>User</code>. While we're at it, we'll create two <code>Users</code> and assign one as the manager to another:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	const leto = User{
+		.id = 1,
+		.power = 9001,
+		.manager = null,
+	};
+
+	const duncan = User{
+		.id = 1,
+		.power = 9001,
+		.manager = leto,
+	};
+
+	std.debug.print("{any}\n{any}", .{leto, duncan});
+}
+
+pub const User = struct {
+	id: u64,
+	power: i32,
+	manager: ?User,
+};
+{% endhighlight %}
+
+			<p>This code won't compile: <em>struct 'learning.User' depends on itself</em>. This fails because every type has to have a known compile-time size.</p>
+
+			<p>We didn't run into this problem when we added <code>name</code> even though names can be different lengths. The issue isn't with the size of values, it's with the size of the types themselves. Zig needs this knowledge to do everything we talked about above, like accessing a field based on its offset position. <code>name</code> was a slice, a <code>[]const u8</code>, and that has a known size: 16 bytes - 8 bytes for <code>len</code> and 8 bytes for <code>ptr</code>.</p>
+
+			<p>You might think this is going to be a problem with any optional or union. But for both options and unions, the largest possible size is known and Zig can use that. A recursive structure has no such upper-bound, the structure could recurse once, twice or millions of times. That number would vary from <code>User</code> to <code>User</code> and would not be known at compile time.</p>
+
+			<p>We saw the answer with <code>name</code>: use a pointer. Pointers always takes <code>usize</code> bytes. On a 64-bit platform, that's 8 bytes. Just like the actual name "Goku" wasn't stored with/along our <code>user</code>, using a pointer means our manager is no longer tied to the <code>user's</code> memory layout.</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	const leto = User{
+		.id = 1,
+		.power = 9001,
+		.manager = null,
+	};
+
+	const duncan = User{
+		.id = 1,
+		.power = 9001,
+		// changed from leto -> &leto
+		.manager = &leto,
+	};
+
+	std.debug.print("{any}\n{any}", .{leto, duncan});
+}
+
+pub const User = struct {
+	id: u64,
+	power: i32,
+	// changed from ?const User -> ?*const User
+	manager: ?*const User,
+};
+{% endhighlight %}
+
+		<p>You might never need a recursive structure, but this isn't about data modeling. It's about understanding pointers and memory models and better understanding what the compiler is up to.</p>
+	</section>
+
+	<section>
+		<p>A lot of developers struggle with pointers, there can be something elusive about them. They don't feel concrete like an integer, or string or <code>User</code>. None of this has to be crystal clear for you to move forward. But it is worth mastering, and not just for Zig. These details might be hidden in languages like Ruby, Python and JavaScript, and to a lesser extent C#, Java and Go, but they're still there, impacting how you write code and how that code runs. So take your time, play with examples, add debug print statements to look at variables and their address things will become more clear.</p>
+	</section>
+</article>
+
+<div class=pager>
+	<a class=prev href=style_guide>Style Guide</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href="stack_memory">Stack Memory</a>
+</div>

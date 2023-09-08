@@ -1,0 +1,541 @@
+---
+date: 2023-09-08
+layout: learning_zig
+title: "Learning Zig - Language Overview - Part 2"
+tags: [zig]
+permalink: "/learning_zig/language_overview_2"
+---
+
+<div class=pager>
+	<a class=prev href=language_overview_1>Language Overview - Part 1</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href=style_guide>Style Guide</a>
+</div>
+
+<article>
+	<h1 tabindex=-1 id=language_overview><a href=#language_overview aria-hidden=true>Language Overview - Part 2</a></h1>
+	<p>This part continues where the previous left off: familiarizing ourselves with the language. Together with the first part, what we explore here makes up the bulk of the language.</p>
+
+	<section>
+		<h2 tabindex=-1 id=control_flow><a href=#control_flow aria-hidden=true>Control Flow</a></h2>
+		<p>Zig's control flow is likely familiar but it does synergize with aspects of the language we've yet to explore. We'll start with a quick overview of control flow and come back when we discover features that have special control flow behavior.</p>
+
+		<p>You will notice that instead of the logical operators <code>&&</code> and <code>||</code>, we use <code>and</code> and <code>or</code>. Like in most languages, <code>and</code> and <code>or</code> control the flow of execution: they short-circuit. The right side of an <code>and</code> isn't evaluated if the left side is <code>false</code>, and the right side of an <code>or</code> isn't evaluated if the left side is <code>true</code>. In Zig, control flow is done with keywords, and thus <code>and</code> and <code>or</code> are used.</p>
+
+		<p>Also, the comparison operator, <code>==</code>, does not work between slices, such as <code>[]const u8</code>, i.e. strings. In most cases, you'll use <code>std.mem.eql(u8, str1, str2)</code> which will compare the length and then bytes of the two strings.</p>
+
+		<p>Zig's <code>if</code>, <code>else if</code> and <code>else</code> are commonplace:</p>
+
+{% highlight zig %}
+// std.mem.eql does a byte-by-byte comparison
+// for a string it'll be case sensitive
+if (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "HEAD")) {
+	// handle a GET request
+} else if (std.mem.eql(u8, method, "POST")) {
+	// handle a POST request
+} else {
+	// ...
+}
+{% endhighlight %}
+
+		<aside>The first argument to <code>std.mem.eql</code> is a type, in this case, <code>u8</code>. This is the first generic function we've see. We'll explore this more in a later part.</aside>
+
+		<p>The above example is comparing ASCII strings and should likely be case insensitive. <code>std.ascii.eqlIgnoreCase(str1, str2)</code> is probably a better option.</p>
+
+		<p>There is no ternary operator, but you can use an <code>if/else</code> like so:</p>
+
+{% highlight zig %}
+const super = if (power > 9000) true else false;
+{% endhighlight %}
+
+		<p><code>switch</code> is similar to an if/else if/else, but has the advantage of being exhaustive. That is, it's a compile-time error if not all cases are covered. This code will not compile:</p>
+
+{% highlight zig %}
+fn anniversaryName(years_married: u16) []const u8 {
+	switch (years_married) {
+		1 => return "paper",
+		2 => return "cotton",
+		3 => return "leather",
+		4 => return "flower",
+		5 => return "wood",
+		6 => return "sugar",
+	}
+}
+{% endhighlight %}
+
+		<p>We're told: <em>switch must handle all possibilities</em>. Since our <code>years_married</code> is a 16-bit integer, does that mean we need to handle all 64K cases? Yes, but thankfully there's an <code>else</code>:</p>
+
+{% highlight zig %}
+// ...
+6 => return "sugar",
+else => return "no more gifts for you",
+{% endhighlight %}
+
+		<p>We can combine multiple cases or use ranges, and use blocks for complex cases:</p>
+
+{% highlight zig %}
+fn arrivalTimeDesc(minutes: u16, is_late: bool) []const u8 {
+	switch (minutes) {
+		0 => return "arrived",
+		1, 2 => return "soon",
+		3...5 => return "no more than 5 minutes",
+		else => {
+			if (!is_late) {
+				return "sorry, it'll be a while";
+			}
+			// todo, something is very wrong
+			return "never";
+		},
+	}
+}
+{% endhighlight %}
+
+		<p>While a <code>switch</code> is useful in a number of cases, its exhaustive nature really shines when dealing with enums, which we'll talk about shortly.</p>
+
+		<p>Zig's <code>for</code> loop is used to iterate over arrays, slices and ranges. For example, to check if an array contains a value, we might write:</p>
+
+{% highlight zig %}
+fn contains(haystack: []const u32, needle: u32) bool {
+	for (haystack) |value| {
+		if (needle == value) {
+			return true;
+		}
+	}
+	return false;
+}
+{% endhighlight %}
+
+		<p><code>for</code> loops can work on multiple sequences at once, as long as those sequences are the same length. Above we used the <code>std.mem.eql</code> function. Here's what it (almost) looks like:</p>
+
+{% highlight zig %}
+pub fn eql(comptime T: type, a: []const T, b: []const T) bool {
+	// if they arent' the same length, the can't be equal
+	if (a.len != b.len) return false;
+
+	for (a, b) |a_elem, b_elem| {
+		if (a_elem != b_elem) return false;
+	}
+
+	return true;
+}
+{% endhighlight %}
+
+		<p>The initial <code>if</code> check isn't just a nice performance optimization, it's a necessary guard. If we take it out and pass arguments of different lengths, we'll get a runtime panic: <em>for loop over objects with non-equal lengths</em>.</p>
+
+		<p><code>for</code> loops can also iterate over ranges, such as:</p>
+
+{% highlight zig %}
+for (0..10) |i| {
+	std.debug.print("{d}\n", .{i});
+}
+{% endhighlight %}
+
+		<aside>Our <code>switch</code> range used three dots, <code>3...6</code>, while this range uses two, <code>0..10</code>. That's because <code>switch</code> cases are inclusive of both numbers, while <code>for</code> is exclusive of the upper bound</code></aside>
+
+		<p>This really shines in combination with one (or more!) sequence:</p>
+
+{% highlight zig %}
+fn indexOf(haystack: []const u32, needle: u32) ?usize {
+	for (haystack, 0..) |value, i| {
+		if (needle == value) {
+			return i;
+		}
+	}
+	return null;
+}
+{% endhighlight %}
+
+		<aside>This is a sneak peak at nullable types.</aside>
+
+		<p>The end of the range is inferred by the length of <code>haystack</code>. Though, we could punish ourselves and write: <code>0..hastack.len</code>. <code>for</code> loops don't support the more generic <code>init; compare; step</code> idiom. For this, we rely on <code>while</code>.</p>
+
+		<p>Because <code>while</code> is simpler, taking the form of <code>while (condition) { }</code>, we have greater control over the iteration. For example, when counting the number of escape sequence in a string, we need to increment our iterator by 2 to avoid double counting a <code>\\</code>:</p>
+
+{% highlight zig %}
+var i: usize = 0;
+var escape_count: usize = 0;
+while (i < src.len) {
+	if (src[i] == '\\') {
+		i += 2;
+		escape_count += 1;
+	} else {
+		i += 1;
+	}
+}
+{% endhighlight %}
+
+		<p>A <code>while</code> can have an <code>else</code> clause, which is executed when the condition is false. It also accepts a statement to execute after each iteration. This feature was commonly used prior to <code>for</code> supporting multiple sequences. The above can be written as:</p>
+
+{% highlight zig %}
+var i: usize = 0;
+var escape_count: usize = 0;
+
+//                  this part
+while (i < src.len) : (i += 1) {
+	if (src[i] == '\\') {
+		// +1 here, and +1 above == +2
+		i += 1;
+		escape_count += 1;
+	}
+}
+{% endhighlight %}
+
+		<p><code>break</code> and <code>continue</code> are supported for either breaking out of the inner-most loop or jumping to the next iteration.</p>
+
+		<p>Blocks can be labeled and <code>break</code> and <code>continue</code> can target a specific label. A contrived example:</p>
+
+{% highlight zig %}
+outer: for (1..10) |i| {
+	for (i..10) |j| {
+		if (i * j > (i+i + j+j)) continue :outer;
+		std.debug.print("{d} + {d} >= {d} * {d}\n", .{i+i, j+j, i, j});
+	}
+}
+{% endhighlight %}
+
+		<code>break</code> has another interesting behavior, returning a value from a block:</p>
+
+{% highlight zig %}
+const personality_analysis = blk: {
+	if (tea_vote > coffee_vote) break :blk "sane";
+	if (tea_vote == coffee_vote) break :blk "whatever";
+	if (tea_vote < coffee_vote) break :blk "dangerous";
+};
+{% endhighlight %}
+
+		<p>Blocks like this must be semi-colon terminated.</p>
+
+		<p>Later, when we explore tagged unions, error unions and optional types, we'll see what else these control flow have to offer.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=enums><a href=#enums aria-hidden=true>Enums</a></h2>
+		<p>Enums are integer constants that are given a label. They are defined much like a struct:</p>
+
+{% highlight zig %}
+// could be "pub"
+const Status = enum {
+	ok,
+	bad,
+	unknown,
+};
+{% endhighlight %}
+
+		<p>And, like a struct, can contain other definition, including functions which may or may not take the enum as a parameter:</p>
+
+{% highlight zig %}
+const Stage = enum {
+	validate,
+	awaiting_confirmation,
+	confirmed,
+	completed,
+	err,
+
+	fn isComplete(self: Stage) bool {
+		return self == .confirmed or self == .err;
+	}
+};
+{% endhighlight %}
+
+		<aside>If you want the string representation of an enum, you can use the builtin <code>@tagName(enum)</code> function.</aside>
+
+		<p>Recall struct types can be inferred based on their assigned or return type using the <code>.{...}</code> notation. Above, we see the enum type being inferred based on its comparisin to <code>self</code>, which is of type <code>Stage</code>. We could have been explicit and written: <code>return self == Stage.confirmed or self == Stage.err;</code>. But, when dealing with enum's you'll often see the enum type omitted via the <code>.$value</code> notation</p>
+
+		<p>The exhaustive nature of <code>switch</code> makes it pair nicely with enums as it ensures you've handled all possible cases. Be careful when using the <code>else</code> clause of a <code>switch</code> though, as it'll match any newly added enum values, which may or may not be the behavior that you want.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=unions><a href=#unions aria-hidden=true>Tagged Unions</a></h2>
+		<p>An union defines a set of types that a value can have. For example, this <code>Number</code> union can either be an <code>integer</code>, an <code>float</code> or a <code>nan</code> (not a number):</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	const n = Number{.int = 32};
+	std.debug.print("{d}\n", .{n.int});
+}
+
+const Number = union {
+	int: i64,
+	float: f64,
+	nan: void,
+};
+{% endhighlight %}
+
+		<p>A union can only have one field set at a time. Furthermore, it's an error to try to access an unset field. Since we've set the <code>int</code> field, if we then tried to access <code>n.float</code>, we'd get an error. One of our fields, <code>nan</code>, has a <code>void</code> type. How would we set its value? Use <code>{}</code>: </p>
+
+{% highlight zig %}
+const n = Number{.nan = {}};
+{% endhighlight %}
+
+		<p>A challenge with unions is knowing which field is set. This is where tagged unions come into play. A tagged union merges an enum with an union, which can be used in a switch statement. Consider this example:</p>
+
+{% highlight zig %}
+pub fn main() void {
+	const ts = Timestamp{.unix = 1693278411};
+	std.debug.print("{d}\n", .{ts.seconds()});
+}
+
+const TimestampType = enum {
+	unix,
+	datetime,
+};
+
+const Timestamp = union(TimestampType) {
+	unix: i32,
+	datetime: DateTime,
+
+	const DateTime = struct {
+		year: u16,
+		month: u8,
+		day: u8,
+		hour: u8,
+		minute: u8,
+		second: u8,
+	};
+
+	fn seconds(self: Timestamp) u16 {
+		switch (self) {
+			.datetime => |dt| return dt.second,
+			.unix => |ts| {
+				const seconds_since_midnight: i32 = @rem(ts, 86400);
+				return @intCast(@rem(seconds_since_midnight, 60));
+			},
+		}
+	}
+};
+{% endhighlight %}
+
+		<p>Notice that each case in our <code>switch</code> captures the typed value of the field. That is <code>dt</code> is a <code>Timestamp.DateTime</code> and <code>ts</code> is an <code>i32</code>. This is also the first time we've seen a structure nested within another type. <code>DateTime</code> could have been defined outside of the union. We're also seeing two new builtin functions: <code>@rem</code> to get the remainder and <code>@intCast</code> to convert the result to an <code>u16</code> (<code>@intCast</code> infers that we want an <code>u16</code> from our return type since the value is being returned).</p>
+
+		<p>As we can see from the above example, tagged unions can be used somewhat like interfaces, as long as all possible implementations are known ahead of time and can be baked into the tagged union.</p>
+
+		<p>Finally, the enum type of a tagged union can be inferred. Instead of defining a <code>TimestampType</code>, we could have done:</p>
+
+{% highlight zig %}
+const Timestamp = union(enum) {
+	unix: i32,
+	datetime: DateTime,
+
+	...
+{% endhighlight %}
+
+		<p>and Zig would have created an implicit enum based on our union's fields.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=optionals><a href=#optionals aria-hidden=true>Optional</a></h2>
+		<p>Any value can be declared as optional by prepending a question mark, <code>?</code>, to the type. Optional types can either be <code>null</code> or a value of the defined type:</p>
+
+{% highlight zig %}
+var home: ?[]const u8 = null;
+var name: ?[]const u8 = "Leto";
+{% endhighlight %}
+
+		<p>The need to have an explicit type should be clear: if we had just done <code>const name = "Leto";</code>, then the inferred type would be the non-optional <code>[]const u8</code>.</p>
+
+		<p><code>.?</code> is used to access the value behind the optional type:</p>
+
+{% highlight zig %}
+std.debug.print("{s}\n", .{name.?});
+{% endhighlight %}
+
+		<p>But we'll get a runtime panic if we use <code>.?</code> on a null. An <code>if</code> statement can safely unwrap an optional:</p>
+
+{% highlight zig %}
+if (home) |h| {
+	// h is a []const u8
+	// we have a home value
+} else {
+	// we don't have a home value
+}
+{% endhighlight %}
+
+		<p><code>orelse</code> can be used to unwrap the optional or execute code. This is commonly used to specify a default, or return from the function:</p>
+
+{% highlight zig %}
+const h = home orelse "unknown"
+// or maybe
+
+// exit our function
+const h = home orelse return;
+{% endhighlight %}
+
+		<p>However, <code>orelse</code> can also be given a block and execute more complex logic. Optional types also integrate with <code>while</code>, and are frequently used for creating iterators. We won't implement an iterator, but hopefully this dummy code makes sense:</p>
+
+{% highlight zig %}
+while (rows.next()) |row| {
+	// do something with our row
+}
+{% endhighlight %}
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=undefined><a href=#undefined aria-hidden=true>Undefined</a></h2>
+		<p>So far, every single variable that we've seen has been initialized to a sensible value. But sometimes we don't know the value of a variable when it's declared. Optionals are one option, but don't always make sense. In such cases we can set variables to <code>undefined</code> to leave them unitialized.</p>
+
+		<p>One place where this is commonly done is when creating an array to be filled by some function:</p>
+
+{% highlight zig %}
+var pseudo_uuid: [16]u8 = undefined;
+std.crypto.random.bytes(&pseudo_uuid);
+{% endhighlight %}
+
+		<p>The above still creates an array of 16 bytes, but leaves the memory unitialized.</p>
+	</section>
+
+	<section>
+		<h2 tabindex=-1 id=errors><a href=#errors aria-hidden=true>Errors</a></h2>
+		<p>Zig has simple and pragmatic error handling capabilities. It all starts with error sets, which look and behave like enums:</p>
+
+{% highlight zig %}
+// Like our struct in Part 1, OpenError can be marked as "pub"
+// to make it accessible outside of the file it is defined in
+const OpenError = error {
+	AccessDenied,
+	NotFound,
+};
+{% endhighlight %}
+
+		<p>A function, including the special <code>main</code>, can now return this error:</p>
+
+{% highlight zig %}
+pub fn main() void {
+	return OpenError.AccessDenied;
+}
+
+const OpenError = error {
+	AccessDenied,
+	NotFound,
+};
+{% endhighlight %}
+
+		<p>If you try to run this, you'll get an error: <em>expected type 'void', found 'error{AccessDenied,NotFound}'</em>. This makes sense: we defined <code>main</code> with a <code>void</code> return type, yet we return something (an error, sure, but that's still not <code>void</code>). To solve this, we need to change our function's return type.</p>
+
+{% highlight zig %}
+pub fn main() OpenError!void {
+	return OpenError.AccessDenied;
+}
+{% endhighlight %}
+
+		<p>This is called an error union type and it indicates that our function can return either an <code>OpenError</code> error or a <code>void</code> (aka, nothing). So far we've been quite explicit: we created a error set for the possible errors our function can return, and used that error set in the error union return type of our function. But, when it comes to errors, Zig has few neat tricks up its sleeve. First, rather than specifying an error union as <code>error set!return type</code> we can let Zig infer the error set by using: <code>!return type</code>. So we could, and probably would, define our <code>main</code> as:</p>
+
+{% highlight zig %}
+pub fn main() !void
+{% endhighlight %}
+
+		<p>Second, Zig is capable of implicitly creating error sets for us. Instead of creating our error set, we could have done:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+	return error.AccessDenied;
+}
+{% endhighlight %}
+
+		<p>Our completely explicit an implicit approaches aren't exactly equivalents. For example, references to functions with implicit error sets require using the special <code>anyerror</code> type. Library developers might see advantages to being more explicit, such as self-documenting code. Still, I think both the implicit error sets and the inferred error union are pragmatic; I make heavy use of both.</p>
+
+		<p>The real value of error unions is the built-in language support, in the shape of <code>catch</code> and <code>try</code>. A function that returns an error union can include a <code>catch</code> clause. For example, an http server library might have code that looks like:</p>
+
+{% highlight zig %}
+action(req, res) catch |err| {
+	if (err == error.BrokenPipe or err == error.ConnectionResetByPeer) {
+		return;
+	} else if (err == error.BodyTooBig) {
+		res.status = 431;
+		res.body = "Request body is too big";
+	} else {
+		res.status = 500;
+		res.body = "Internal Server Error";
+		// todo: log err
+	}
+};
+{% endhighlight %}
+
+		<p>The <code>switch</code> version is more idiomatic:</p>
+
+{% highlight zig %}
+action(req, res) catch |err| switch (err) {
+	error.BrokenPipe, error.ConnectionResetByPeer) => return,
+	error.BodyTooBig => {
+		res.status = 431;
+		res.body = "Request body is too big";
+	},
+	else => {
+		res.status = 500;
+		res.body = "Internal Server Error";
+	}
+};
+{% endhighlight %}
+
+		<p>That's all quite fancy, but let's be honest, the most likely thing you're going to do in <code>catch</code> is bubble the error to the caller:</p>
+
+{% highlight zig %}
+action(req, res) catch |err| return err;
+{% endhighlight %}
+
+		<p>This is so common that it's what <code>try</code> does. Rather than the above, we do:</p>
+
+{% highlight zig %}
+try action(req, res);
+{% endhighlight %}
+
+		<p>This is particularly useful given that error must be handled. Most likely you'll do so with a <code>try</code> or <code>catch</code>.</p>
+
+		<aside>Go developers will notice that <code>try</code> takes fewer keystrokes than <code>if err != nil { return err }</code>.</aside>
+
+		<p>Most of the time you'll be using <code>try</code> and <code>catch</code>, but error unions are also supported by <code>if</code> and <code>while</code>, much like optional types. In the case of <code>while</code>, if the condition returns an error, the <code>else</code> clause is executed.</p>
+
+		<p>There is a special <code>anyerror</code> type which can hold any error. While we could define a function as returning <code>anyerror!TYPE</code> rather than <code>!TYPE</code>, the two are not equivalent. The inferred error set is created based on what the function can return. <code>anyerror</code> is the global error set, a superset of all error sets in the program. Therefore, using <code>anyerror</code> in a function signature is likely to signal that your function can return errors that, in reality, it cannot. <code>anyerror</code> is used for function parameters or struct fields that can work with any error (imagine a logging library).</p>
+
+		<p>It's not uncommon for a function to return an error union optional type. With an inferred error set, this looks like:</p>
+
+{% highlight zig %}
+// load the last saved game
+pub fn loadLast() !?Save {
+	// TODO
+	return null;
+}
+{% endhighlight %}
+
+
+		<p>There are different ways to consume such functions, but the most compact is by using <code>try</code> to unwrap our error and then <code>orelse</code> to unwrap the optional. Here's a working skeleton:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	// This is the line you want to focus on
+	const save = (try Save.loadLast()) orelse Save.blank();
+	std.debug.print("{any}\n", .{save});
+}
+
+pub const Save = struct {
+	lives: u8,
+	level: u16,
+
+	pub fn loadLast() !?Save {
+		//todo
+		return null;
+	}
+
+	pub fn blank() Save {
+		return .{
+			.lives = 3,
+			.level = 1,
+		};
+	}
+};
+{% endhighlight %}
+	</section>
+
+	<section>
+		<p>While Zig has more depth, and some of the language features have greater capabilities, what we've seen in these first two parts is a significant part of the language. It will serve as a foundation, allowing us to explore more complex topics without getting too distracted by syntax. You're hopefully in a better place to read Zig code and tackle new problems with it.</p>
+	</section>
+</article>
+
+<div class=pager>
+	<a class=prev href=language_overview_1>Language Overview - Part 1</a>
+	<a class=home href=/learning_zig>Intro</a>
+	<a class=next href=style_guide>Style Guide</a>
+</div>

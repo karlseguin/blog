@@ -94,7 +94,7 @@ m |> Map.keys() |> IO.inspect()
 
 <p>Remember that maps with less than 32 keys are implemented differently than maps with 32 keys or more, and that's what we're seeing above. The ordering is still predictable: the same map with the same keys, no matter the order of the insertion, will result in the same output (at least within the same version of Elixir / Erlang). If having predictable ordering is something you need, consider the <a href="https://erlang.org/doc/man/gb_trees.html">gb_trees module</a> which I'll cover in a later part. Still, the fact that all terms have strict ordering implies that map ordering is predictable (else comparing the same two maps multiple times would yield different results, making it impossible to use maps as keys within maps).</p>
 
-<div id=pager>
+<div class=pager>
   <a class=prev href=/Elixir-A-Little-Beyond-The-Basics-Part-2-iolist/>iolist</a>
   <a class=next href=/Elixir-A-Little-Beyond-The-Basics-Part-4-structures/>structures</a>
 </div>

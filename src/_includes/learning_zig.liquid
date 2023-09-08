@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<title>{{ title }}</title>
+<meta charset="utf-8">
+<meta name=referrer content=origin>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+* {margin: 0; padding: 0; }
+*, *:before, *:after {box-sizing: border-box;}
+body {color: #333;background: #fff;font: 20px "Helvetica Neue", sans-serif;}
+main {width: 800px;margin: 20px auto;}
+
+ol {margin-left: 20px;}
+ol.inline {margin-left: 40px;}
+ol.inline li {padding: 5px}
+li a {padding: 5px; display: inline-block;}
+p {margin: 16px 0;line-height: 32px;}
+section {margin-top: 50px;border-top: 1px solid #ccc;}
+aside {font-size: 18px;padding: 10px 10px;margin: 0 0 30px;border: solid #ffc0e6;border-width: 2px 0;line-height: 26px;}
+
+h1, h2, h3 {outline: 0;margin: 30px 0 5px;}
+h1 {font-size: 28px;}
+h2 {font-size: 24px;}
+h3 {font-size: 20px;}
+h1 + p, h2 + p, h3 + p {margin-top: 0;}
+h1 a, h2 a, h3 a {color: #000; text-decoration: none;}
+h1 a:before, h2 a:before, h3 a:before {width: 1em;content: "§";color: #999;display: none;text-decoration: none;margin-left: -1em;}
+h1 a:hover:before, h2 a:hover:before, h3 a:hover:before {display: inline-block;}
+
+.pager {display: flex;font-size: 18px}
+.pager:last-of-type {margin-top: 50px;}
+.pager span {flex:40%;}
+.pager a {flex: 40%;color: #fd25a0;padding: 0 10px;line-height: 50px;border-radius: 4px;border: 1px solid #ccc;text-decoration: none;}
+.pager a:hover {background: #eee;border-color: #bbb;}
+.pager .prev {margin-right: 10px;}
+.pager .home {text-align: center; flex: 100px}
+.pager .prev:not(:empty):before {content: "« ";}
+.pager .next:not(:empty):after {content: " »";}
+.pager .next {text-align: right;margin-left: 10px;}
+
+p code, li code, aside code {padding: 0px 3px;border-radius: 5px;background: #fffce3;border: 1px solid #e9e9e5;}
+
+/**
+ * Dracula Theme originally by Zeno Rocha [@zenorocha]
+ * https://draculatheme.com/
+ *
+ * Ported for PrismJS by Albert Vallverdu [@byverdu]
+ */
+code[class*=language-],pre[class*=language-]{color:#f8f8f2;background:0 0;text-shadow:0 1px rgba(0,0,0,.3);font-family:Consolas,Monaco,"Andale Mono","Ubuntu Mono",monospace;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;word-wrap:normal;line-height:1.5;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none}pre[class*=language-]{padding:1em;margin:.5em 0;overflow:auto;border-radius:.3em}:not(pre)>code[class*=language-],pre[class*=language-]{background:#282a36}:not(pre)>code[class*=language-]{padding:.1em;border-radius:.3em;white-space:normal}.token.cdata,.token.comment,.token.doctype,.token.prolog{color:#b3c2f0}.language-css .token.string,.style .token.string,.token.entity,.token.operator,.token.punctuation,.token.url,.token.variable{color:#f8f8f2}.namespace{opacity:.7}.token.constant,.token.deleted,.token.property,.token.symbol,.token.tag{color:#ff79c6}.token.boolean,.token.number{color:#bd93f9}.token.attr-name,.token.builtin,.token.char,.token.inserted,.token.selector,.token.string{color:#a8ff60}.token.atrule,.token.attr-value,.token.class-name,.token.function{color:#f1fa8c}.token.keyword{color:#8be9fd}.token.important,.token.regex{color:#ffb86c}.token.bold,.token.important{font-weight:700}.token.italic{font-style:italic}.token.entity{cursor:help}
+pre[class*=language-] {font-size: 16px;margin-bottom: 30px;}
+</style>
+<main>{{ content }}</main>
