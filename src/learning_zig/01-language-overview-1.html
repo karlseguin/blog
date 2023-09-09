@@ -124,7 +124,7 @@ pub fn main() void {
 
 fn add(a: i64, b: i64) i64 {
 	return a + b;
-}
+}`
 {% endhighlight %}
 
 		<p>C and C++ programmers will notice that Zig doesn't require forward declarations, i.e. <code>add</code> is called <em>before</em> it's defined.</p>
@@ -374,7 +374,7 @@ pub fn main() void {
 
 		<p>By convention, and by convention only, such strings should only contain UTF-8 values, since Zig source code is itself UTF-8 encoded. But this is not enforced and there's really no difference between a <code>[]const u8</code> that represents an ASCII or UTF-8 string, and a <code>[]const u8</code> which represents arbitrary binary data. How could there be, they are the same type.</p>
 
-		<p>From what we learned about arrays and slices, you'd be correct in guessing that <code>[]const u8</code> is a slice to a constant array of bytes (where a byte is an unsigned 8-bit integer). But nowhere in our code did we slice an array, or even have an array, right? All we did was assign "Goku" to <code>user.power</code>. How did that work?</p>
+		<p>From what we learned about arrays and slices, you'd be correct in guessing that <code>[]const u8</code> is a slice to a constant array of bytes (where a byte is an unsigned 8-bit integer). But nowhere in our code did we slice an array, or even have an array, right? All we did was assign "Goku" to <code>user.name</code>. How did that work?</p>
 
 		<p>String literals, those you see in the source code, have a compile-time known length. The compiler knows that "Goku" has a length of 4. So you'd be close in thinking that "Goku" is best represented by an array, something like <code>[4]const u8</code>. But string literals have a couple special properties. They are stored in a special place within the binary and deduplicated. Thus, a variable to a string literal is going to be a pointer to this special location. That means that "Goku"'s type is closer to <code>*const [4]u8</code>, a pointer to a constant array of 4 bytes.</p>
 
