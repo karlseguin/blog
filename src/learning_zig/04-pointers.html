@@ -70,7 +70,7 @@ user -> ------------ (id)
 
 		<aside>By default, Zig doesn't make guarantees about the memory layout of structures. It could store fields in alphabetic order, by ascending size, or with gaps. It can do what it wants, so long as it's able to translate our code correctly. This freedom can enable certain optimizations. Only if we declare a <code>packed struct</code> will we get strong guarantees about the memory layout. Still, our visualization of <code>user</code> is reasonable and useful.</aside>
 
-		<p>Here's a slightly different visualization which includes memory addresses. The memory address of the start of this data, which is the memory address referenced by the <code>user</code> variable, which also happens to be where the value of <code>id</code>, our first field, is found is just a random address I came up with. However, given this initial address, all subsequent addresses have a known relative address. Since <code>id</code> is a 64 bit integer, it takes 8 bytes of memory. Therefore, <code>power</code> has to be at $start_address + 8:</p>
+		<p>Here's a slightly different visualization which includes memory addresses. The memory address of the start of this data is a random address I came up with. This is the memory address referenced by the <code>user</code> variable, which is also where the value of our first field, <code>id</code>. However, given this initial address, all subsequent addresses have a known relative address. Since <code>id</code> is a 64 bit integer, it takes 8 bytes of memory. Therefore, <code>power</code> has to be at $start_address + 8:</p>
 
 {% highlight text %}
 user ->   ------------  (id: 1043368d0)
