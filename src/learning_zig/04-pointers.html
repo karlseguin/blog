@@ -188,7 +188,7 @@ pub const User = struct {
 
 		<p>This begs the question: how do we call a method with a pointer receiver? Maybe we have to do something like: <code>&user.levelUp()</code>? Actually, you just call it normally, i.e. <code>user.levelUp()</code>. Zig knows that the method expects a pointer and pass the value correctly (passes it by reference).</p>
 
-		<p>I initially chose a function only to show the address of user being passed.</p>
+		<p>I initially chose a function because it's explicit and thus easier to learn from.</p>
 
 	<section>
 		<h2 tabindex=-1 id=const_paremeters><a href=#const_paremeters aria-hidden=true>Constant Function Parameters</a></h2>
@@ -286,7 +286,7 @@ user -> -------------  (id: 1043368d0)
         -------------
 {% endhighlight %}
 
-		<p>The new <code>name</code> field is slice which is made up of a <code>len</code> and <code>ptr</code> field. These are laid out in sequence along with all the other fields. On a 64 bit platform both <code>len</code> and <code>ptr</code> will be 64 bits, or 8 bytes. The interesting part is the value of <code>name.ptr</code>: it's an address to some other place in memory.</p>
+		<p>The new <code>name</code> field is a slice which is made up of a <code>len</code> and <code>ptr</code> field. These are laid out in sequence along with all the other fields. On a 64 bit platform both <code>len</code> and <code>ptr</code> will be 64 bits, or 8 bytes. The interesting part is the value of <code>name.ptr</code>: it's an address to some other place in memory.</p>
 
 		<aside>Since we used a string literal, <code>user.name.ptr</code> will point to a specific location within the area where all the constants are stored inside our binary.</aside>
 
@@ -356,7 +356,7 @@ pub const User = struct {
 };
 {% endhighlight %}
 
-		<p>The above code prints "Go!u". We had to change <code>name's</code> type from <code>[]const u8</code> to <code>[]u8</code> and instead of a string literal, which are always immutable, create an array and slice it. Some might see inconsistency here. Passing by value prevents a function from mutating immediate fields, but fields with a value behind a pointer. If we <em>did</em> want <code>name</code> to be immutable, we should have declare it as a <code>[]const u8</code> instead of a <code>[]u8</code>.</p>
+		<p>The above code prints "Go!u". We had to change <code>name's</code> type from <code>[]const u8</code> to <code>[]u8</code> and instead of a string literal, which are always immutable, create an array and slice it. Some might see inconsistency here. Passing by value prevents a function from mutating immediate fields, but not fields with a value behind a pointer. If we <em>did</em> want <code>name</code> to be immutable, we should have declare it as a <code>[]const u8</code> instead of a <code>[]u8</code>.</p>
 
 		<p>Some languages have different implementation, but many languages work exactly like this (or very close). While all of this might seem  esoteric, it's fundamental to day to day programming. The good news is that you can master this using simple examples and snippets; it doesn't get more complicated as other parts of the system grows in complexity.</p>
 	</section>

@@ -205,7 +205,7 @@ try lookup.put(owned_name, .{.power = i});
 
 		<p><code>dupe</code> is a method of <code>std.mem.Allocator</code> that we haven't seen before. It allocates a duplicate of the given value. The code now works because our keys, now on the heap, outlive <code>lookup</code>. In fact, we've done too good a job of extending the lifetime of those strings: we've introduced memory leaks.</p>
 
-		<p>You might have thought that when when we called <code>lookup.deinit</code>, our keys and values would be freed for us. But there's no one-size-fits-all solution that <code>StringHashMap</code> could use. First, the keys could be string literals, which cannot be freed. Second, they could have been created with a different allocator. Finally, while more advanced, there are legitimate cases where keys might not be owned by the hash map.</p>
+		<p>You might have thought that when we called <code>lookup.deinit</code>, our keys and values would be freed for us. But there's no one-size-fits-all solution that <code>StringHashMap</code> could use. First, the keys could be string literals, which cannot be freed. Second, they could have been created with a different allocator. Finally, while more advanced, there are legitimate cases where keys might not be owned by the hash map.</p>
 
 		<p>The only solution is to free the keys ourselves. At this point, it would probably make sense to create our own <code>UserLookup</code> type and encapsulate this cleanup logic in our <code>deinit</code> function. We'll keep things messy:</p>
 
