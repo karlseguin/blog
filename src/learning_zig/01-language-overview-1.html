@@ -400,7 +400,7 @@ pub fn main() void {
 
 		<p>So, when talking about strings, we usually mean a <code>[]const u8</code>. When necessary we explicitly state a null terminated string, which can be automatically coerced into a <code>[]const u8</code>. But do remember that a <code>[]const u8</code> is also used to represent arbitrary binary data, and as such, Zig doesn't have the notion of a string that higher level programming languages do. Furthermore, Zig's standard library only has a very basic unicode module.</p>
 
-		<p>Of course, in a real program, most strings (and more generically, arrays) aren't know at compile time. The classic example being user input, which isn't know when the program is being compiled. This is something that we'll have to revisit when talking about memory. But the short answer is that, for such data, which is of an unknown value at compile time, and thus an unknown length, we'll be dynamically allocating memory at runtime. Our string variables, still of type <code>[]const u8</code> will be slices that point to this dynamically allocated memory.</p>
+		<p>Of course, in a real program, most strings (and more generically, arrays) aren't known at compile time. The classic example being user input, which isn't known when the program is being compiled. This is something that we'll have to revisit when talking about memory. But the short answer is that, for such data, which is of an unknown value at compile time, and thus an unknown length, we'll be dynamically allocating memory at runtime. Our string variables, still of type <code>[]const u8</code> will be slices that point to this dynamically allocated memory.</p>
 
 	</section>
 	<section>
