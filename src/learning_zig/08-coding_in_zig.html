@@ -80,7 +80,7 @@ Goku's power is: -1431655766
 			<li>And a copy of our copy, <code>entry</code>, also tied to the function.
 		</ol>
 
-		<p>Because <code>entry</code> would now be its own independent copy of the user, removing it from <code>lookup</code> would not invalid it.</p>
+		<p>Because <code>entry</code> would now be its own independent copy of the user, removing it from <code>lookup</code> would not invalidate it.</p>
 
 
 		<p>Another option is to change <code>lookup's</code> type from <code>StringHashMap(User)</code> to <code>StringHashMap(*const User)</code>. This code works:</p>
