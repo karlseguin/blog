@@ -70,7 +70,7 @@ user -> ------------ (id)
 
 		<aside>By default, Zig doesn't make guarantees about the memory layout of structures. It could store fields in alphabetic order, by ascending size, or with gaps. It can do what it wants, so long as it's able to translate our code correctly. This freedom can enable certain optimizations. Only if we declare a <code>packed struct</code> will we get strong guarantees about the memory layout. Still, our visualization of <code>user</code> is reasonable and useful.</aside>
 
-		<p>Here's a slightly different visualization which includes memory addresses. The memory address of the start of this data is a random address I came up with. This is the memory address referenced by the <code>user</code> variable, which is also where the value of our first field, <code>id</code>. However, given this initial address, all subsequent addresses have a known relative address. Since <code>id</code> is a 64 bit integer, it takes 8 bytes of memory. Therefore, <code>power</code> has to be at $start_address + 8:</p>
+		<p>Here's a slightly different visualization which includes memory addresses. The memory address of the start of this data is a random address I came up with. This is the memory address referenced by the <code>user</code> variable, which is also the value of our first field, <code>id</code>. However, given this initial address, all subsequent addresses have a known relative address. Since <code>id</code> is a 64 bit integer, it takes 8 bytes of memory. Therefore, <code>power</code> has to be at $start_address + 8:</p>
 
 {% highlight text %}
 user ->   ------------  (id: 1043368d0)
@@ -197,7 +197,7 @@ pub const User = struct {
 
 		<p>Even sticking with simple types, the truth is that Zig can pass parameters however it wants, so long as it can guarantee that the intent of the code is preserved. In our original <code>levelUp</code>, where the parameter was a <code>User</code>, Zig could have passed a copy of the user or a reference to <code>main.user</code>, as long as it could guarantee that the function would not mutate it. (I know we ultimately <em>did</em> want it mutated, but by making the type <code>User</code>, we were telling the compiler that we didn't).</p>
 
-		<p>This freedom allows Zig to use the most optimal strategy based on the parameter type. Small types, like <code>User</code> can be cheaply passed by value (i.e. copied). Larger types might be cheaper to pass by reference. Zig can use any approach, so long as intent of the code is preserved. To some degree, this is made possible by having constant function parameters.</p>
+		<p>This freedom allows Zig to use the most optimal strategy based on the parameter type. Small types, like <code>User</code> can be cheaply passed by value (i.e. copied). Larger types might be cheaper to pass by reference. Zig can use any approach, so long as the intent of the code is preserved. To some degree, this is made possible by having constant function parameters.</p>
 
 		<p>Now you know one of the reasons function parameters are constants.</p>
 
