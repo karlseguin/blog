@@ -1,0 +1,259 @@
+---
+layout: post
+date: 2023-10-08
+title: "Zig Interfaces"
+description: "Understanding and implementing interfaces in Zig"
+tags: [zig]
+---
+
+<p>If you're picking up Zig, it won't be long before you realize there no syntactical sugar for creating interfaces. But you'll probably notice interface-like things, such as <code>std.mem.Allocator</code>. This is because Zig doesn't have an simple mechanism for creating interfaces (e.g. <code>interface</code> and <code>implements</code> keywords), but the language itself can be used to achieve the same goal.</p>
+
+<p>There are existing articles that I've been able to copy and paste to get this working, but none really clicked with me. It wasn't until I broke the code down into two parts: making it work and then making it pretty, that I finally understood. So, first, let's make something that works.</p>
+
+<h3>A Simple Interface Implementation</h3>
+<p>We're going to create a <code>Writer</code> interface; it's something simple to understand that won't get in our way. We'll stick with a single function; once we know how to do this with one function, it's easy to repeat the pattern for more. First, the interface itself:</p>
+
+{% highlight zig %}
+const Writer = struct {
+  ptr: *anyopaque,
+  writeAllFn: *const fn (ptr: *anyopaque, data: []const u8) anyerror!void,
+
+  fn writeAll(self: Writer, data: []const u8) !void {
+    return self.writeAllFn(self.ptr, data);
+  }
+};
+{% endhighlight %}
+
+<p>This is our complete interface. Depending on your knowledge of Zig, there might some things you aren't sure about. Our interface has two fields. The first, <code>ptr</code>, is a pointer to the actual implementation. We'll talk about <code>*anyopaque</code> in a bit. The second, <code>writeAllFn</code>, is a function pointer to the function of the actual implementation.</p>
+
+<p>Notice that the interface's <code>writeAll</code> implementation just call our function pointer and passes it the <code>ptr</code> field as well as any other arguments. Here's a skeleton implementation:</p>
+
+{% highlight zig %}
+const File = struct {
+  fd: os.fd_t,
+
+  fn writeAll(ptr: *anyopaque, data: []const u8) !void {
+    // What to do with ptr?!
+  }
+
+  fn writer(self: *File) Writer {
+    return .{
+      .ptr = self,
+      .writeAllFn = writeAll,
+    };
+  }
+};
+{% endhighlight %}
+
+<p>First, the <code>writer</code> function is how we get a <code>Writer</code> from a <code>*File</code>. This is like calling <code>gpa.allocator()</code> on a GeneralPurposeAllocator to get an <code>std.mem.Allocator</code>. Aside from the fact that we're able to assign <code>self</code> to <code>ptr</code> (a <code>*File</code> to  <code>*anyopaque</code>), there's nothing special here. We're just creating a <code>Writer</code> struct. And even this assignment isn't too special, Zig's automatic type coercion requires guaranteed safety and no ambiguity, two properties that are always true when assigning to an <code>*anyopaque</code>.</p>
+
+<p>The part that glues everything together, the part that we've left out, is: what do we do with the <code>ptr: *anyopaque</code> passed back into <code>writeAll</code>? First,<code>*anyopaque</code> is a pointer to something of unknown type and unknown size. Hopefully it's clear why <code>Writer.ptr</code> has to be of this type. It can't be a <code>*File</code>, else it wouldn't be usable for other implementations. The nature of interfaces means that, at compile time, we don't know what the implementation will be and thus <code>*anyopaque</code> is the only possible choice.</p>
+
+<p>It's important to understand that <code>ptr</code> <em>is</em> the file. When we create the <code>Writer</code>, we assign it to <code>self</code>. But by assigning it to <code>ptr</code> we've erased its type. It <em>is</em> a <code>*File</code>, the compiler just doesn't know that. We need a way to inject this information into the compiler. We can do this with a combination of <code>ptrCast</code> and <code>alignCast</code>:</p>
+
+{% highlight zig %}
+fn writeAll(ptr: *anyopaque, data: []const u8) !void {
+  const self: *File = @ptrCast(@alignCast(ptr));
+  _ = try std.os.write(self.fd, data);
+}
+{% endhighlight %}
+
+<p><code>@ptrCast</code> converts a pointer from one type to another. The type to convert to is inferred by the value the result is assigned to. In the above case, we're telling the compiler: <em>give me a variable pointing to the same thing as <code>ptr</code> but treat that like a <code>*File</code>, trust me, I know what I'm doing.</em> <code>@ptrCast</code> is powerful as it allows us to force the type associated with specific memory. If we're wrong and use <code>@ptrCast</code> to convert a pointer into a type incompatible with the underlying memory, we'll have serious runtime issues, with a crash being the best possible outcome.</p>
+
+<p><code>@alignCast</code> is more complicated. There are CPU-specific rules for how data must be arranged in memory. This is called data alignment and it deals with how fields in a structure are aligned in memory. <code>anyopaque</code> always has an alignment of 1. But our <code>File</code> has a different alignment (4). If you want, you can see this by printing <code>@alignOf(File)</code> and <code>@alignOf(anyopaque)</code>. Just like we need <code>@ptrCast</code> to tell the compiler what the type is, we need <code>@alignCast</code> to tell the compiler what the alignment is. And, just like <code>@ptrCast</code>, <code>@alignCast</code> infers this based on what it's being assigned to.</p>
+
+<p>Our complete solution is:</p>
+
+{% highlight zig %}
+const Writer = struct {
+  ptr: *anyopaque,
+  writeAllFn: *const fn (ptr: *anyopaque, data: []const u8) anyerror!void,
+
+  fn writeAll(self: Writer, data: []const u8) !void {
+    return self.writeAllFn(self.ptr, data);
+  }
+};
+
+const File = struct {
+  fd: os.fd_t,
+
+  fn writeAll(ptr: *anyopaque, data: []const u8) !void {
+    const self: *File = @ptrCast(@alignCast(ptr));
+    // os.write might not write all of `data`, we should really look at the
+    // returned value, the number of bytes written, and handle cases where data
+    // wasn't all written.
+    _ = try std.os.write(self.fd, data);
+  }
+
+  fn writer(self: *File) Writer {
+    return .{
+      .ptr = self,
+      .writeAllFn = writeAll,
+    };
+  }
+};
+{% endhighlight %}
+
+<p>Hopefully, this is pretty clear to you. It comes down to two things: using
+<code>*anyopaque</code> to be able to store a pointer to any implementation, and
+then using <code>@ptrCast(@alignCast(ptr))</code> to restore the correct type information.</p>
+
+<p>As an aside, the interface's <code>ptr</code> type <strong>has</strong> to be a pointer to <code>anyopaque</code>, i.e. <code>*anyopaque</code>, it cannot be just <code>anyopaque</code>. Do you know why? As I said, <code>anyopaque</code> is of unknown size and in Zig, like most languages, all types have to have a known size. <code>Writer</code> has a size of 16 bytes: 2 pointers with each pointer being 8 bytes on a 64 bit platform. If we were to try and use <code>anyopaque</code>, then the size of <code>Writer</code> becomes unknown, which the compiler will not allow.</p>
+
+<h3>Making it Prettier</h3>
+<p>I'm a fan of the above implementation. There's only a little magic to know and implement. Some of the interfaces in the standard library, like <code>std.mem.Allocator</code>, look just like it. (Because <code>Allocator</code> has a few more functions, a nested structure called <code>VTable</code> (virtual table) is used to hold the function pointers, but that's a small change.)<p>
+
+<p>The major drawback is that it's only usable through the interface. We can't use <code>file.writeAll</code> directly since <code>writeAll</code> doesn't have a <code>*File</code> receiver. So it's fine if implementations are always accessed through the interface, like Zig's allocators, but it won't work if we need implementations to function on their own as well as through an interface.</p>
+
+<p>In other words, we'd like <code>File.writeAll</code> to be a normal method, essentially not having to deal with <code>*anyopaque</code>:</p>
+
+{% highlight zig %}
+fn writeAll(self: *File, data: []const u8) !void {
+  _ = try std.os.write(self.fd, data);
+}
+{% endhighlight %}
+
+<p>This is something we can achieve, but it requires changing our <code>Writer</code> interface:</p>
+
+{% highlight zig %}
+const Writer = struct {
+  // These two fields are the same as before
+  ptr: *anyopaque,
+  writeAllFn: *const fn (ptr: *anyopaque, data: []const u8) anyerror!void,
+
+  // This is new
+  fn init(ptr: anytype) Writer {
+    const T = @TypeOf(ptr);
+    const ptr_info = @typeInfo(T);
+
+    const gen = struct {
+      pub fn writeAll(pointer: *anyopaque, data: []const u8) anyerror!void {
+        const self: T = @ptrCast(@alignCast(pointer));
+        return ptr_info.Pointer.child.writeAll(self, data);
+      }
+    };
+
+
+    return .{
+      .ptr = ptr,
+      .writeAllFn = gen.writeAll,
+    };
+  }
+
+  // This is the same as before
+  pub fn writeAll(self: Writer, data: []const u8) !void {
+    return self.writeAllFn(self.ptr, data);
+  }
+};
+{% endhighlight %}
+
+<p>What's new here is the <code>init</code> function. To me, it's pretty complicated, but it helps to think of it from the point of view of our original implementation. The point of all the code in <code>init</code> is to turn an <code>*anyopaque</code> into a concrete type, such as <code>*File</code>. This was easy to do from within <code>*File</code>, because within <code>File.writeAll</code>, <code>ptr</code> had to be a <code>*File</code>. But here, to know the type, we need to capture more information.</p>
+
+<p>To better understand <code>init</code>, it might help to see how it's used. Our <code>File.writer</code>, which previous created a <code>Writer</code> directly, is now changed to:</p>
+
+{% highlight zig %}
+fn writer(self: *File) Writer {
+  return Writer.init(self);
+}
+{% endhighlight %}
+
+<p>So we know that the <code>ptr</code> argument to <code>init</code> is our implementation. The <code>@TypeOf</code> and <code>@typeInfo</code> builtin functions are central to most compile-time work in Zig. The first returns the type of <code>ptr</code>, in this case <code>*File</code>, and the latter returns a tagged union which fully describes the type. You can see that we create a nested structure which also has a <code>writeAll</code> implementation. This is where the <code>*anyopaque</code> is converted to the correct type and the implementation's functions is invoked. The structure is needed because Zig lacks anonymous functions. We need <code>Writer.writeAllFn</code> to be this little two-line wrapper, and using a nested structure is the only way to do that.</p>
+
+<p>Obviously <code>file.writer()</code> is something that'll be executed at runtime. It can be tempting to think that everything inside <code>Writer.init</code>, which <code>file.writer()</code> calls, is created at runtime. You might wonder about the lifetime of our internal <code>gen</code> structure, particularly in the face of multiple implementations. But aside from the <code>return</code> statement, <code>init</code> is all compile-time code generation. Specifically, the Zig compiler will create a version of <code>init</code> for each type of <code>ptr</code> that the program uses. The <code>init</code> function is more like a template for the compiler (all because the <code>ptr</code> argument is <code>anytype</code>). When <code>file.writer()</code> is called at runtime, the <code>Writer.init</code> function that ends up being executed is distinct from the <code>Writer.init</code> function that would be executed for a different type.</p>
+
+<p>In the original version, each implementation is responsible for converting <code>*anyopaque</code> to the correct type. Essentially by including that one line of code, <code>@ptrCast(@alignCast(ptr))</code>. In this fancy version, each implementation also has its own code to do this conversion, we've just managed to embed it in the interface and leveraged Zig's comptime capabilities to generate the code for us.</p>
+
+<p>The last part of this code is the function invocation, via <code>ptr_info.Pointer.child.writeAll(self, data)</code>. <code>@typeInfo(T)</code> returns a <code>std.builtin.Type</code> which is a tagged union that describes a type. It can describe 24 different types, such as integers, optional, structs, pointers, etc. Each type has its own properties. For example, an integer has a <code>signedness</code> which other types don't. Here's what <code>@typeInfo(*File)</code></code> looks like:</p>
+
+{% highlight zig %}
+builtin.Type{
+  .Pointer = builtin.Type.Pointer{
+    .address_space = builtin.AddressSpace.generic,
+    .alignment = 4,
+    .child = demo.File,
+    .is_allowzero = false,
+    .is_const = false,
+    .is_volatile = false,
+    .sentinel = null,
+    .size = builtin.Type.Pointer.Size.One
+  }
+}
+{% endhighlight %}
+
+<p>The <code>child</code> field is the actual type behind the pointer. When <code>init</code> is called with a <code>*File</code>, <code>ptr_info.Pointer.child.writeAll(...)</code> translates to <code>File.writeAll(...)</code>, exactly what we want.</p>
+
+<p>If you look at other implementations of this pattern, you might find their <code>init</code> function does a few more things. For example, you might find these two additional lines of code after <code>ptr_info</code> is created:</p>
+
+{% highlight zig %}
+if (ptr_info != .Pointer) @compileError("ptr must be a pointer");
+if (ptr_info.Pointer.size != .One) @compileError("ptr must be a single item pointer");
+{% endhighlight %}
+
+<p>The purpose of these is to add additional compile-time checks on the type of value passed to <code>init</code>. Essentially making sure that we passed it a pointer to a single item.</p>
+
+<p>Also, instead of calling the function via:</
+
+{% highlight zig %}
+ptr_info.Pointer.child.writeAll(self, data);
+{% endhighlight %}
+
+<p>You might see:</p>
+
+{% highlight zig %}
+@call(.always_inline, ptr_info.Pointer.child.writeAll, .{self, data});
+{% endhighlight %}
+
+<p>The <code>@call</code> builtin function, is the same as calling a function directly (as we did), but gives more flexibility by allowing us to supply a <code>CallModifier</code>. As you can see, using <code>@call</code> allows us to tell the compiler to inline the function.</p>
+
+<p>Hopefully this has made the implementation of interfaces in Zig clearer and maybe exposed new capabilities of the language. However, for simple cases where all implementations are known, you might want to consider a different approach.</p>
+
+<h3>Tagged Unions</h3>
+<p>As an alternative to the above solutions, tagged unions can be used to emulate interfaces. Here's a complete working example:</p>
+
+{% highlight zig %}
+const Writer = union(enum) {
+  file: File,
+
+  fn writeAll(self: Writer, data: []const u8) !void {
+    switch (self) {
+      .file => |file| return file.writeAll(data),
+    }
+  }
+};
+
+const File = struct {
+  fd: os.fd_t,
+
+  fn writeAll(self: File, data: []const u8) !void {
+    _ = try std.os.write(self.fd, data);
+  }
+};
+
+
+pub fn main() !void {
+  const file = File{.fd = std.io.getStdOut().handle};
+  const writer = Writer{.file = file};
+  try writer.writeAll("hi");
+}
+{% endhighlight %}
+
+<p>Remember that when we switch a tagged union, the captured values, e.g. <code>|file|</code>, has the correct type. <code>File</code> in this case.
+
+<p>The downside with this approach is that it requires all implementations to be known ahead of time. You can't use it, for example, to create an interface that third parties can create implementations for. Each possible implementation has to be baked into the union</p>
+
+<p>Within an app, there are plenty of cases where such a restriction is fine. You can build a <code>Cache</code> union with all supported caching implementation, e.g. InMemory, Redis and Postgresql. If your application adds a new implementation, you just update the union.</p>
+
+<p>In many cases, the interface will call the underlying implementation directly. For those cases, you can use the special <code>inline else</code> syntax:</p>
+
+{% highlight zig %}
+switch (self) {
+  .null => {},  // do nothing
+  inline else => |impl| return impl.writeAll(data),
+}
+{% endhighlight %}
+
+<p>This essentially gets expanded automatically for us, meaning that <code>impl</code> will have the correct underlying type for each case. The other thing this highlights is that the interface can inject its own logic . Above, we see it short-circuit the call when the "null" implementation is active. Exactly how much logic you want to add to the interface is up to you, but we're all adults here and I'm not going to tell you that interfaces should only do dispatching.</p>
+
+<p>As far as I'm concerned, tagged unions should be your first option.</p>
+
+<p>If you're interested in learning Zig, consider my <a href=/learning_zig/>Learning Zig</a> series.</p>

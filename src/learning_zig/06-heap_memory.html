@@ -257,7 +257,7 @@ defer allocator.free(say);
 
 		<p>The advantage of injecting the allocator isn't just explicitness, it's also flexibility. <code>std.mem.Allocator</code> is an interface which provides the <code>alloc</code>, <code>free</code>, <code>create</code> and <code>destroy</code> functions, along with a few others. So far we've only see the <code>std.heap.GeneralPurposeAllocator</code>, but other implementations are available in the standard library or as third party libraries.</p>
 
-		<aside>Zig doesn't have nice syntactical sugar for creating interface. One pattern for interface-life behaviour are tagged unions, though that's relatively constrained compared to true interfaces. Other patterns have emerged and are used throughout the standard library, such as with <code>std.mem.Allocator</code>. This guide does not explore these interface patterns.</aside>
+		<aside>Zig doesn't have nice syntactical sugar for creating interface. One pattern for interface-life behaviour are tagged unions, though that's relatively constrained compared to true interfaces. Other patterns have emerged and are used throughout the standard library, such as with <code>std.mem.Allocator</code>. If you're interested, I've written <a href=/Zig-Interfaces/>a separate blog post explaining interfaces</a>.</aside>
 
 		<p>If you're building a library, then it's best to accept an <code>std.mem.Allocator</code> and let users of your library decide which allocator implementation to use. Otherwise, you'll need to chose the right allocator, and, as we'll see, these are not mutually exclusive. There can be good reason to create different allocators within your program.</p>
 	</section>
