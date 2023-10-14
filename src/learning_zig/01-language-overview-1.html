@@ -431,7 +431,7 @@ var i: usize = 0;
 var j: f64 = 0;
 {% endhighlight %}
 
-		<aside>Note, this error only happened before we used <code>var</code>. Had we used <code>const</code>, we wouldn't have had the error since the entire point of the error is that a <code>comptime_int</code> <em>must</em> be const.</aside>
+		<aside>Note, this error only happened because we used <code>var</code>. Had we used <code>const</code>, we wouldn't have had the error since the entire point of the error is that a <code>comptime_int</code> <em>must</em> be const.</aside>
 
 		<p>In a future part, we'll examine comptime a bit more when exploring generics.</p>
 
