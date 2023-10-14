@@ -25,7 +25,7 @@ make
 
 <p>In addition to other things, this will generate what's known as the "amalgamation" source code, which is the entire SQLite source code in a single file (sqlite3.c) with a single header (sqlite3.h). If you have any problems building this from source, you can grab the pre-generated amalgamation from the same download page, just search for "sqlite-amalgamation" (it's usually the first (pre-release) or second (stable release) link).</p>
 
-<p>We'll copy <code>sqlite3.c</code> and <code>sqlite3.h</code> into a new empty working directory. For me, that's <code>~/code/play/sqlite</code>. To this, we'll add a file, <code>main.c</code>. In the end, you should have a directory with 3 files: <code>sqlite3.h</code>, <code>sqlite3.c</code> and <code>main.c</code>. You'll only touch <code>main.c</code>, open it now now.</p>
+<p>We'll copy <code>sqlite3.c</code> and <code>sqlite3.h</code> into a new empty working directory. For me, that's <code>~/code/play/sqlite</code>. To this, we'll add a file, <code>main.c</code>. In the end, you should have a directory with 3 files: <code>sqlite3.h</code>, <code>sqlite3.c</code> and <code>main.c</code>. You'll only touch <code>main.c</code>, open it now.</p>
 
 <h3>Opening a Connection</h3>
 <p>The first thing we'll do is open a new SQLite database and then close it:</p>

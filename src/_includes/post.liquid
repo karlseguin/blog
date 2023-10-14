@@ -6,24 +6,25 @@
 <meta name=viewport content="width=device-width,initial-scale=1">
 {% if description %}<meta name="description" content="{{description}}" />{% else %}<meta name="description" content="Karl Seguin's Blog - A mix of coding and creative writing" />{% endif %}
 <style>
-html {box-sizing: border-box;}
-*, *:before, *:after {box-sizing: inherit;}
+* {margin: 0; padding: 0; }
+*, *:before, *:after {box-sizing: border-box;}
+body {color: #333;background: #fff;font: 20px "Helvetica Neue", sans-serif;}
+main {width: 800px;margin: 20px auto;}
+
+#byline{color: #555;font-size: 90%;margin: 10px 0}
 body{background:#fff;font-family:sans-serif;font-size: 20px;padding: 0; margin: 0}
 body > a {background:#444;color:#fff;padding:10px;text-decoration:none;display: inline-block;position: absolute;top: 0;right: 0}
 
-ul li {line-height: 32px}
-p, pre, li{line-height: 32px;}
+ol, ul {margin-left: 30px;}
+li {line-height: 30px;}
+p {margin: 16px 0;line-height: 32px;}
 blockquote{line-height: 32px; border-left: 10px solid #ddd; margin: 0; padding-left: 25px}
-h2, h3, h4{margin: 0}
-h2 + p, h3 + p, h4 + p{margin-top: 5px}
-main{width: 1000px; margin: 0 auto;}
-h1{font-size: 150%; margin: 20px 0 0}
-#byline{color: #555;font-size: 80%;margin-top: 5px}
+h1, h2, h3 {outline: 0;margin: 30px 0 5px;}
+h1 {font-size: 28px;}
+h2 {font-size: 24px;}
+h3 {font-size: 20px;}
 
-pre{padding:10px 0;font-size: 80%;color:#000;margin-left: calc((100vw - 1000px) / -2 + 10px); width: calc(100vw - 20px); padding-left: calc((100vw - 1000px) / 2);}
-pre, code{font-family:monospace;background:#fafafa;white-space: pre-wrap; word-wrap: break-word;}
-p code{padding:2px 5px;background:#f6f6f6;border-radius: 4px;}
-code[class*="language-"],pre[class*="language-"]{background:hsl(230,1%,98%);color:hsl(230,8%,24%);font-family:monospace;direction:ltr;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;line-height:1.5;tab-size:2;hyphens:none}code[class*="language-"]::-moz-selection,code[class*="language-"] ::-moz-selection,pre[class*="language-"] ::-moz-selection{background:hsl(230,1%,90%);color:inherit}code[class*="language-"]::selection,code[class*="language-"] ::selection,pre[class*="language-"] ::selection{background:hsl(230,1%,90%);color:inherit}:not(pre) > code[class*="language-"]{padding:.2em .3em;border-radius:.3em;white-space:normal}.token.comment,.token.prolog,.token.cdata{color:hsl(230,4%,64%)}.token.doctype,.token.punctuation,.token.entity{color:hsl(230,8%,24%)}.token.attr-name,.token.class-name,.token.boolean,.token.constant,.token.number,.token.atrule{color:hsl(35,99%,36%)}.token.keyword{color:hsl(301,63%,40%)}.token.property,.token.tag,.token.symbol,.token.deleted,.token.important{color:hsl(5,74%,59%)}.token.selector,.token.string,.token.char,.token.builtin,.token.inserted,.token.regex,.token.attr-value,.token.attr-value > .token.punctuation{color:hsl(119,34%,47%)}.token.variable,.token.operator,.token.function{color:hsl(221,87%,60%)}.token.url{color:hsl(198,99%,37%)}.token.attr-value > .token.punctuation.attr-equals,.token.special-attr > .token.attr-value > .token.value.css{color:hsl(230,8%,24%)}.language-css .token.selector{color:hsl(5,74%,59%)}.language-css .token.property{color:hsl(230,8%,24%)}.language-css .token.function,.language-css .token.url > .token.function{color:hsl(198,99%,37%)}.language-css .token.url > .token.string.url{color:hsl(119,34%,47%)}.language-css .token.important,.language-css .token.atrule .token.rule{color:hsl(301,63%,40%)}.language-javascript .token.operator{color:hsl(301,63%,40%)}.language-javascript .token.template-string > .token.interpolation > .token.interpolation-punctuation.punctuation{color:hsl(344,84%,43%)}.language-json .token.operator{color:hsl(230,8%,24%)}.language-json .token.null.keyword{color:hsl(35,99%,36%)}.token.bold{font-weight:700}.token.comment,.token.italic{font-style:italic}.token.entity{cursor:help}.token.namespace{opacity:.8}
+p code {padding: 0px 3px;border-radius: 5px;background: #fffce3;border: 1px solid #e9e9e5;}
 code br {border: 1px solid red}
 
 .pager {display: flex;}
@@ -37,6 +38,24 @@ code br {border: 1px solid red}
 .pager .next:not(:empty):after{content: ' »'}
 .pager .next {text-align: right;margin-left: 10px}
 
+/**
+ * Dracula Theme originally by Zeno Rocha [@zenorocha]
+ * https://draculatheme.com/
+ *
+ * Ported for PrismJS by Albert Vallverdu [@byverdu]
+ */
+code[class*=language-],pre[class*=language-]{color:#f8f8f2;background:0 0;text-shadow:0 1px rgba(0,0,0,.3);font-family:Consolas,Monaco,"Andale Mono","Ubuntu Mono",monospace;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;word-wrap:normal;line-height:1.5;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none}pre[class*=language-]{padding:1em;margin:.5em 0;overflow:auto;border-radius:.3em}:not(pre)>code[class*=language-],pre[class*=language-]{background:#282a36}:not(pre)>code[class*=language-]{padding:.1em;border-radius:.3em;white-space:normal}.token.cdata,.token.comment,.token.doctype,.token.prolog{color:#b3c2f0}.language-css .token.string,.style .token.string,.token.entity,.token.operator,.token.punctuation,.token.url,.token.variable{color:#f8f8f2}.namespace{opacity:.7}.token.constant,.token.deleted,.token.property,.token.symbol,.token.tag{color:#ff79c6}.token.boolean,.token.number{color:#bd93f9}.token.attr-name,.token.builtin,.token.char,.token.inserted,.token.selector,.token.string{color:#a8ff60}.token.atrule,.token.attr-value,.token.class-name,.token.function{color:#f1fa8c}.token.keyword{color:#8be9fd}.token.important,.token.regex{color:#ffb86c}.token.bold,.token.important{font-weight:700}.token.italic{font-style:italic}.token.entity{cursor:help}
+pre[class*=language-] {font-size: 16px;margin-bottom: 30px;}
+
+@media screen and (max-width: 1000px) {
+  .pager{flex-direction: column;}
+  .pager .home {flex: auto}
+  .pager a{text-align: center !important; margin: 0 !important}
+  .pager .next{}
+  main{width: 100%; padding: 10px}
+  code[class*="language-"],
+  pre[class*="language-"], pre{margin-left: 0; white-space: pre-wrap; word-break: break-word}
+}
 @media screen and (max-width: 1000px) {
 	body > a {position: relative;}
 	main{width: 100%; padding: 10px}

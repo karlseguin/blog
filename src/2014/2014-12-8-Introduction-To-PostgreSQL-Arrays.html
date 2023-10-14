@@ -25,7 +25,7 @@ create table posts (
 
 {% highlight sql %}
 insert into posts (title, post, tags)
-  values ('Teg is great', 'blah blah', '{"fact", "serious"}');
+values ('Teg is great', 'blah blah', '{"fact", "serious"}');
 {% endhighlight %}
 
 <p>The single and double quote syntax for text isn't great. For numbers and booleans, it's better: <code>{1,5,894,1}</code> and <code>{true, false, true, true, true}</code>.
@@ -49,7 +49,7 @@ select id, tags[1000] from posts;
 
 {% highlight sql %}
 select * from posts
-  where 'sand' = any(tags);
+where 'sand' = any(tags);
 {% endhighlight %}
 
 <p><code>all</code> can be used to find records where an array only contains a specific value (possibly multiple times).</p>
@@ -72,12 +72,12 @@ select * from posts where tags @> array['worm'];
 
 {% highlight sql %}
 select count(*)
-  from posts
-  where id not in (
-    select id
-      from posts
-      where tags @> array['spice']
-  );
+from posts
+where id not in (
+  select id
+    from posts
+    where tags @> array['spice']
+);
 {% endhighlight %}
 
 

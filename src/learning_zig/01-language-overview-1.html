@@ -206,7 +206,7 @@ user.diagnose();
 User.diagnose(user);
 {% endhighlight %}
 
-		<p>Most of the time you'll use the dot syntax, but methods as syntactical sugar over normal functions can come in handy. </p>
+		<p>Most of the time you'll use the dot syntax, but methods as syntactical sugar over normal functions can come in handy.</p>
 
 		<aside>The <code>if</code> statement is the first control flow we've seen. It's pretty straightforward, right? We'll explore this in more detail in the next part.</aside>
 
@@ -300,7 +300,7 @@ const a = [_]i32{1, 2, 3, 4, 5};
 const b = a[1..4];
 {% endhighlight %}
 
-		<p>I'd love to be able to tell you that <code>b</code> is a slice with a length of 3 and a pointer to <code>a</code>. But because we "sliced" our array using values that are known at compile time, i.e. <code>1</code> and <code>4</code>, our length, <code>3</code>, is also known at compile time. Zig figures all this out and thus <code>b</code> isn't a slice, but rather a pointer to an array of integers with a length of 3. Specifically, its type is <code>*const [3]i32</code>. So this demonstrate of a slice is foiled by Zig's cleverness.</p>
+		<p>I'd love to be able to tell you that <code>b</code> is a slice with a length of 3 and a pointer to <code>a</code>. But because we "sliced" our array using values that are known at compile time, i.e. <code>1</code> and <code>4</code>, our length, <code>3</code>, is also known at compile time. Zig figures all this out and thus <code>b</code> isn't a slice, but rather a pointer to an array of integers with a length of 3. Specifically, its type is <code>*const [3]i32</code>. So this demonstration of a slice is foiled by Zig's cleverness.</p>
 
 		<p>In real code, you'll likely use slices more than arrays. For better or worse, programs tend to have more runtime information than compile time information. In a small example though, we have to trick the compiler to get what we want:</p>
 

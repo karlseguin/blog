@@ -49,7 +49,7 @@ const File = struct {
 
 <p>The part that glues everything together, the part that we've left out, is: what do we do with the <code>ptr: *anyopaque</code> passed back into <code>writeAll</code>? First,<code>*anyopaque</code> is a pointer to something of unknown type and unknown size. Hopefully it's clear why <code>Writer.ptr</code> has to be of this type. It can't be a <code>*File</code>, else it wouldn't be usable for other implementations. The nature of interfaces means that, at compile time, we don't know what the implementation will be and thus <code>*anyopaque</code> is the only possible choice.</p>
 
-<p>It's important to understand that <code>ptr</code> <em>is</em> the file. When we create the <code>Writer</code>, we assign it to <code>self</code>. But by assigning it to <code>ptr</code> we've erased its type. It <em>is</em> a <code>*File</code>, the compiler just doesn't know that. We need a way to inject this information into the compiler. We can do this with a combination of <code>ptrCast</code> and <code>alignCast</code>:</p>
+<p>It's important to know that when we create a <code>Writer</code> via <code>file.writer()</code>, <code>ptr</code> <em>is</em> the file because we assign it to <code>self</code>. But because <code>ptr</code> is of type <code>*anyopaque</code>, the assignment erases its true type. The memory pointed to by <code>ptr</code> <em>does</em> represent a <code>*File</code>, the compiler just doesn't know that. We need a way to inject this information into the compiler. We can do this with a combination of <code>ptrCast</code> and <code>alignCast</code>:</p>
 
 {% highlight zig %}
 fn writeAll(ptr: *anyopaque, data: []const u8) !void {
@@ -98,7 +98,7 @@ const File = struct {
 <code>*anyopaque</code> to be able to store a pointer to any implementation, and
 then using <code>@ptrCast(@alignCast(ptr))</code> to restore the correct type information.</p>
 
-<p>As an aside, the interface's <code>ptr</code> type <strong>has</strong> to be a pointer to <code>anyopaque</code>, i.e. <code>*anyopaque</code>, it cannot be just <code>anyopaque</code>. Do you know why? As I said, <code>anyopaque</code> is of unknown size and in Zig, like most languages, all types have to have a known size. <code>Writer</code> has a size of 16 bytes: 2 pointers with each pointer being 8 bytes on a 64 bit platform. If we were to try and use <code>anyopaque</code>, then the size of <code>Writer</code> becomes unknown, which the compiler will not allow.</p>
+<p>As an aside, the interface's <code>ptr</code> type <strong>has</strong> to be a pointer to <code>anyopaque</code>, i.e. <code>*anyopaque</code>, it cannot be just <code>anyopaque</code>. Do you know why? As I said, <code>anyopaque</code> is of unknown size and in Zig, like most languages, all types have to have a known size. <code>Writer</code> has a size of 16 bytes: 2 pointers with each pointer being 8 bytes on a 64 bit platform. If we were to try and use <code>anyopaque</code>, then the size of <code>Writer</code> becomes unknown, which the compiler will not allow. (pointers always have a known type which depends on the underlying architecture, e.g. 4 bytes on a 32bit CPU)</p>
 
 <h3>Making it Prettier</h3>
 <p>I'm a fan of the above implementation. There's only a little magic to know and implement. Some of the interfaces in the standard library, like <code>std.mem.Allocator</code>, look just like it. (Because <code>Allocator</code> has a few more functions, a nested structure called <code>VTable</code> (virtual table) is used to hold the function pointers, but that's a small change.)<p>
@@ -191,7 +191,7 @@ if (ptr_info.Pointer.size != .One) @compileError("ptr must be a single item poin
 
 <p>The purpose of these is to add additional compile-time checks on the type of value passed to <code>init</code>. Essentially making sure that we passed it a pointer to a single item.</p>
 
-<p>Also, instead of calling the function via:</
+<p>Also, instead of calling the function via:</p>
 
 {% highlight zig %}
 ptr_info.Pointer.child.writeAll(self, data);

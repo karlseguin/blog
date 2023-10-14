@@ -46,22 +46,21 @@ import "C"
 <p>While we still need to implement the C code, the above is the big piece needed to glue Go and C together. With it, we have a package <code>C</code> with a type called <code>C.IntSet</code> and a function called <code>C.intset_new</code>. <code>C</code> isn't the same as other packages, but as far as how it's used, it's very similar. Assuming we had an implementation, we could do:</p>
 
 {% highlight go %}
-  set := C.intset_new(10000)
-  defer C.inset_free(set)
-  fmt.Println(C.intset_exists(set, 492))
-  C.intset_set(set, 492)
-  fmt.Println(C.intset_exists(set, 492))
-
+set := C.intset_new(10000)
+defer C.inset_free(set)
+fmt.Println(C.intset_exists(set, 492))
+C.intset_set(set, 492)
+fmt.Println(C.intset_exists(set, 492))
 {% endhighlight %}
 
 
 <p>Now, this works nicely because our values are all constants and thus we get the proper typing at compile time. However, if we were dealing with variables, a C int doesn't map directly to an Go int, and a char* certainly doesn't map directly to a string. A more realistic example would look like:</p>
 
 {% highlight go %}
-  set := C.intset_new(C.longlong(total))
-  defer C.inset_free(set)
-  fmt.Println(int(C.intset_exists(set, c.longlong(value))))
-  ...
+set := C.intset_new(C.longlong(total))
+defer C.inset_free(set)
+fmt.Println(int(C.intset_exists(set, c.longlong(value))))
+...
 {% endhighlight %}
 
 <p>A lot more type casting. With strings, we'd also be responsible for freeing the generated <code>char*</code>. It'd be nice if we could shield consumers from knowing that our implementation is written in C. Well, since <code>C.IntSet</code> is a normal Go type, we can do:</p>
