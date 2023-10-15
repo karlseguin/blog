@@ -128,6 +128,7 @@ const User = struct {
 
 {% highlight zig %}
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub fn main() !void {
 	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -147,7 +148,12 @@ pub fn main() !void {
 	while (true) : (i += 1) {
 		var buf: [30]u8 = undefined;
 		try stdout.print("Please enter a name: ", .{});
-		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |name| {
+		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+			var name = line;
+			if (builtin.os.tag == .windows) {
+				// In Windows lines are terminated by \r\n. We need to strip out the \r
+				name = std.mem.trimRight(u8, name, "\r");
+			}
 			if (name.len == 0) {
 				break;
 			}
@@ -235,6 +241,7 @@ defer {
 
 {% highlight zig %}
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
@@ -260,7 +267,12 @@ pub fn main() !void {
 	while (true) : (i += 1) {
 		var buf: [30]u8 = undefined;
 		try stdout.print("Please enter a name: ", .{});
-		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |name| {
+		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+			var name = line;
+			if (builtin.os.tag == .windows) {
+				// In Windows lines are terminated by \r\n. We need to strip out the \r
+				name = std.mem.trimRight(u8, name, "\r");
+			}
 			if (name.len == 0) {
 				break;
 			}
