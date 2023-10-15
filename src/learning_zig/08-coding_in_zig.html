@@ -151,7 +151,8 @@ pub fn main() !void {
 		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |line| {
 			var name = line;
 			if (builtin.os.tag == .windows) {
-				// In Windows lines are terminated by \r\n. We need to strip out the \r
+				// In Windows lines are terminated by \r\n.
+				// We need to strip out the \r
 				name = std.mem.trimRight(u8, name, "\r");
 			}
 			if (name.len == 0) {
@@ -270,7 +271,8 @@ pub fn main() !void {
 		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |line| {
 			var name = line;
 			if (builtin.os.tag == .windows) {
-				// In Windows lines are terminated by \r\n. We need to strip out the \r
+				// In Windows lines are terminated by \r\n.
+				// We need to strip out the \r
 				name = std.mem.trimRight(u8, name, "\r");
 			}
 			if (name.len == 0) {
