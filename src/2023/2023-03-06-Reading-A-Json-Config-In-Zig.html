@@ -127,28 +127,18 @@ Test [3/10] test.readConfig... [gpa] (err): memory address 0x1044f8000 leaked:
 
 
 <h3>Parsing JSON</h3>
-<p>We've read our file and have a string, which in Zig is a <code>[]u8</code>. Populating a <config>Config</config> struct is just two more lines:</p>
+<p>We've read our file and have a string, which in Zig is a <code>[]u8</code>. Populating a <config>Config</config> struct is just a few more lines:</p>
 
 {% highlight zig %}
-fn readConfig(allocator: Allocator, path: []const u8) !Config {
+fn readConfig(allocator: Allocator, path: []const u8) !std.json.Parsed(Config) {
   const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
   defer allocator.free(data);
-
-  // Use the following two line if you're using a version of Zig prior to
-  // 0.11.0-dev.3187+40e8c2243 (Mid May 2023)
-  // var stream = std.json.TokenStream.init(data);
-  // return try std.json.parse(Config, &stream, .{.allocator = allocator});
-
-  // This is the new Zig 0.11 API (available on master as of Mid May 2023)
-  // the last arguments are parse options, here we're using the defaults
-  return try std.json.parseFromSlice(Config, allocator, data, .{});
+  return std.json.parseFromSlice(Config, allocator, data, .{});
 }
 {% endhighlight %}
 
 
-<p>This works, except....memory allocations again. Because our <code>Config</code> structure has a string field, we know that <code>std.json.parseFromSlice</code> is going to have to allocate memory. That's why we pass our allocator.<p>
-
-<p>Our code works, but it's leaking memory: <code>config.root</code> needs to be freed! Now in this case, that's pedantic, since we're only creating a single Config and it'll probably exist from start to end. But, for completeness, we can modify our <code>main</code>:</p>
+<p>Notice that we're now returning a `std.json.Parsed(Config)`. Because our <code>Config</code> structure has a string field, we know that <code>std.json.parseFromSlice</code> is going to have to allocate memory. That's why we pass our allocator. The `Parsed` structure we get back contains a `value` which is our `Config` as well as an arena allocator. This is convenient as it allows us to easily manage the allocated memory by tying the lifetime of the allocation to our `Config` within the `Parsed` structure:</p>
 
 {% highlight zig %}
 pub fn main() !void {
@@ -156,21 +146,12 @@ pub fn main() !void {
   var gpa = std.heap.GeneralPurposeAllocator(.{}){};
   const allocator = gpa.allocator();
 
-  const config = try readConfig(allocator, "config.json");
-  defer allocator.free(config.root);
+  const parsed = try readConfig(allocator, "config.json");
+  defer parsed.arena.deinit();
+  const config = parse.value;
   ...
 }
 {% endhighlight %}
-
-<p>If we had more fields, we might want to create a <code>deinit</code> function in <code>Config</code> to better encapsulate the logic. Our main would be much cleaner if it could just call <code>defer config.deinit(allocator);</code>.</p>
-
-<p>The json package has a <code>parseFree</code> function which can free any memory that <code>parse</code> allocated. I'm sure that's useful in complex cases, but in our simple case, I'm not really a fan. If you wanted to, you'd use it as:</p>
-
-{% highlight zig %}
-std.json.parseFree(Config, allocator, config);
-{% endhighlight %}
-
-<p>The <code>allocator</code> we pass to parseFree has to be the same passed to <code>parseFromSlice</code>.</p>
 
 <h3>Default Values</h3>
 
@@ -182,7 +163,6 @@ const Config = struct {
 };
 {% endhighlight %}
 
-<p>This will work, but there's one major issue: we can no longer safely free <code>config.root</code>. If the root comes from json, then it's allocated with our allocator and can/must be freed with our allocator. But if it's a default, it's global data and trying to free it with our allocator will crash. In this case, using the previously mentioned <code>std.json.parseFree</code> is a viable solution as it will only free the memory that <code>parse</code> allocated.</p>
 
 <p>Another option is to use an Optional type and default to <code>null</code>:</p>
 
@@ -198,33 +178,6 @@ const Config = struct {
 lmdb.open(config.root orelse "/tmp/db")
 {% endhighlight %}
 
-<p>And we can conditionally free:</p>
-
-{% highlight zig %}
-if (config.root) |root| {
-  allocator.free(root);
-}
-{% endhighlight %}
-
-
-<h3>Arena Allocator</h3>
-<p>One option we could consider is an ArenaAllocator. An ArenaAllocator wraps another allocator (like the GeneralPurposeAllocator we've been using), and makes it so we free the entire arena in one shot instead of each individually allocated data. It's suitable for a number of cases, such as using an arena per http request. In our case, since we're talking about data that lives from the start of the program until the end, it probably not that useful. But, let's look at it anyways. We just need a slight change to our main:</p>
-
-{% highlight zig %}
-pub fn main() !void {
-  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-  var arena = std.heap.ArenaAllocator.init(gpa.allocator());
-  defer arena.deinit();
-  const allocator = arena.allocator();
-
-  ...
-{% endhighlight %}
-
-<p>We still have an <code>allocator</code> of type <code>std.mem.Allocator</code>, so we can still pass this to <code>readConfig</code> and <code>readFileAlloc</code> and <code>json.parse</code>, but we no longer need to <code>free</code> the memory as it'll all be freed when we call <code>arena.deinit().</code></p>
-
-<p><strong>However</strong>, we should still keep all of our existing code as-is. In other words, in <code>readConfig</code> we should still call: <code>defer allocator.free(data);</code>. Why? Because <code>readConfig</code> only knows that it received a <code>std.mem.Allocator</code>, it doesn't know that it's an ArenaAllocator. Plus, in the future, things could change. Calling <code>free</code> on an ArenaAllocator is a noop. So we definitely want to leave it in.</p>
-
-<p>As a final tweak that I'll just mention, rather than having our ArenaAllocator wrap our GeneralPurposeAllocator, we could use a FixedBufferAllocator. A FixedBufferAllocator is initiated with <code>[]u8</code> and cannot grow beyond that. Thus it's both efficient and provides some protection against misuse.</p>
 
 <h3>Conclusion</h3>
 <p>The complete code to read a json config file into a config structure is:</p>
@@ -237,16 +190,19 @@ pub fn main() !void {
   var gpa = std.heap.GeneralPurposeAllocator(.{}){};
   const allocator = gpa.allocator();
 
-  const config = try readConfig(allocator, "config.json");
+  const parsed = try readConfig(allocator, "config.json");
+  defer parsed.arena.deinit();
+
+  const config = parse.value;
   std.debug.print("config.root: {s}\n", .{config.root});
 }
 
-fn readConfig(allocator: Allocator, path: []const u8) !Config {
+fn readConfig(allocator: Allocator, path: []const u8) !std.json.Parsed(Config) {
   // 512 is the maximum size to read, if your config is larger
   // you should make this bigger.
   const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
   defer allocator.free(data);
-  return try std.json.parseFromSlice(Config, allocator, data, .{});
+  return std.json.parseFromSlice(Config, allocator, data, .{});
 }
 
 const Config = struct {
