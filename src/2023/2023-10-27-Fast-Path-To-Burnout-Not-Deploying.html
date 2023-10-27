@@ -1,0 +1,25 @@
+---
+layout: post
+date: 2023-10-27
+title: "Fast Path to Burnout - Delaying Deploys"
+description: "Delaying code deployment burns me out and is indicative of poor engineering practices and quality."
+tags: [management]
+---
+
+<p>Deploying code to production is either the funnest part of my day or the most stressful. Where I land on that spectrum largely comes down to how much control I have over the process. Specifically, I like being able to deploy code when <strong>I</strong> want to deploy it. Process, and people, that don't get this, don't understand software development (and I'm not sure they understand how the human brain works).</p>
+
+<p>I recognize that release management can be a significant process. A lot of what I'm going to say doesn't directly apply to complex software or safety-critical systems. But in such cases, I expect ownership (note, not merely stakeholders) to be shared by a multi-disciplinary team (QA, development, infrastructure, support, legal, etc).</p>
+
+<p>It boils down to a simple reality: I'm intimately familiar with code that I'm currently working on, and less so with code that I worked on a couple weeks ago. Not only is there decay over time, there's also limited capacity for deep understanding. It isn't just that I want to deploy at the height of my understanding, it's that I <em>don't</em> want to deploy once things get fuzzy.</p>
+
+<p>I enjoying watching my deploys. I want to keep an eye on the logs and monitor new metrics or existing metrics that should (or should not!) be impacted. I want to see the impact on system resources and monitor DB load. I want to play with it in production and maybe try to break it. I want to breathe a sigh of relief. The more recent my direct experience with the code, the better and more confidently I can do all of the above.</p>
+
+<p>Delaying deploys burdens my FIFO-cognitive capacity. For a week, two weeks, a month, I try to hold on to the deep understanding, while working on new things. It's stressful and it's amplified by changes to other parts of the system. Taking a logical extreme, I doubt anyone would question the added risk of deploying code after a year (I already made an exception for safety-critical systems). Knowledge would be lost; the system would be different. Maybe I have a pea-sized brain, but once I start working on something new, anything else gets a massive clarity downgrade.</p>
+
+<p>You might be saying <em>that's what staging is for</em>. I agree that can help, but I've never worked in an environment where staging was close-enough to production to give me the necessary confidence <strong>I</strong> need for my own self-accountability. Servers and infrastructure are different, load is different, usage patterns are different.</p>
+
+<p>I'm not advocating for continuous delivery (CD). Though on the spectrum, the ability to do CD is something engineering teams should aspire to. CD directly and indirectly promotes other good engineering practices, such as automated testing and useful logging and metrics. Using schedules to limit deployment risk is almost certainly indicative of a lost cause. You can treat this as a litmus test for any engineering leadership interview.</p>
+
+<p>Other stakeholders can have legitimate reasons for delaying releases, and those should be taken into consideration. If I'm being honest, it tends to have little to do with the reason and a lot to do with who's asking. If you have a QA team things can get more complicated (it depends on the exact nature/relationship since there's some pretty drastic difference in how QA teams can operate). But if QA is a bottleneck to deploying, that's something that needs to be fixed.</p>
+
+<p>Accountability without giving control isn't real. And when that comes with cognitive overload, you get burnout. And when it stems from arbitrary timelines and schedules made up by people who have the control but not the accountability, you get resentment exit interviews.</p>
