@@ -59,7 +59,7 @@ fn IntArray(comptime length: usize) type {
 }
 {% endhighlight %}
 
-		<p>It might seem odd, but <code>arr's</code> type really is an <code>IntArray(3)</code>. It's a type like any other type and <code>arr</code> is a value like any other value. If we called <code>IntArray(7)</code> that would be a different type. Maybe we can make things neater:</p>
+		<p>It might seem odd, but <code>arr</code>'s type really is an <code>IntArray(3)</code>. It's a type like any other type and <code>arr</code> is a value like any other value. If we called <code>IntArray(7)</code> that would be a different type. Maybe we can make things neater:</p>
 
 {% highlight zig %}
 const std = @import("std");

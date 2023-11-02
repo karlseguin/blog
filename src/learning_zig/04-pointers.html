@@ -356,7 +356,7 @@ pub const User = struct {
 };
 {% endhighlight %}
 
-		<p>The above code prints "Go!u". We had to change <code>name's</code> type from <code>[]const u8</code> to <code>[]u8</code> and instead of a string literal, which are always immutable, create an array and slice it. Some might see inconsistency here. Passing by value prevents a function from mutating immediate fields, but not fields with a value behind a pointer. If we <em>did</em> want <code>name</code> to be immutable, we should have declared it as a <code>[]const u8</code> instead of a <code>[]u8</code>.</p>
+		<p>The above code prints "Go!u". We had to change <code>name</code>'s type from <code>[]const u8</code> to <code>[]u8</code> and instead of a string literal, which are always immutable, create an array and slice it. Some might see inconsistency here. Passing by value prevents a function from mutating immediate fields, but not fields with a value behind a pointer. If we <em>did</em> want <code>name</code> to be immutable, we should have declared it as a <code>[]const u8</code> instead of a <code>[]u8</code>.</p>
 
 		<p>Some languages have a different implementation, but many languages work exactly like this (or very close). While all of this might seem  esoteric, it's fundamental to day to day programming. The good news is that you can master this using simple examples and snippets; it doesn't get more complicated as other parts of the system grow in complexity.</p>
 	</section>
@@ -398,7 +398,7 @@ pub const User = struct {
 
 			<p>You might think this is going to be a problem with any optional or union. But for both optionals and unions, the largest possible size is known and Zig can use that. A recursive structure has no such upper-bound, the structure could recurse once, twice or millions of times. That number would vary from <code>User</code> to <code>User</code> and would not be known at compile time.</p>
 
-			<p>We saw the answer with <code>name</code>: use a pointer. Pointers always take <code>usize</code> bytes. On a 64-bit platform, that's 8 bytes. Just like the actual name "Goku" wasn't stored with/along our <code>user</code>, using a pointer means our manager is no longer tied to the <code>user's</code> memory layout.</p>
+			<p>We saw the answer with <code>name</code>: use a pointer. Pointers always take <code>usize</code> bytes. On a 64-bit platform, that's 8 bytes. Just like the actual name "Goku" wasn't stored with/along our <code>user</code>, using a pointer means our manager is no longer tied to the <code>user</code>'s memory layout.</p>
 
 {% highlight zig %}
 const std = @import("std");

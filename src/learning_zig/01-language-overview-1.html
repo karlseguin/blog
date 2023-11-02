@@ -112,7 +112,7 @@ pub fn main() void
 
 		<p>Every executable needs a function named <code>main</code>: it's the entry point into the program. If we renamed <code>main</code> to something else, like <code>doIt</code>, and tried to run <code>zig run learning.zig</code>, we'd get an error saying that <em>'learning' has no member named 'main'</em>.</p>
 
-		<p>Ignoring <code>main's</code> special role as our program's entry point, it's a really basic function: it takes no parameters and returns nothing, aka <code>void</code>. The following is <em>slightly</em> more interesting:</p>
+		<p>Ignoring <code>main</code>'s special role as our program's entry point, it's a really basic function: it takes no parameters and returns nothing, aka <code>void</code>. The following is <em>slightly</em> more interesting:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -237,7 +237,7 @@ const user = User{
 };
 {% endhighlight %}
 
-		<p>This means we can't modify <code>user</code>. To modify a variable, it should be declared using <code>var</code>. Also, you might have noticed that <code>user's</code> type is inferred based on what's assigned to it. We could be explicit:</p>
+		<p>This means we can't modify <code>user</code>. To modify a variable, it should be declared using <code>var</code>. Also, you might have noticed that <code>user</code>'s type is inferred based on what's assigned to it. We could be explicit:</p>
 
 {% highlight zig %}
 const user: User = User{
@@ -314,7 +314,7 @@ const b = a[1..end];
 
 		<aside>If we had declared <code>end</code> as a <code>const</code> then it would have become a compile-time known value, which would have resulted in a compile-time known length for <code>b</code> and thus created a pointer to an array, not a slice. I find this a little confusing, but it isn't something that comes up too often and it isn't too hard to master. I would have loved to skip over it at this point, but couldn't figure out an honest way to avoid this detail.</aside>
 
-		<p>Learning Zig has taught me that types are very descriptive. It isn't just an integer or a boolean, or even an array of signed 32 bit integers. Types also contain other important pieces of information. We've talked about the length being part of an array's type, and many of the examples have shown how the const-ness is also part of it. For example, in our last example, <code>b's</code> type is <code>[]const i32</code>. You can see this for yourself with the following code:</p>
+		<p>Learning Zig has taught me that types are very descriptive. It isn't just an integer or a boolean, or even an array of signed 32 bit integers. Types also contain other important pieces of information. We've talked about the length being part of an array's type, and many of the examples have shown how the const-ness is also part of it. For example, in our last example, <code>b</code>'s type is <code>[]const i32</code>. You can see this for yourself with the following code:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -327,7 +327,7 @@ pub fn main() void {
 }
 {% endhighlight %}
 
-		<p>If we tried to write into <code>b</code>, such as <code>b[2] = 5;</code> we'd get a compile time error: <em>cannot assign to constant</em>. This is because of <code>b's</code> type.</p>
+		<p>If we tried to write into <code>b</code>, such as <code>b[2] = 5;</code> we'd get a compile time error: <em>cannot assign to constant</em>. This is because of <code>b</code>'s type.</p>
 
 		<p>To solve this, you might be tempted to make this change:</p>
 
@@ -336,7 +336,7 @@ pub fn main() void {
 var b = a[1..end];
 {% endhighlight %}
 
-	<p>but you'll get the same error, why? As a hint, what's <code>b's</code> type, or more generically, what is <code>b</code>? A slice is a length and pointer to [part of] an array. A slice's type is always derived from the underlying array. Whether <code>b</code> is declared <code>const</code> or not, the underlying array is of type <code>[5]const i32</code> and so b must be of type <code>[]const i32</code>. If we want to be able to write into <code>b</code>, we need to change <code>a</code> from a <code>const</code> to a <code>var</code>.</p>
+	<p>but you'll get the same error, why? As a hint, what's <code>b</code>'s type, or more generically, what is <code>b</code>? A slice is a length and pointer to [part of] an array. A slice's type is always derived from the underlying array. Whether <code>b</code> is declared <code>const</code> or not, the underlying array is of type <code>[5]const i32</code> and so b must be of type <code>[]const i32</code>. If we want to be able to write into <code>b</code>, we need to change <code>a</code> from a <code>const</code> to a <code>var</code>.</p>
 
 {% highlight zig %}
 const std = @import("std");

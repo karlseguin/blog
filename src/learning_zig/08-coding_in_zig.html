@@ -64,7 +64,7 @@ Goku's power is: 9001
 Goku's power is: -1431655766
 {% endhighlight %}
 
-		<p>This code introduce's Zig's generic <code>std.StringHashMap</code> which is a specialized version of <code>std.AutoHashMap</code> with the key type set to <code>[]const u8</code>. Even if you aren't 100% sure what's going on, it's a good guess that my output relates to the fact that our second <code>print</code> happens after we <code>remove</code> the entry from <code>lookup</code>. Comment out the call to <code>remove</code>, and the output is normal.</p>
+		<p>This code introduces Zig's generic <code>std.StringHashMap</code> which is a specialized version of <code>std.AutoHashMap</code> with the key type set to <code>[]const u8</code>. Even if you aren't 100% sure what's going on, it's a good guess that my output relates to the fact that our second <code>print</code> happens after we <code>remove</code> the entry from <code>lookup</code>. Comment out the call to <code>remove</code>, and the output is normal.</p>
 
 		<p>They key to understanding the above code is to be aware of where data/memory exists, or, put differently, who <em>owns</em> it. Remember that Zig arguments are passed-by-value, that is, we pass a [shallow] copy of the value. The <code>User</code> in our <code>lookup</code> is not the same memory referenced by <code>goku</code>. Our above code has <strong>two</strong> users, each with their own owner. <code>goku</code> is owned by <code>main</code>, and its copy is owned by <code>lookup</code>.</p>
 
@@ -83,7 +83,7 @@ Goku's power is: -1431655766
 		<p>Because <code>entry</code> would now be its own independent copy of the user, removing it from <code>lookup</code> would not invalidate it.</p>
 
 
-		<p>Another option is to change <code>lookup's</code> type from <code>StringHashMap(User)</code> to <code>StringHashMap(*const User)</code>. This code works:</p>
+		<p>Another option is to change <code>lookup</code>'s type from <code>StringHashMap(User)</code> to <code>StringHashMap(*const User)</code>. This code works:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -661,7 +661,7 @@ const calc_dep = b.dependency("calc", .{.target = target,.optimize = optimize});
 const calc_module = calc_dep.module("calc");
 {% endhighlight %}
 
-		<p>In <code>build.zig.zon</code> we named the dependency <code>calc</code>, and that's the dependency that we're loading here. From within this dependency, we're grabbing the <code>calc</code> module, which is what we named the module in <code>calc's</code> <code>build.zig</code>.</p>
+		<p>In <code>build.zig.zon</code> we named the dependency <code>calc</code>, and that's the dependency that we're loading here. From within this dependency, we're grabbing the <code>calc</code> module, which is what we named the module in <code>calc</code>'s <code>build.zig</code>.</p>
 
 		<p>If you try to run <code>zig build test</code>, you should see an error:</p>
 

@@ -93,9 +93,9 @@ main: user ->    -------------  (id: 1043368d0)
                  -------------
 {% endhighlight %}
 
-			<p>When a function is called, its entire stack frame is pushed onto the call stack. This is one of the reasons we need to know the size of every type. While we might not know the length of our user's name until that specific line of code is executed (assuming it wasn't a constant string literal), we do know that our function has a <code>User</code> and, in addition the other fields, we'll need 8 bytes for <code>name.len</code> and 8 bytes <code>name.ptr</code>.</p>
+			<p>When a function is called, its entire stack frame is pushed onto the call stack. This is one of the reasons we need to know the size of every type. While we might not know the length of our user's name until that specific line of code is executed (assuming it wasn't a constant string literal), we do know that our function has a <code>User</code> and, in addition to the other fields, we'll need 8 bytes for <code>name.len</code> and 8 bytes <code>name.ptr</code>.</p>
 
-			<p>When the function returns, its stack frame, which was the last pushed onto the call stack, is popped off. Something amazing just happened: the memory used by <code>levelUp</code> has been automatically freed! While technically that memory could be returned to the OS, as far as I know, no implementations actually shrinks the call stack (implementations will dynamically grow it when necessary though). Still, the memory used to store <code>levelUp's</code> stack frame is now free to be used within our process for another stack frame.</p>
+			<p>When the function returns, its stack frame, which was the last pushed onto the call stack, is popped off. Something amazing just happened: the memory used by <code>levelUp</code> has been automatically freed! While technically that memory could be returned to the OS, as far as I know, no implementation actually shrinks the call stack (they will dynamically grow it when necessary though). Still, the memory used to store <code>levelUp</code>'s stack frame is now free to be used within our process for another stack frame.</p>
 
 			<aside>In a normal program, the call stack can grow quite large. Between all the framework code and libraries that a typical program uses, you end up with deeply nested functions. Normally, that isn't a problem, but now and again, you might have run into some type of stack overflow error. This happens when our call stack has run out of space. More often than not, this happens with recursive functions - a function that calls itself.</aside>
 
@@ -104,7 +104,7 @@ main: user ->    -------------  (id: 1043368d0)
 
 	<section>
 		<h2 tabindex=-1 id=danling_pointers><a href=#danling_pointers aria-hidden=true>Dangling Pointers</a></h2>
-		<p>The call stack is amazing for both its simplicity and efficiency. But it's also frightening: when a function returns, any of its local data becomes inaccessible. That might sound reasonable, it is <em>local</em> data afterall, but it can introduce serious issues. Consider this code:</p>
+		<p>The call stack is amazing for both its simplicity and efficiency. But it's also frightening: when a function returns, any of its local data becomes inaccessible. That might sound reasonable, it is <em>local</em> data after all, but it can introduce serious issues. Consider this code:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -160,7 +160,7 @@ fn read() !void {
 }
 {% endhighlight %}
 
-		<p>Whatever <code>Parser.parse</code> returns outlives <code>input</code>. If the <code>Parser</code> holds a reference to <code>input</code>, that'll be a dangling pointer just waiting to crash our app. Ideally, if <code>Parser</code> needs <code>input</code> to live as long as it does, it will make a copy of it and that copy will be tied to its own lifetime (more on this in the next part). But there's nothing here to enforce this contract. <code>Parser's</code> documentation might shed some light on what it expects of <code>input</code> or what it does with it. Lacking that, we might need to dig into the code to figure it out.</p>
+		<p>Whatever <code>Parser.parse</code> returns outlives <code>input</code>. If <code>Parser</code> holds a reference to <code>input</code>, that'll be a dangling pointer just waiting to crash our app. Ideally, if <code>Parser</code> needs <code>input</code> to live as long as it does, it will make a copy of it and that copy will be tied to its own lifetime (more on this in the next part). But there's nothing here to enforce this contract. <code>Parser</code>'s documentation might shed some light on what it expects of <code>input</code> or what it does with it. Lacking that, we might need to dig into the code to figure it out.</p>
 	</section>
 
 	<section>
