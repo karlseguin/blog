@@ -38,7 +38,7 @@ if (std.mem.eql(u8, method, "GET") or std.mem.eql(u8, method, "HEAD")) {
 }
 {% endhighlight %}
 
-		<aside>The first argument to <code>std.mem.eql</code> is a type, in this case, <code>u8</code>. This is the first generic function we've see. We'll explore this more in a later part.</aside>
+		<aside>The first argument to <code>std.mem.eql</code> is a type, in this case, <code>u8</code>. This is the first generic function we've seen. We'll explore this more in a later part.</aside>
 
 		<p>The above example is comparing ASCII strings and should likely be case insensitive. <code>std.ascii.eqlIgnoreCase(str1, str2)</code> is probably a better option.</p>
 
@@ -130,7 +130,7 @@ for (0..10) |i| {
 }
 {% endhighlight %}
 
-		<aside>Our <code>switch</code> range used three dots, <code>3...6</code>, while this range uses two, <code>0..10</code>. That's because <code>switch</code> cases are inclusive of both numbers, while <code>for</code> is exclusive of the upper bound</code></aside>
+		<aside>Our <code>switch</code> range used three dots, <code>3...6</code>, while this range uses two, <code>0..10</code>. That's because <code>switch</code> cases are inclusive of both numbers, while <code>for</code> is exclusive of the upper bound.</code></aside>
 
 		<p>This really shines in combination with one (or more!) sequence:</p>
 
@@ -147,9 +147,9 @@ fn indexOf(haystack: []const u32, needle: u32) ?usize {
 
 		<aside>This is a sneak peek at nullable types.</aside>
 
-		<p>The end of the range is inferred by the length of <code>haystack</code>,  though we could punish ourselves and write: <code>0..hastack.len</code>. <code>for</code> loops don't support the more generic <code>init; compare; step</code> idiom. For this, we rely on <code>while</code>.</p>
+		<p>The end of the range is inferred from the length of <code>haystack</code>,  though we could punish ourselves and write: <code>0..hastack.len</code>. <code>for</code> loops don't support the more generic <code>init; compare; step</code> idiom. For this, we rely on <code>while</code>.</p>
 
-		<p>Because <code>while</code> is simpler, taking the form of <code>while (condition) { }</code>, we have greater control over the iteration. For example, when counting the number of escape sequence in a string, we need to increment our iterator by 2 to avoid double counting a <code>\\</code>:</p>
+		<p>Because <code>while</code> is simpler, taking the form of <code>while (condition) { }</code>, we have greater control over the iteration. For example, when counting the number of escape sequences in a string, we need to increment our iterator by 2 to avoid double counting a <code>\\</code>:</p>
 
 {% highlight zig %}
 var i: usize = 0;
@@ -205,7 +205,7 @@ const personality_analysis = blk: {
 
 		<p>Blocks like this must be semi-colon terminated.</p>
 
-		<p>Later, when we explore tagged unions, error unions and optional types, we'll see what else these control flow have to offer.</p>
+		<p>Later, when we explore tagged unions, error unions and optional types, we'll see what else these control flow structures have to offer.</p>
 	</section>
 
 	<section>
@@ -221,7 +221,7 @@ const Status = enum {
 };
 {% endhighlight %}
 
-		<p>And, like a struct, can contain other definition, including functions which may or may not take the enum as a parameter:</p>
+		<p>And, like a struct, can contain other definitions, including functions which may or may not take the enum as a parameter:</p>
 
 {% highlight zig %}
 const Stage = enum {
@@ -239,14 +239,14 @@ const Stage = enum {
 
 		<aside>If you want the string representation of an enum, you can use the builtin <code>@tagName(enum)</code> function.</aside>
 
-		<p>Recall struct types can be inferred based on their assigned or return type using the <code>.{...}</code> notation. Above, we see the enum type being inferred based on its comparisin to <code>self</code>, which is of type <code>Stage</code>. We could have been explicit and written: <code>return self == Stage.confirmed or self == Stage.err;</code>. But, when dealing with enum's you'll often see the enum type omitted via the <code>.$value</code> notation</p>
+		<p>Recall struct types can be inferred based on their assigned or return type using the <code>.{...}</code> notation. Above, we see the enum type being inferred based on its comparison to <code>self</code>, which is of type <code>Stage</code>. We could have been explicit and written: <code>return self == Stage.confirmed or self == Stage.err;</code>. But, when dealing with enums you'll often see the enum type omitted via the <code>.$value</code> notation</p>
 
 		<p>The exhaustive nature of <code>switch</code> makes it pair nicely with enums as it ensures you've handled all possible cases. Be careful when using the <code>else</code> clause of a <code>switch</code> though, as it'll match any newly added enum values, which may or may not be the behavior that you want.</p>
 	</section>
 
 	<section>
 		<h2 tabindex=-1 id=unions><a href=#unions aria-hidden=true>Tagged Unions</a></h2>
-		<p>An union defines a set of types that a value can have. For example, this <code>Number</code> union can either be an <code>integer</code>, an <code>float</code> or a <code>nan</code> (not a number):</p>
+		<p>An union defines a set of types that a value can have. For example, this <code>Number</code> union can either be an <code>integer</code>, a <code>float</code> or a <code>nan</code> (not a number):</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -373,7 +373,7 @@ while (rows.next()) |row| {
 
 	<section>
 		<h2 tabindex=-1 id=undefined><a href=#undefined aria-hidden=true>Undefined</a></h2>
-		<p>So far, every single variable that we've seen has been initialized to a sensible value. But sometimes we don't know the value of a variable when it's declared. Optionals are one option, but don't always make sense. In such cases we can set variables to <code>undefined</code> to leave them unitialized.</p>
+		<p>So far, every single variable that we've seen has been initialized to a sensible value. But sometimes we don't know the value of a variable when it's declared. Optionals are one option, but don't always make sense. In such cases we can set variables to <code>undefined</code> to leave them uninitialized.</p>
 
 		<p>One place where this is commonly done is when creating an array to be filled by some function:</p>
 
@@ -382,7 +382,7 @@ var pseudo_uuid: [16]u8 = undefined;
 std.crypto.random.bytes(&pseudo_uuid);
 {% endhighlight %}
 
-		<p>The above still creates an array of 16 bytes, but leaves the memory unitialized.</p>
+		<p>The above still creates an array of 16 bytes, but leaves the memory uninitialized.</p>
 	</section>
 
 	<section>

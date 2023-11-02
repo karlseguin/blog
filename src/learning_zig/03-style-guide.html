@@ -92,7 +92,7 @@ fn read(stream: std.net.Stream) ![]const u8 {
 std.debug.print("{any}\n", .{@TypeOf(.{.year = 2023, .month = 8})});
 {% endhighlight %}
 
-		<p>We've seen other builtin functions: <code>@import</code>, <code>@rem</code> and <code>@intCast</code>. Since these are functions they are camelCase. <code>@TypeOf</code> is also a builtin function, but it's PascalCase, why? Because it returns a type and thus the type naming convention is used. Were we to assign the result of <code>@TypeOf</code> to a variable, using Zig's naming convetion, that variable should be PascalCase also:</p>
+		<p>We've seen other builtin functions: <code>@import</code>, <code>@rem</code> and <code>@intCast</code>. Since these are functions they are camelCase. <code>@TypeOf</code> is also a builtin function, but it's PascalCase, why? Because it returns a type and thus the type naming convention is used. Were we to assign the result of <code>@TypeOf</code> to a variable, using Zig's naming convention, that variable should be PascalCase also:</p>
 
 {% highlight zig %}
 const T = @TypeOf(3)
@@ -101,7 +101,7 @@ std.debug.print("{any}\n", .{T});
 	</section>
 
 	<section>
-		<p>The <code>zig</code> executable does have a <code>fmt</code> command which, given a file or a directory, will format the file based on Zig's own style guide. It doesn't cover everything though, for example it will adjust identation and brace positions, but won't change identifier casing.</p>
+		<p>The <code>zig</code> executable does have a <code>fmt</code> command which, given a file or a directory, will format the file based on Zig's own style guide. It doesn't cover everything though, for example it will adjust indentation and brace positions, but won't change identifier casing.</p>
 	</section>
 </article>
 

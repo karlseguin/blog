@@ -16,7 +16,7 @@ permalink: "/learning_zig/pointers/"
 	<h1 tabindex=-1 id=pointers><a href=#pointers aria-hidden=true>Pointers</a></h1>
 	<p>Zig doesn't include a garbage collector. The burden of managing memory is on you, the developer. It's a big responsibility as it has a direct impact on the performance, stability and security of your application.</p>
 
-	<p>We'll begin by talking about pointers, which is an important topic to discuss in and of itself, but also to start training ourselves to see our program's data from a memory-oriented point of view. If you're already comfortable with pointers, heap allocations and dangling pointers, feel free to skip ahead a couple parts to <a href=/learning_zig/heap_memory/>heap memory & allocators</a>, which is more Zig-specific.</p>
+	<p>We'll begin by talking about pointers, which is an important topic to discuss in and of itself, but also to start training ourselves to see our program's data from a memory-oriented point of view. If you're already comfortable with pointers, heap allocations and dangling pointers, feel free to skip ahead a couple of parts to <a href=/learning_zig/heap_memory/>heap memory & allocators</a>, which is more Zig-specific.</p>
 
 	<section>
 		<p>The following code creates a user with a <code>power</code> of 1, and then calls the <code>levelUp</code> function which increments the user's power by 1. Can you guess the output?</p>
@@ -66,9 +66,9 @@ user -> ------------ (id)
         ------------
 {% endhighlight %}
 
-		<p>There are two important things to note. The first is that our <code>user</code> variable points to the beginning of our structure. The second is that the fields are laid out sequentially. Remember that our <code>user</code> also has a type. That type's tells us that <code>id</code> is a 64 bit integer and <code>power</code> is a 32 bit integer. Armed with a reference to the start of our data and the type, the compiler can translate <code>user.power</code> to: <em>access a 32 bit integer located 64 bits from the beginning.</em> That's the power of variables, they reference memory and include the type information necessary to understand and manipulate the memory in a meaningful way.</p>
+		<p>There are two important things to note. The first is that our <code>user</code> variable points to the beginning of our structure. The second is that the fields are laid out sequentially. Remember that our <code>user</code> also has a type. That type tells us that <code>id</code> is a 64 bit integer and <code>power</code> is a 32 bit integer. Armed with a reference to the start of our data and the type, the compiler can translate <code>user.power</code> to: <em>access a 32 bit integer located 64 bits from the beginning.</em> That's the power of variables, they reference memory and include the type information necessary to understand and manipulate the memory in a meaningful way.</p>
 
-		<aside>By default, Zig doesn't make guarantees about the memory layout of structures. It could store fields in alphabetic order, by ascending size, or with gaps. It can do what it wants, so long as it's able to translate our code correctly. This freedom can enable certain optimizations. Only if we declare a <code>packed struct</code> will we get strong guarantees about the memory layout. Still, our visualization of <code>user</code> is reasonable and useful.</aside>
+		<aside>By default, Zig doesn't make guarantees about the memory layout of structures. It could store fields in alphabetical order, by ascending size, or with gaps. It can do what it wants, so long as it's able to translate our code correctly. This freedom can enable certain optimizations. Only if we declare a <code>packed struct</code> will we get strong guarantees about the memory layout. Still, our visualization of <code>user</code> is reasonable and useful.</aside>
 
 		<p>Here's a slightly different visualization which includes memory addresses. The memory address of the start of this data is a random address I came up with. This is the memory address referenced by the <code>user</code> variable, which is also the value of our first field, <code>id</code>. However, given this initial address, all subsequent addresses have a known relative address. Since <code>id</code> is a 64 bit integer, it takes 8 bytes of memory. Therefore, <code>power</code> has to be at $start_address + 8:</p>
 
@@ -138,7 +138,7 @@ fn levelUp(user: User) void {
 }
 {% endhighlight %}
 
-		<p>If you run this, you'll get two different addresses. This means that the <code>user</code> being modified in <code>levelUp</code> is different than the <code>user</code> in <code>main</code>. This happens because Zig passes a copy of the value. That might seem like a strange default, but one of the benefit is that the caller of a function can be sure that the function won't modify the parameter (because it can't). In a lot of cases, that's a good thing to have guaranteed. Of course, sometimes, like with <code>levelUp</code>, we <em>want</em> the function to modify a parameter. To achieve this, we need <code>levelUp</code> to act on the actual <code>user</code> in <code>main</code>, not a copy. We can do this by passing the address of our user into the function:</p>
+		<p>If you run this, you'll get two different addresses. This means that the <code>user</code> being modified in <code>levelUp</code> is different from the <code>user</code> in <code>main</code>. This happens because Zig passes a copy of the value. That might seem like a strange default, but one of the benefits is that the caller of a function can be sure that the function won't modify the parameter (because it can't). In a lot of cases, that's a good thing to have guaranteed. Of course, sometimes, like with <code>levelUp</code>, we <em>want</em> the function to modify a parameter. To achieve this, we need <code>levelUp</code> to act on the actual <code>user</code> in <code>main</code>, not a copy. We can do this by passing the address of our user into the function:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -167,7 +167,7 @@ pub const User = struct {
 
 		<p>We had to make two changes. The first is calling <code>levelUp</code> with the address of user, i.e. <code>&user</code>, instead of <code>user</code>. This means that our function no longer receives a <code>User</code>. Instead, it receives a <code>*User</code>, which was our second change.</p>
 
-		<p>The code now works as intended. There are still many subtleties with function parameters and our memory model in general, but we're making progress. Now might be a good time to mention that, aside from the specific syntax, none of this is unique to Zig. The model that we're exploring here is the most common, some languages might just hide much of the details, and thus flexibility, from developers.</p>
+		<p>The code now works as intended. There are still many subtleties with function parameters and our memory model in general, but we're making progress. Now might be a good time to mention that, aside from the specific syntax, none of this is unique to Zig. The model that we're exploring here is the most common, some languages might just hide many of the details, and thus flexibility, from developers.</p>
 
 
 	<section>
@@ -186,7 +186,7 @@ pub const User = struct {
 };
 {% endhighlight %}
 
-		<p>This begs the question: how do we call a method with a pointer receiver? Maybe we have to do something like: <code>&user.levelUp()</code>? Actually, you just call it normally, i.e. <code>user.levelUp()</code>. Zig knows that the method expects a pointer and pass the value correctly (passes it by reference).</p>
+		<p>This begs the question: how do we call a method with a pointer receiver? Maybe we have to do something like: <code>&user.levelUp()</code>? Actually, you just call it normally, i.e. <code>user.levelUp()</code>. Zig knows that the method expects a pointer and passes the value correctly (by reference).</p>
 
 		<p>I initially chose a function because it's explicit and thus easier to learn from.</p>
 
@@ -197,7 +197,7 @@ pub const User = struct {
 
 		<p>Even sticking with simple types, the truth is that Zig can pass parameters however it wants, so long as it can guarantee that the intent of the code is preserved. In our original <code>levelUp</code>, where the parameter was a <code>User</code>, Zig could have passed a copy of the user or a reference to <code>main.user</code>, as long as it could guarantee that the function would not mutate it. (I know we ultimately <em>did</em> want it mutated, but by making the type <code>User</code>, we were telling the compiler that we didn't).</p>
 
-		<p>This freedom allows Zig to use the most optimal strategy based on the parameter type. Small types, like <code>User</code> can be cheaply passed by value (i.e. copied). Larger types might be cheaper to pass by reference. Zig can use any approach, so long as the intent of the code is preserved. To some degree, this is made possible by having constant function parameters.</p>
+		<p>This freedom allows Zig to use the most optimal strategy based on the parameter type. Small types, like <code>User</code>, can be cheaply passed by value (i.e. copied). Larger types might be cheaper to pass by reference. Zig can use any approach, so long as the intent of the code is preserved. To some degree, this is made possible by having constant function parameters.</p>
 
 		<p>Now you know one of the reasons function parameters are constants.</p>
 
@@ -356,9 +356,9 @@ pub const User = struct {
 };
 {% endhighlight %}
 
-		<p>The above code prints "Go!u". We had to change <code>name's</code> type from <code>[]const u8</code> to <code>[]u8</code> and instead of a string literal, which are always immutable, create an array and slice it. Some might see inconsistency here. Passing by value prevents a function from mutating immediate fields, but not fields with a value behind a pointer. If we <em>did</em> want <code>name</code> to be immutable, we should have declare it as a <code>[]const u8</code> instead of a <code>[]u8</code>.</p>
+		<p>The above code prints "Go!u". We had to change <code>name's</code> type from <code>[]const u8</code> to <code>[]u8</code> and instead of a string literal, which are always immutable, create an array and slice it. Some might see inconsistency here. Passing by value prevents a function from mutating immediate fields, but not fields with a value behind a pointer. If we <em>did</em> want <code>name</code> to be immutable, we should have declared it as a <code>[]const u8</code> instead of a <code>[]u8</code>.</p>
 
-		<p>Some languages have different implementation, but many languages work exactly like this (or very close). While all of this might seem  esoteric, it's fundamental to day to day programming. The good news is that you can master this using simple examples and snippets; it doesn't get more complicated as other parts of the system grows in complexity.</p>
+		<p>Some languages have a different implementation, but many languages work exactly like this (or very close). While all of this might seem  esoteric, it's fundamental to day to day programming. The good news is that you can master this using simple examples and snippets; it doesn't get more complicated as other parts of the system grow in complexity.</p>
 	</section>
 
 	<section>
@@ -396,9 +396,9 @@ pub const User = struct {
 
 			<p>We didn't run into this problem when we added <code>name</code> even though names can be different lengths. The issue isn't with the size of values, it's with the size of the types themselves. Zig needs this knowledge to do everything we talked about above, like accessing a field based on its offset position. <code>name</code> was a slice, a <code>[]const u8</code>, and that has a known size: 16 bytes - 8 bytes for <code>len</code> and 8 bytes for <code>ptr</code>.</p>
 
-			<p>You might think this is going to be a problem with any optional or union. But for both options and unions, the largest possible size is known and Zig can use that. A recursive structure has no such upper-bound, the structure could recurse once, twice or millions of times. That number would vary from <code>User</code> to <code>User</code> and would not be known at compile time.</p>
+			<p>You might think this is going to be a problem with any optional or union. But for both optionals and unions, the largest possible size is known and Zig can use that. A recursive structure has no such upper-bound, the structure could recurse once, twice or millions of times. That number would vary from <code>User</code> to <code>User</code> and would not be known at compile time.</p>
 
-			<p>We saw the answer with <code>name</code>: use a pointer. Pointers always takes <code>usize</code> bytes. On a 64-bit platform, that's 8 bytes. Just like the actual name "Goku" wasn't stored with/along our <code>user</code>, using a pointer means our manager is no longer tied to the <code>user's</code> memory layout.</p>
+			<p>We saw the answer with <code>name</code>: use a pointer. Pointers always take <code>usize</code> bytes. On a 64-bit platform, that's 8 bytes. Just like the actual name "Goku" wasn't stored with/along our <code>user</code>, using a pointer means our manager is no longer tied to the <code>user's</code> memory layout.</p>
 
 {% highlight zig %}
 const std = @import("std");

@@ -6,7 +6,7 @@ description: "Reading a JSON configuration file in Zig"
 tags: [zig]
 ---
 
-<p>This post was updated on May 18 2023, to reflect changes to std.json currently on the master branch. The original version of the code is commented out.</p>
+<p>This post was updated on October 30 2023, to reflect changes to std.json currently on the master branch.</p>
 
 <p>A while ago, I wrote a <a href="https://github.com/karlseguin/websocket.zig">Websocket Server implementation in Zig</a>. I did it just for fun, which means I didn't have to worry about the boilerplate things that go into creating an actual production application.</p>
 
@@ -133,12 +133,12 @@ Test [3/10] test.readConfig... [gpa] (err): memory address 0x1044f8000 leaked:
 fn readConfig(allocator: Allocator, path: []const u8) !std.json.Parsed(Config) {
   const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
   defer allocator.free(data);
-  return std.json.parseFromSlice(Config, allocator, data, .{});
+  return std.json.parseFromSlice(Config, allocator, data, .{.allocate = .alloc_always});
 }
 {% endhighlight %}
 
 
-<p>Notice that we're now returning a `std.json.Parsed(Config)`. Because our <code>Config</code> structure has a string field, we know that <code>std.json.parseFromSlice</code> is going to have to allocate memory. That's why we pass our allocator. The `Parsed` structure we get back contains a `value` which is our `Config` as well as an arena allocator. This is convenient as it allows us to easily manage the allocated memory by tying the lifetime of the allocation to our `Config` within the `Parsed` structure:</p>
+<p>Notice that we're now returning a <code>std.json.Parsed(Config)</code>. If you think about turning a JSON string into an object, you know that there'll have to be <em>some</em> allocations. At a minimum, we need to allocate an instance of our <code>Config</code>. That's why we pass our allocator. The `Parsed` structure we get back contains a `value` which is our `Config` as well as an arena allocator. This is convenient as it allows us to easily manage the allocated memory by tying the lifetime of the allocation to our `Config` within the `Parsed` structure:</p>
 
 {% highlight zig %}
 pub fn main() !void {
@@ -147,11 +147,14 @@ pub fn main() !void {
   const allocator = gpa.allocator();
 
   const parsed = try readConfig(allocator, "config.json");
-  defer parsed.arena.deinit();
+  defer parsed.deinit();
   const config = parse.value;
   ...
 }
 {% endhighlight %}
+
+
+<p>Also take note of the last parameter we passed to <code>parseFromSlice</code>. This is an optional argument that configures various aspects of the JSON parsing. We're specifying <code>.allocate = .alloc_always</code>, which tells the function to copy any strings from our input and thus have them owned by the Parsed object. The default is <code>alloc_if_needed</code>. Using this option would be more efficient since our parsed <code>Config</code> would reference our input <code>data</code>, rather than having to make a copy, but then we'd have to extend <code>data's</code> lifetime to match our return value. If you're creating many objects with large text values, it's likely something you'd want to consider.</p>
 
 <h3>Default Values</h3>
 
@@ -191,7 +194,7 @@ pub fn main() !void {
   const allocator = gpa.allocator();
 
   const parsed = try readConfig(allocator, "config.json");
-  defer parsed.arena.deinit();
+  defer parsed.deinit();
 
   const config = parse.value;
   std.debug.print("config.root: {s}\n", .{config.root});
@@ -202,7 +205,7 @@ fn readConfig(allocator: Allocator, path: []const u8) !std.json.Parsed(Config) {
   // you should make this bigger.
   const data = try std.fs.cwd().readFileAlloc(allocator, path, 512);
   defer allocator.free(data);
-  return std.json.parseFromSlice(Config, allocator, data, .{});
+  return std.json.parseFromSlice(Config, allocator, data, .{.allocate = .alloc_always});
 }
 
 const Config = struct {
