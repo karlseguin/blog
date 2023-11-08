@@ -19,7 +19,7 @@ permalink: "/learning_zig/generics/"
 
 		<p>Many languages implement generics with special syntax and generic-specific rules. With Zig, generics are less of a specific feature and more of an expression of what the language is capable of. Specifically, generics leverage Zig's powerful compile-time metaprogramming.</p>
 
-		<p>We'll begin by looking at a silly example, just to get our bearing:</p>
+		<p>We'll begin by looking at a silly example, just to get our bearings:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -37,7 +37,7 @@ fn IntArray(comptime length: usize) type {
 }
 {% endhighlight %}
 
-		<p>The above prints <code>{ 1, 10, 100 }</code>. The interesting part is that we have a function that returns a <code>type</code> (hence the function is PascalCase). Not just any type either, but a type based on a function parameter. This code only worked because we declare <code>length</code> as <code>comptime</code>. That is, we require anyone who calls <code>IntArray</code> to pass a compile-time known <code>length</code> parameter. This is necessary because our function returns a <code>type</code> and <code>types</code> must always be compile-time known.</p>
+		<p>The above prints <code>{ 1, 10, 100 }</code>. The interesting part is that we have a function that returns a <code>type</code> (hence the function is PascalCase). Not just any type either, but a type based on a function parameter. This code only worked because we declared <code>length</code> as <code>comptime</code>. That is, we require anyone who calls <code>IntArray</code> to pass a compile-time known <code>length</code> parameter. This is necessary because our function returns a <code>type</code> and <code>types</code> must always be compile-time known.</p>
 
 		<p>A function can return <em>any</em> type, not just primitives and arrays. For example, with a small change, we can make it return a structure:</p>
 
@@ -85,7 +85,7 @@ fn IntArray(comptime length: usize) type {
 }
 {% endhighlight %}
 
-		<p>At first glance that might not look neater. But besides being nameless and nested in a function, our structure's looking like every other structure we've seen so far. It has fields, it has functions. You know what they say, <em>If it looks like a duck...</em>. Well, this looks, swims and quacks like a normal structure, because it is.</p>
+		<p>At first glance that might not look neater. But besides being nameless and nested in a function, our structure's looking like every other structure we've seen so far. It has fields, it has functions. You know what they say, <em>if it looks like a duck...</em>. Well, this looks, swims and quacks like a normal structure, because it is.</p>
 
 		<p>We've taken this route to get comfortable with a function that returns a type and the accompanying syntax. To get a more typical generic, we need to make one last change: our function has to take a <code>type</code>. In reality, this is a small change, but <code>type</code> can feel more abstract than <code>usize</code>, so we took it slowly. Let's make a leap and modify our previous <code>IntList</code> to work with any type. We'll start with a skeleton:</p>
 
@@ -181,7 +181,7 @@ fn List(comptime T: type) type {
 }
 {% endhighlight %}
 
-		<p>Our <code>init</code> function returns a <code>List(T)</code>, and our <code>deinit</code> and <code>add</code> functions take an <code>List(T)</code> and <code>*List(T)</code>. In our simple class, that's fine, but for large data structures, writing the full generic name can become a little tedious, especially if we have multiple type parameters (e.g. a hash map that takes a separate <code>type</code> for its key and value). The <code>@This()</code> builtin function returns the inner most <code>type</code> from where it's called. Most likely, our <code>List(T)</code> would be written as:</p>
+		<p>Our <code>init</code> function returns a <code>List(T)</code>, and our <code>deinit</code> and <code>add</code> functions take a <code>List(T)</code> and <code>*List(T)</code>. In our simple class, that's fine, but for large data structures, writing the full generic name can become a little tedious, especially if we have multiple type parameters (e.g. a hash map that takes a separate <code>type</code> for its key and value). The <code>@This()</code> builtin function returns the innermost <code>type</code> from where it's called. Most likely, our <code>List(T)</code> would be written as:</p>
 
 {% highlight zig %}
 fn List(comptime T: type) type {

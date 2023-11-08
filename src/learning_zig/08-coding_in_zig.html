@@ -231,7 +231,7 @@ defer {
 
 		<p>Our <code>defer</code> logic, the first we've seen with a block, frees each key and then deinitializes <code>lookup</code>. We're using <code>keyIterator</code> to only iterate the keys. The iterator value is a pointer to the key entry in the hash map, a <code>*[]const u8</code>. We want to free the actual value, since that's what we allocated via <code>dupe</code>, so we dereference the value using <code>.*</code>.</p>
 
-		<p>I promise, we're done talking about dangling pointers and memory management. What we've discussed might still be unclear or too abstract. It's fine to revisit this when you have a more hands on problem to solve. That said, if you plan on writing anything non-trivial, this is something you'll almost certainly need to master. When you're feeling up to it, I urge you to take the prompt loop example and play with it on your own. Introduce a <code>UserLookup</code> type that encapsulate all of the memory management we had to do. Try having <code>*User</code> values instead of <code>User</code>, creating the  users on the heap and freeing them like we did the keys. Write tests that covers your new structure, using the <code>std.testing.allocator</code> to make sure you aren't leaking any memory.</p>
+		<p>I promise, we're done talking about dangling pointers and memory management. What we've discussed might still be unclear or too abstract. It's fine to revisit this when you have a more hands on problem to solve. That said, if you plan on writing anything non-trivial, this is something you'll almost certainly need to master. When you're feeling up to it, I urge you to take the prompt loop example and play with it on your own. Introduce a <code>UserLookup</code> type that encapsulates all of the memory management we had to do. Try having <code>*User</code> values instead of <code>User</code>, creating the  users on the heap and freeing them like we did the keys. Write tests that covers your new structure, using the <code>std.testing.allocator</code> to make sure you aren't leaking any memory.</p>
 	</section>
 
 	<section>
@@ -306,9 +306,9 @@ const User = struct {
 
 		<p>Above is a reproduction of our hash map code, but using an <code>ArrayList(User)</code>. All of the same lifetime and memory management rules apply. Notice that we're still creating a <code>dupe</code> of the name, and we're still freeing each name before we <code>deinit</code> the <code>ArrayList</code>.</p>
 
-		<p>This is a good time to point out that Zig doesn't have properties or private fields. You can see this when we access <code>arr.items</code> to iterate through the values. The reason for not having properties is to eliminate a source of surprises. In Zig, if it looks like a field access, it <strong>is</strong> a field access. Personally, I think the lack of private fields is a mistake, but it's certainly something we can work around. I've taken to prefixing field with underscore to signal "internal use only".</p>
+		<p>This is a good time to point out that Zig doesn't have properties or private fields. You can see this when we access <code>arr.items</code> to iterate through the values. The reason for not having properties is to eliminate a source of surprises. In Zig, if it looks like a field access, it <strong>is</strong> a field access. Personally, I think the lack of private fields is a mistake, but it's certainly something we can work around. I've taken to prefixing fields with underscore to signal "internal use only".</p>
 
-		<p>Because the string "type" is a <code>[]u8</code> or <code>[]const u8</code>, an <code>ArrayList(u8)</code> is the appropriate type for a string builder, like .NET's <code>StringBuilder</code> or Go's <code>strings.Builder</code>. In fact, you'll often use this when a function takes an <code>Writer</code> and you want a string. We previous saw an example which used <code>std.json.stringify</code> to output JSON to stdout. Here's how you'd use an <code>ArrayList(u8)</code> to it into a variable:</p>
+		<p>Because the string "type" is a <code>[]u8</code> or <code>[]const u8</code>, an <code>ArrayList(u8)</code> is the appropriate type for a string builder, like .NET's <code>StringBuilder</code> or Go's <code>strings.Builder</code>. In fact, you'll often use this when a function takes a <code>Writer</code> and you want a string. We previously saw an example which used <code>std.json.stringify</code> to output JSON to stdout. Here's how you'd use an <code>ArrayList(u8)</code> to output it into a variable:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -395,14 +395,14 @@ fn stringify(
 ) @TypeOf(out_stream).Error!void
 {% endhighlight %}
 
-		<p>The first parameter, <code>value: anytype</code> is kind of obvious. It's the value to serialize and it can be anything (actually, there are some things Zig's JSON serializer can't serialize). We can guess that the <code>out_stream</code> is <em>where</em> to write the JSON, but your guess is as good as mine about what methods it needs to implement. The only way to figure it out is to read the source code or, alternatively, pass a dummy value and use the compiler errors as our documentation. This is something that might get improved with better auto document generators. But, not for the first time, I wish Zig has interfaces.</p>
+		<p>The first parameter, <code>value: anytype</code> is kind of obvious. It's the value to serialize and it can be anything (actually, there are some things Zig's JSON serializer can't serialize). We can guess that the <code>out_stream</code> is <em>where</em> to write the JSON, but your guess is as good as mine about what methods it needs to implement. The only way to figure it out is to read the source code or, alternatively, pass a dummy value and use the compiler errors as our documentation. This is something that might get improved with better auto document generators. But, not for the first time, I wish Zig had interfaces.</p>
 	</section>
 
 	<section>
 		<h2 tabindex=-1 id=typeof><a href=#typeof aria-hidden=true>@TypeOf</a></h2>
-		<p>In previous parts, we used <code>@TypeOf</code> to help us examine the type of various variables. From our usage, you'd be forgiven for thinking that it returns the name of the type as string. However, given that it's a PascalCase function, you should know better: it returns a <code>type</code>.</p>
+		<p>In previous parts, we used <code>@TypeOf</code> to help us examine the type of various variables. From our usage, you'd be forgiven for thinking that it returns the name of the type as a string. However, given that it's a PascalCase function, you should know better: it returns a <code>type</code>.</p>
 
-		<p>One of my favorite usage of <code>anytype</code> is to pair it with the <code>@TypeOf</code> and <code>@hasField</code> builtin functions for writing test helpers. Although every <code>User</code> type that we've seen has been very simple, I'll ask you to imagine a more complex structures with many fields. In many of our tests, we need a <code>User</code>, but we only want to specify the fields relevant to the test. Let's create a <code>userFactory</code>:</p>
+		<p>One of my favorite usages of <code>anytype</code> is to pair it with the <code>@TypeOf</code> and <code>@hasField</code> builtin functions for writing test helpers. Although every <code>User</code> type that we've seen has been very simple, I'll ask you to imagine a more complex structure with many fields. In many of our tests, we need a <code>User</code>, but we only want to specify the fields relevant to the test. Let's create a <code>userFactory</code>:</p>
 
 {% highlight zig %}
 fn userFactory(data: anytype) User {
@@ -410,7 +410,7 @@ fn userFactory(data: anytype) User {
 	return .{
 		.id = if (@hasField(T, "id")) data.id else 0,
 		.power = if (@hasField(T, "power")) data.power else 0,
-		.active  = if (@hasField(T, "active")) data.name else true,
+		.active  = if (@hasField(T, "active")) data.active else true,
 		.name  = if (@hasField(T, "name")) data.name else "",
 	};
 }
@@ -473,7 +473,7 @@ pub fn build(b: *std.Build) !void {
 zig build install -Doptimize=ReleaseSmall -Dtarget=x86_64-windows-gnu
 {% endhighlight %}
 
-		<p>An executable will often have two addition steps, beyond the default "install":  "run" and "test". A library might have a single "test" step. For a basic argument-less <code>run</code>, we need to add four lines to the end of our build:</p>
+		<p>An executable will often have two additional steps, beyond the default "install":  "run" and "test". A library might have a single "test" step. For a basic argument-less <code>run</code>, we need to add four lines to the end of our build:</p>
 
 {% highlight zig %}
 // add after: b.installArtifact(exe);
@@ -485,7 +485,7 @@ const run_step = b.step("run", "Start learning!");
 run_step.dependOn(&run_cmd.step);
 {% endhighlight %}
 
-		<p>This creates two dependencies via the two calls to <code>dependOn</code>. The first ties our new run command to the built-in install step. The second ties the "run" step to our newly created "run" command. You might be wondering why you need a run command as well as a run step. I believe this separation exists to support more complicates setups: steps that depend on multiple commands, or commands that are used across multiple steps. If you run <code>zig build --help</code> and scroll to the top, you'll see our new "run" step. You can now run the program by executing <code>zig build run</code>.</p>
+		<p>This creates two dependencies via the two calls to <code>dependOn</code>. The first ties our new run command to the built-in install step. The second ties the "run" step to our newly created "run" command. You might be wondering why you need a run command as well as a run step. I believe this separation exists to support more complicated setups: steps that depend on multiple commands, or commands that are used across multiple steps. If you run <code>zig build --help</code> and scroll to the top, you'll see our new "run" step. You can now run the program by executing <code>zig build run</code>.</p>
 
 		<p>To add a "test" step, you'll duplicate most of the run code we just added, but rather than <code>b.addExecutable</code>, you'll kick things off with <code>b.addTest</code>:</p>
 
@@ -575,7 +575,7 @@ pub fn build(b: *std.Build) !void {
 
 		<p>This is all a repetition of what we saw in the previous section. With this, you can run <code>zig build test --summary all</code>.</p>
 
-		<p>Back to our <code>learning</code> project and our previously created <code>build.zig</code>. We'll begin by adding a our local <code>calc</code> as a dependency. We need to make three additions. First, we'll create a module pointing to our <code>calc.zig</code>:</p>
+		<p>Back to our <code>learning</code> project and our previously created <code>build.zig</code>. We'll begin by adding our local <code>calc</code> as a dependency. We need to make three additions. First, we'll create a module pointing to our <code>calc.zig</code>:</p>
 
 {% highlight zig %}
 // You can put this near the top of the build
@@ -618,7 +618,7 @@ const calc = @import("calc");
 calc.add(1, 2);
 {% endhighlight %}
 
-			<p>Adding a remote dependency takes a bit more effort. First, we need to go back to the <code>calc</code> project and define a module. You might think that the project itself is a module, but a project can expose multiple module, so we need to explicitly create it. We use the same <code>addModule</code>, but discard the return value. Simply calling <code>addModule</code> is enough to define the module which other projects will then be able to import.</p>
+			<p>Adding a remote dependency takes a bit more effort. First, we need to go back to the <code>calc</code> project and define a module. You might think that the project itself is a module, but a project can expose multiple modules, so we need to explicitly create it. We use the same <code>addModule</code>, but discard the return value. Simply calling <code>addModule</code> is enough to define the module which other projects will then be able to import.</p>
 
 {% highlight zig %}
 _ = b.addModule("calc", .{
@@ -678,7 +678,7 @@ found:
 
 		<p>It sounds like a lot, and I hope things get streamlined. But it's mostly something you can copy and paste from other projects and, once setup, you can move on.</p>
 
-		<p>A word of warning, I've found Zig's caching of dependencies to on the aggressive side. If you try to update a dependency but Zig doesn't seem to detect the change...well, I nuke the project's <code>zig-cache</code> folder as well as <code>~/.cache/zig</code>.</p>
+		<p>A word of warning, I've found Zig's caching of dependencies to be on the aggressive side. If you try to update a dependency but Zig doesn't seem to detect the change...well, I nuke the project's <code>zig-cache</code> folder as well as <code>~/.cache/zig</code>.</p>
 	</section>
 
 	<section>
