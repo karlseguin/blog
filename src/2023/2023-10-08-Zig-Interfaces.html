@@ -6,7 +6,7 @@ description: "Understanding and implementing interfaces in Zig"
 tags: [zig]
 ---
 
-<p>If you're picking up Zig, it won't be long before you realize there no syntactical sugar for creating interfaces. But you'll probably notice interface-like things, such as <code>std.mem.Allocator</code>. This is because Zig doesn't have an simple mechanism for creating interfaces (e.g. <code>interface</code> and <code>implements</code> keywords), but the language itself can be used to achieve the same goal.</p>
+<p>If you're picking up Zig, it won't be long before you realize there no syntactical sugar for creating interfaces. But you'll probably notice interface-like things, such as <code>std.mem.Allocator</code>. This is because Zig doesn't have a simple mechanism for creating interfaces (e.g. <code>interface</code> and <code>implements</code> keywords), but the language itself can be used to achieve the same goal.</p>
 
 <p>There are existing articles that I've been able to copy and paste to get this working, but none really clicked with me. It wasn't until I broke the code down into two parts: making it work and then making it pretty, that I finally understood. So, first, let's make something that works.</p>
 
@@ -24,9 +24,9 @@ const Writer = struct {
 };
 {% endhighlight %}
 
-<p>This is our complete interface. Depending on your knowledge of Zig, there might some things you aren't sure about. Our interface has two fields. The first, <code>ptr</code>, is a pointer to the actual implementation. We'll talk about <code>*anyopaque</code> in a bit. The second, <code>writeAllFn</code>, is a function pointer to the function of the actual implementation.</p>
+<p>This is our complete interface. Depending on your knowledge of Zig, there might be some things you aren't sure about. Our interface has two fields. The first, <code>ptr</code>, is a pointer to the actual implementation. We'll talk about <code>*anyopaque</code> in a bit. The second, <code>writeAllFn</code>, is a function pointer to the function of the actual implementation.</p>
 
-<p>Notice that the interface's <code>writeAll</code> implementation just call our function pointer and passes it the <code>ptr</code> field as well as any other arguments. Here's a skeleton implementation:</p>
+<p>Notice that the interface's <code>writeAll</code> implementation just calls our function pointer and passes it the <code>ptr</code> field as well as any other arguments. Here's a skeleton implementation:</p>
 
 {% highlight zig %}
 const File = struct {
@@ -157,7 +157,7 @@ fn writer(self: *File) Writer {
 }
 {% endhighlight %}
 
-<p>So we know that the <code>ptr</code> argument to <code>init</code> is our implementation. The <code>@TypeOf</code> and <code>@typeInfo</code> builtin functions are central to most compile-time work in Zig. The first returns the type of <code>ptr</code>, in this case <code>*File</code>, and the latter returns a tagged union which fully describes the type. You can see that we create a nested structure which also has a <code>writeAll</code> implementation. This is where the <code>*anyopaque</code> is converted to the correct type and the implementation's functions is invoked. The structure is needed because Zig lacks anonymous functions. We need <code>Writer.writeAllFn</code> to be this little two-line wrapper, and using a nested structure is the only way to do that.</p>
+<p>So we know that the <code>ptr</code> argument to <code>init</code> is our implementation. The <code>@TypeOf</code> and <code>@typeInfo</code> builtin functions are central to most compile-time work in Zig. The first returns the type of <code>ptr</code>, in this case <code>*File</code>, and the latter returns a tagged union which fully describes the type. You can see that we create a nested structure which also has a <code>writeAll</code> implementation. This is where the <code>*anyopaque</code> is converted to the correct type and the implementation's function is invoked. The structure is needed because Zig lacks anonymous functions. We need <code>Writer.writeAllFn</code> to be this little two-line wrapper, and using a nested structure is the only way to do that.</p>
 
 <p>Obviously <code>file.writer()</code> is something that'll be executed at runtime. It can be tempting to think that everything inside <code>Writer.init</code>, which <code>file.writer()</code> calls, is created at runtime. You might wonder about the lifetime of our internal <code>gen</code> structure, particularly in the face of multiple implementations. But aside from the <code>return</code> statement, <code>init</code> is all compile-time code generation. Specifically, the Zig compiler will create a version of <code>init</code> for each type of <code>ptr</code> that the program uses. The <code>init</code> function is more like a template for the compiler (all because the <code>ptr</code> argument is <code>anytype</code>). When <code>file.writer()</code> is called at runtime, the <code>Writer.init</code> function that ends up being executed is distinct from the <code>Writer.init</code> function that would be executed for a different type.</p>
 
@@ -239,9 +239,9 @@ pub fn main() !void {
 
 <p>Remember that when we switch a tagged union, the captured values, e.g. <code>|file|</code>, has the correct type. <code>File</code> in this case.
 
-<p>The downside with this approach is that it requires all implementations to be known ahead of time. You can't use it, for example, to create an interface that third parties can create implementations for. Each possible implementation has to be baked into the union</p>
+<p>The downside with this approach is that it requires all implementations to be known ahead of time. You can't use it, for example, to create an interface that third parties can create implementations for. Each possible implementation has to be baked into the union.</p>
 
-<p>Within an app, there are plenty of cases where such a restriction is fine. You can build a <code>Cache</code> union with all supported caching implementation, e.g. InMemory, Redis and Postgresql. If your application adds a new implementation, you just update the union.</p>
+<p>Within an app, there are plenty of cases where such a restriction is fine. You can build a <code>Cache</code> union with all supported caching implementations, e.g. InMemory, Redis and Postgresql. If your application adds a new implementation, you just update the union.</p>
 
 <p>In many cases, the interface will call the underlying implementation directly. For those cases, you can use the special <code>inline else</code> syntax:</p>
 
