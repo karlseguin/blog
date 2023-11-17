@@ -153,6 +153,7 @@ pub fn main() !void {
 }
 {% endhighlight %}
 
+<aside><p>I wrote a follow up blog post, <a href="/Zigs-std-json-Parsed/">Zig's std.json.Parsed(T)</a>, that explores <code>std.json.Parsed(T)</code> in greater detail.</p></aside>
 
 <p>Also take note of the last parameter we passed to <code>parseFromSlice</code>. This is an optional argument that configures various aspects of the JSON parsing. We're specifying <code>.allocate = .alloc_always</code>, which tells the function to copy any strings from our input and thus have them owned by the Parsed object. The default is <code>alloc_if_needed</code>. Using this option would be more efficient since our parsed <code>Config</code> would reference our input <code>data</code>, rather than having to make a copy, but then we'd have to extend <code>data's</code> lifetime to match our return value. If you're creating many objects with large text values, it's likely something you'd want to consider.</p>
 
