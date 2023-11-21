@@ -25,7 +25,7 @@ const config = parsed.value;
 
 <p>In the above code <code>parseFromTokenSource</code> returns a <code>std.json.Parsed(Config)</code>. This is a simple structure which exposes a <code>deinit</code> function as well as the parsed <code>value</code>. The reason <code>parseFromTokenSource</code> cannot simply return <code>T</code> (<code>Config</code> in the above case), is that parsing JSON likely results in memory allocations. For example, if our imaginary <code>Config</code> struct had a <code>tags: [][]const u8</code> field, then <code>parseFromTokenSource</code> would need to allocate a slice.</p>
 
-<p>Memory allocated while parsing can be difficult to manage, at least in a way that works in all cases. It would an unreasonable burden to ask the caller to know what needs freeing, especially for complex/nested objects. To work around this, <code>parseFromTokenSource</code> creates an <code>std.heap.ArenaAllocator</code> from which all allocations are made. When <code>deinit()</code> is called on the returned <code>Parsed(T)</code>, the arena allocator is freed and destroyed.</p>
+<p>Memory allocated while parsing can be difficult to manage, at least in a way that works in all cases. It would be an unreasonable burden to ask the caller to know what needs freeing, especially for complex/nested objects. To work around this, <code>parseFromTokenSource</code> creates an <code>std.heap.ArenaAllocator</code> from which all allocations are made. When <code>deinit()</code> is called on the returned <code>Parsed(T)</code>, the arena allocator is freed and destroyed.</p>
 
 <p>You might have noticed the <code>.allocate = .alloc_always</code> passed as an option to <code>parseFromTokenSource</code>. This option only relates to whether or not strings are duplicated from the source. In the above example, because our source, <code>file</code>, outlives <code>parsed</code>, we could use the alternative option <code>.alloc_if_needed</code>. But that would not alter the fact that other allocations, such as slices for arrays, would still be created and managed by the arena.</p>
 
@@ -54,7 +54,7 @@ fn parseFromTokenSource(comptime T: type, allocator: Allocator, ....) !Parsed(T)
 <p>While it might seem superficial, I really dislike exposing <code>std.json.Parsed(T)</code>. The fact that <code>T</code> came from JSON is an irrelevant implementation detail. Also, there's nothing JSON or parsing-specific about <code>std.json.Parsed</code>. It's just an <code>ArenaAllocator</code> and your value. So, while it doesn't really change anything, given no other option, I like to create my own little <code>Parsed(T)</code>-like  wrapper:</p>
 
 {% highlight zig %}
-pub fn Owned(comptime T: type) type {
+pub fn Managed(comptime T: type) type {
 	return struct {
 		value: T,
 		arena: *std.heap.ArenaAllocator,
@@ -78,12 +78,12 @@ pub fn Owned(comptime T: type) type {
 }
 {% endhighlight %}
 
-<p>Which means that I can pass an <code>myApp.Owned(Config)</code> around rather than an <code>std.json.Parse(T)</code>.</p>
+<p>Which means that I can pass an <code>myApp.Managed(Config)</code> around rather than an <code>std.json.Parse(T)</code>.</p>
 
-<p>Our original example, changed as a function that returns a <s><code>Config</code></s> <code>Owned(Config)</code> from a function, looks like:</p>
+<p>Our original example, changed as a function that returns a <s><code>Config</code></s> <code>Managed(Config)</code> from a function, looks like:</p>
 
 {% highlight zig %}
-fn parseConfig(file_path: []const u8, allocator: Allocator) !Owned(Config) {
+fn parseConfig(file_path: []const u8, allocator: Allocator) !Managed(Config) {
 	const file = try std.fs.openFileAbsolute(file_path, .{});
 	defer file.close();
 
@@ -94,6 +94,6 @@ fn parseConfig(file_path: []const u8, allocator: Allocator) !Owned(Config) {
 	const parsed = try std.json.parseFromTokenSource(Config, allocator, &reader, .{
 		.allocate = .alloc_always,
 	});
-	return Owned(Config).fromJson(parsed);
+	return Managed(Config).fromJson(parsed);
 }
 {% endhighlight %}
