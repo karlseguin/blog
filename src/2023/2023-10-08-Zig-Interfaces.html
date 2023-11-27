@@ -6,7 +6,7 @@ description: "Understanding and implementing interfaces in Zig"
 tags: [zig]
 ---
 
-<p>If you're picking up Zig, it won't be long before you realize there no syntactical sugar for creating interfaces. But you'll probably notice interface-like things, such as <code>std.mem.Allocator</code>. This is because Zig doesn't have a simple mechanism for creating interfaces (e.g. <code>interface</code> and <code>implements</code> keywords), but the language itself can be used to achieve the same goal.</p>
+<p>If you're picking up Zig, it won't be long before you realize there's no syntactical sugar for creating interfaces. But you'll probably notice interface-like things, such as <code>std.mem.Allocator</code>. This is because Zig doesn't have a simple mechanism for creating interfaces (e.g. <code>interface</code> and <code>implements</code> keywords), but the language itself can be used to achieve the same goal.</p>
 
 <p>There are existing articles that I've been able to copy and paste to get this working, but none really clicked with me. It wasn't until I broke the code down into two parts: making it work and then making it pretty, that I finally understood. So, first, let's make something that works.</p>
 
@@ -241,7 +241,7 @@ pub fn main() !void {
 
 <p>The downside with this approach is that it requires all implementations to be known ahead of time. You can't use it, for example, to create an interface that third parties can create implementations for. Each possible implementation has to be baked into the union.</p>
 
-<p>Within an app, there are plenty of cases where such a restriction is fine. You can build a <code>Cache</code> union with all supported caching implementations, e.g. InMemory, Redis and Postgresql. If your application adds a new implementation, you just update the union.</p>
+<p>Within an app, there are plenty of cases where such a restriction is fine. You can build a <code>Cache</code> union with all supported caching implementations, e.g. InMemory, Redis and PostgreSQL. If your application adds a new implementation, you just update the union.</p>
 
 <p>In many cases, the interface will call the underlying implementation directly. For those cases, you can use the special <code>inline else</code> syntax:</p>
 

@@ -1,0 +1,143 @@
+---
+layout: post
+date: 2023-11-17
+title: "Performance of reading a file line by line in Zig"
+description: "The abstraction of Zig interfaces means that common patterns, line readings the lines from a file, can suffer a performance penalty"
+tags: [zig]
+---
+
+<p>Maybe I'm wrong, but I believe the canonical way to read a file, line by line, in Zig is:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  var file = try std.fs.cwd().openFile("data.txt", .{});
+  defer file.close();
+
+  // Things are _a lot_ slower if we don't use a BufferedReader
+  var buffered = std.io.bufferedReader(file.reader());
+  var reader = buffered.reader();
+
+  // lines will get read into this
+  var arr = std.ArrayList(u8).init(allocator);
+  defer arr.deinit();
+
+  var line_count: usize = 0;
+  var byte_count: usize = 0;
+  while (true) {
+    reader.streamUntilDelimiter(arr.writer(), '\n', null) catch |err| switch (err) {
+      error.EndOfStream => break,
+      else => return err,
+    };
+    line_count += 1;
+    byte_count += arr.items.len;
+    arr.clearRetainingCapacity();
+  }
+  std.debug.print("{d} lines, {d} bytes", .{line_count, byte_count});
+}
+{% endhighlight %}
+
+<p>We could use one of <code>reader</code>'s thin wrappers around <code>streamUntilDelimiter</code> to make the code a little neater, but since our focus is on performance, we'll stick with less abstraction.</p>
+
+<p>The equivalent (I hope) Go code is:</p>
+{% highlight go %}
+package main
+
+import (
+  "bufio"
+  "fmt"
+  "log"
+  "os"
+)
+
+func main() {
+  file, err := os.Open("data.txt")
+  if err != nil {
+    log.Fatal(err)
+  }
+  defer file.Close()
+
+  lineCount := 0
+  byteCount := 0
+  scanner := bufio.NewScanner(file)
+  for scanner.Scan() {
+    lineCount += 1
+    byteCount += len(scanner.Text())
+  }
+
+  if err := scanner.Err(); err != nil {
+    log.Fatal(err)
+  }
+  fmt.Printf("%d lines, %d bytes", lineCount, byteCount)
+}
+{% endhighlight %}
+
+
+<p>What's interesting to me is that, on my computer, the Go version runs more than 4x faster. Using ReleaseFast with <a href="https://github.com/json-iterator/test-data/blob/master/large-file.json">this 24MB json-line</a> I found, Zig takes roughly 95ms whereas Go only takes 20ms. What gives?</p>
+
+<p>The issue comes down to how the <code>std.io.Reader</code> functions, like <code>streamUntilDelimiter</code> are implemented and how that integrates with <code>BufferedReader</code>. Much like Go's <code>io.Reader</code>, Zig's <code>std.io.Reader</code> requires implementations to provide a single function: <code>fn read(buffer: []u8) !usize</code>. Any functionality provided by <code>std.io.Reader</code> has to rely on this single <code>read</code> function.</p>
+
+<p>This is a fair representation of <code>std.io.Reader.streamUntilDelimiter</code> along with the <code>readByte</code> it depends on:</p>
+
+{% highlight zig %}
+pub fn streamUntilDelimiter(self: Reader, writer: anytype, delimiter: u8) !void {
+  while (true) {
+    // will bubble error.EndOfStream, which is how we break out
+    // of the while loop
+    const byte: u8 = try self.readByte();
+    if (byte == delimiter) return;
+    try writer.writeByte(byte);
+  }
+}
+
+pub fn readByte(self: Reader) !u8 {
+  var result: [1]u8 = undefined;
+  // self.read calls our implementations read (e.g. BufferedReader.read)
+  const amt_read = try self.read(result[0..]);
+  if (amt_read < 1) return error.EndOfStream;
+  return result[0];
+}
+{% endhighlight %}
+
+<p>This implementation will safely work for any type that implements a functional <code>read(buffer: []u8) !usize)</code>. But by targeting the lowest common denominator, we potentially lose a lot of performance. If you knew that the underlying implementation had a buffer you could come up with a much more efficient solutions. The biggest, but not only, performance gain would be to leverage the SIMD-optimized <code>std.mem.indexOfScalar</code> to scan for <code>delimiter</code> over the entire buffer.</p>
+
+<p>Here's what that might look like:</p>
+
+{% highlight zig %}
+fn streamUntilDelimiter(buffered: anytype, writer: anytype, delimiter: u8) !void {
+  while (true) {
+    const start = buffered.start;
+    if (std.mem.indexOfScalar(u8, buffered.buf[start..buffered.end], delimiter)) |pos| {
+      // we found the delimiter
+      try writer.writeAll(buffered.buf[start..start+pos]);
+      // skip the delimiter
+      buffered.start += pos + 1;
+      return;
+    } else {
+      // we didn't find the delimiter, add everything to the output writer...
+      try writer.writeAll(buffered.buf[start..buffered.end]);
+
+      // ... and refill the buffer
+      const n = try buffered.unbuffered_reader.read(buffered.buf[0..]);
+      if (n == 0) {
+        return error.EndOfStream;
+      }
+      buffered.start = 0;
+      buffered.end = n;
+    }
+  }
+}
+{% endhighlight %}
+
+<p>If you're curious why <code>buffer</code> is an <code>anytype</code>, it's because <code>std.io.BufferedReader</code> is a generic, and we want our <code>streamUntilDelimiter</code> for any variant, regardless of the type of the underlying unbuffered reader.</p>
+
+<p>If you take this function and use it in a similar way as our initial code, circumventing <code>std.io.Reader.streamUntilDelimiter</code>, you end up with similar performance as Go. And we'd still have room for some optimizations.</p>
+
+<p>This is something I tried to fix in Zig's standard library. I thought I could use Zig's comptime capabilities to detect if the underlying implementation has its own <code>streamUntilDelimeter</code> and use it, falling back to <code>std.io.Reader</code>'s implementation otherwise. And while this is certainly possible, using <code>std.meta.trait.hasFn</code> for example, I ran into problems that I just couldn't work around. The issue is that the <code>buffered.reader()</code> doesn't return an <code>std.io.Reader</code> directly, but goes through an intermediary: <code>std.io.GenericReader</code>. This <code>GenericReader</code> then creates an <code>std.io.Reader</code> on each function call. This double layer of abstraction was more than I wanted to, and probably could, work through.</p>
+
+<p>Instead I <a href="https://github.com/ziglang/zig/issues/17985">opened an issue</a> and wrote a more generic <a href="https://github.com/karlseguin/zul">zig utility library</a> for the little Zig snippets I've collected.</p>
+
+<p>I'm not sure how big the issue actually is. If we assume the above code is right and using a <code>BufferedReader</code> via an <code>std.io.Reader</code> is inefficient, then it's at least a real issue for this common task (on my initial real-world input which is where I ran into this issue, the overhead was over 10x). But the "interface" pattern of building functionality atop the lowest common denominator is common, so I wonder where else performance is being lost.</p>
