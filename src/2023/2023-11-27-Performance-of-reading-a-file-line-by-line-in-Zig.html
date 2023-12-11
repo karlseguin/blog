@@ -78,7 +78,7 @@ func main() {
 
 <p>What's interesting to me is that, on my computer, the Go version runs more than 4x faster. Using ReleaseFast with <a href="https://github.com/json-iterator/test-data/blob/master/large-file.json">this 24MB json-line</a> I found, Zig takes roughly 95ms whereas Go only takes 20ms. What gives?</p>
 
-<p>The issue comes down to how the <code>std.io.Reader</code> functions, like <code>streamUntilDelimiter</code> are implemented and how that integrates with <code>BufferedReader</code>. Much like Go's <code>io.Reader</code>, Zig's <code>std.io.Reader</code> requires implementations to provide a single function: <code>fn read(buffer: []u8) !usize</code>. Any functionality provided by <code>std.io.Reader</code> has to rely on this single <code>read</code> function.</p>
+<p>The issue comes down to how the <code>std.io.Reader</code> functions like <code>streamUntilDelimiter</code> are implemented and how that integrates with <code>BufferedReader</code>. Much like Go's <code>io.Reader</code>, Zig's <code>std.io.Reader</code> requires implementations to provide a single function: <code>fn read(buffer: []u8) !usize</code>. Any functionality provided by <code>std.io.Reader</code> has to rely on this single <code>read</code> function.</p>
 
 <p>This is a fair representation of <code>std.io.Reader.streamUntilDelimiter</code> along with the <code>readByte</code> it depends on:</p>
 
@@ -140,4 +140,4 @@ fn streamUntilDelimiter(buffered: anytype, writer: anytype, delimiter: u8) !void
 
 <p>Instead I <a href="https://github.com/ziglang/zig/issues/17985">opened an issue</a> and wrote a more generic <a href="https://github.com/karlseguin/zul">zig utility library</a> for the little Zig snippets I've collected.</p>
 
-<p>I'm not sure how big the issue actually is. If we assume the above code is right and using a <code>BufferedReader</code> via an <code>std.io.Reader</code> is inefficient, then it's at least a real issue for this common task (on my initial real-world input which is where I ran into this issue, the overhead was over 10x). But the "interface" pattern of building functionality atop the lowest common denominator is common, so I wonder where else performance is being lost.</p>
+<p>I'm not sure how big the issue actually is. If we assume the above code is right and using a <code>BufferedReader</code> via an <code>std.io.Reader</code> is inefficient, then it's at least a real issue for this common task (on my initial real-world input which is where I ran into this issue, the overhead was over 10x). But the "interface" pattern of building functionality atop the lowest common denominator is common, so I wonder where else performance is being lost. In this specific case though, I think there's an argument to be made that functionality like <code>streamUntilDelimeter</code> should only be made available on something like a <code>BufferedReader</code>.</p>

@@ -1,0 +1,115 @@
+---
+layout: post
+date: 2023-12-12
+title: "Zig: Tiptoeing Around @ptrCast"
+description: "A quick look at Zig's @ptrCast to understand what a variable really is."
+tags: [zig]
+---
+
+<p>A variable associates memory with a specific type. The compiler uses this information to generate the correct instructions (or to tell us that our code is invalid). For example, given this code:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+const User = struct {
+  id: u32,
+  name: []const u8,
+};
+
+pub fn main() !void {
+  const user1 = User{.id = 1, .name = "Leto"};
+  std.debug.print("{d}\n", .{user1.id});
+}
+{% endhighlight %}
+
+<p>The compiler can use <code>user1's</code> type, <code>User</code>, to generate the instructions necessary for reading and writing the <code>id</code> and <code>name</code> fields. This is possible because, while different <code>Users</code> might have different values, they all have the same memory layout. Thus, given a <code>User</code>, the compiler knows the relative position (relative to the memory referenced by the variable) of each field and can generate the instructions.</p>
+
+<p>While the above <code>user1</code> is unquestionably a <code>User</code>, we can use <code>@ptrCast</code> to create a new variable that points to the same location but as a different type:</p>
+
+
+{% highlight zig %}
+const std = @import("std");
+
+const User = struct {
+  id: u32,
+  name: []const u8,
+};
+
+const Node = struct {
+  next: ?*Node,
+};
+
+pub fn main() !void {
+  var user1 = User{.id = 1, .name = "Leto"};
+  const node1: *Node = @ptrCast(&user1);
+  node1.next = null;
+  std.debug.print("{}\n", .{node1});
+}
+{% endhighlight %}
+
+<p>This code not only compiles, but it also runs. Compiling and running are two distinct aspects we must consider. The code compiles because we told the compiler it was ok to treat the memory as a <code>*Node</code>. <code>@ptrCast</code> isn't changing the memory at runtime, it's forcing the compiler to see the memory as a <code>*Node</code>. In this case, the code runs because there are some truths we can rely on that make it so the memory used to represent a <code>User</code> can safely be used to represent a <code>Node</code>.</p>
+
+<p>Consider the opposite transformation:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+const User = struct {
+  id: u32,
+  name: []const u8,
+};
+
+const Node = struct {
+  next: ?*Node,
+};
+
+pub fn main() !void {
+  var node1 = Node{.next = null};
+  const user: *User = @ptrCast(&node1);
+
+  std.debug.print("Id: {d}\n", .{user.id});
+  std.debug.print("Name: {d}\n", .{user.name});
+}
+{% endhighlight %}
+
+<p>Now we're creating a <code>Node</code> and telling the compiler to see the underlying memory as a <code>User</code>. Again, this code compiles. But what happens when we try to run it? You'll probably get the same thing I did: <code>Id: 0</code> followed by a segfault. Why does it work one way but not the other? Consider the size of a <code>Node</code> and the size of a <code>User</code>:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  std.debug.print("Node: {d}   User: {d}\n", .{@sizeOf(Node), @sizeOf(User)});
+}
+{% endhighlight %}
+
+<p>Assuming you're on a modern platform, you'll likely see: <code>Node: 8   User: 24</code>. This highlights the power and danger of <code>@ptrCast</code>: it's obvious that the memory underlying a <code>Node</code> isn't big enough to represent a whole <code>User</code>, but <code>@ptrCast</code> forces the compiler to proceed as though it can.</p>
+
+<p>But size constraints aren't are only issue. Let's go back to our original example and add 2 more lines at the end:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+const User = struct {
+  id: u32,
+  name: []const u8,
+};
+
+const Node = struct {
+  next: ?*Node,
+};
+
+pub fn main() !void {
+  var user1 = User{.id = 1, .name = "Leto"};
+  const node1: *Node = @ptrCast(&user1);
+  node1.next = null;
+
+  std.debug.print("{}\n", .{node1});
+  std.debug.print("{d}\n", .{user1.id});    // added
+  std.debug.print("{s}\n", .{user1.name});  // added
+}
+{% endhighlight %}
+
+<p>The underlying memory for <code>node1</code> is more than big enough, but the code still crashes. The issue is that <code>node1.next</code> has written data into the memory which isn't valid when interpreted the memory as <code>User</code>. When we're writing to <code>user.id</code> or <code>user1.name</code>, the compiler will enforce correctness: <code>id</code> must be an <code>u32</code> and <code>name</code> must be a <code>[]const u8</code>. When we write to <code>node1.next</code>, our value is valid based on the <code>Node</code> type. But mix those two:  and you'll likely get something invalid.</p>
+
+<p>One last thing worth pointing out is that, unless a structure is declared as <code>packed</code>, Zig makes no guarantee about its memory layout. In almost all cases, you should not write to memory as one type and read it as another (which is exactly what we've done throughout the post). Unless the struct is <code>packed</code> or the struct is very simple, you cannot predict how those read/writes will be interpreted by different types sharing the same memory.</p>
+
+<p>In a previous post exploring <a href="https://www.openmymind.net/Zig-Interfaces/">Zig Interfaces</a> we used <code>@ptrCast</code> to restore erased type information. In this post, we're doing something a little different: alternating and using two concrete types. In the next post we'll examine a wonderful type in Zig's standard library which safely exploits what we've learned here.</p>
