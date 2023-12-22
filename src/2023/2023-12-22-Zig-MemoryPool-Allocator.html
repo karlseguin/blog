@@ -1,0 +1,77 @@
+---
+layout: post
+date: 2023-12-22
+title: "Zig's MemoryPool Allocator"
+description: "Zig's std.heap.MemoryPool is a useful allocator for many allocations of the same type"
+tags: [zig]
+---
+
+<p>You're probably familiar with Zig's <code>GeneralPurposeAllocator</code>, <code>ArenaAllocator</code> and <code>FixedBufferAllocator</code>, but Zig's standard library has another allocator you should be keeping at the ready: <code>std.heap.MemoryPool</code>.</p>
+
+<p>What makes the <code>MemoryPool</code> allocator special is that it can only create one type. As compensation for this limitation, it's very fast when allocating and freeing that type. It's really easy to use:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  // This pool can only create and destroy our User
+  var user_pool = std.heap.MemoryPool(User).init(allocator);
+  defer user_pool.deinit();
+
+  const user1 = try user_pool.create();
+  defer user_pool.destroy(user1);
+  // ...
+}
+
+const User = struct {
+  id: i32
+};
+{% endhighlight %}
+
+<p>The real value of the <code>MemoryPool</code> is when you're frequently allocating and destroying (not just once, as above). It works by maintaining a free list of previously destroyed objects. When the list is empty, the item is created using the underlying allocator (a <code>GeneralPuposeAllocator</code> above). But when you destroy an item, it's added the list, where subsequent calls to <code>create</code> can re-use the memory.</p>
+
+<p>The implementation helps explain why <code>MemoryPool</code> works with a single type: the use of a free list and re-use of memory requires all objects to be of the same size. It also explains the performance advantage over other allocators when there's high churn.</p>
+
+<p>In the last blog post, we briefly looked at <a href="/Zig-Tiptoeing-Around-ptrCast/">Zig's @ptrCast</a> and how we can use it to force the compiler to treat memory as a specific type. The <code>MemoryPool</code> is a good example of <code>@ptrCast</code>'s potential.</p>
+
+<p>If I was going to write something like <code>MemoryPool</code>, I'd probably start with this skeleton:</p>
+
+{% highlight zig %}
+fn MemoryPool(comptime Item: type) type {
+  return struct {
+    free_list: ?*Node,
+    fallback: std.mem.Allocator,
+
+    const Node = struct {
+      data: *Item,
+      next: ?*Node,
+    };
+  };
+}
+{% endhighlight %}
+
+<p>The problem is that we'll need to allocate a <code>Node</code> on every call to <code>destroy</code> to build up our list. Look at the clever trick <code>MemoryPool</code> uses to avoid this:</p>
+
+{% highlight zig %}
+// slightly modified version of what MemoryPool does
+pub fn destroy(pool: *Self, ptr: *Item) void {
+  ptr.* = undefined;
+
+  const node = @as(*Node, @ptrCast(ptr));
+  node.* = Node{
+      .next = pool.free_list,
+  };
+  pool.free_list = node;
+}
+{% endhighlight %}
+
+<p>Do you see what's going on? The memory allocated for our <code>User</code> is being re-purposed to be the node in our free list. From the time that you  you call <code>create</code> to the time that you call <code>destroy</code> the memory is yours and its of type <code>*T</code>. But once you call <code>destroy</code> the memory becomes a <code>*Node</code> and is used to create a chain of free memory. This works for two reasons. The first is that there's no time where the two identities overlap (unless you use the memory after calling <code>destroy</code>, but that's a problem with any allocator). The second is that <code>T</code> needs to be at least as large as <code>MemoryPool(T).Node</code>. The pool guaratees that via this line of code:</p>
+
+{% highlight zig %}
+pub const item_size = @max(@sizeOf(Node), @sizeOf(Item));
+{% endhighlight %}
+
+<p>When we need to allocate using the underlying allocator, we'll allocate <code>item_size</code>. In most cases, <code>@sizeOf(Item)</code> will be larger than <code>@sizeOf(Node)</code>, so this approach not only results in no additional allocations, but also no overhead.</p>
