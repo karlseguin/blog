@@ -228,7 +228,7 @@ pub const User = struct {
 // our return type changed, since init can now fail
 // *User -> !*User
 fn init(allocator: std.mem.Allocator, id: u64, power: i32) !*User{
-	var user = try allocator.create(User);
+	const user = try allocator.create(User);
 	user.* = .{
 		.id = id,
 		.power = power,
@@ -437,7 +437,7 @@ self.allocator.free(self.items);
 
 {% highlight zig %}
 fn parse(allocator: Allocator, input: []const u8) !Something {
-	var state = State{
+	const state = State{
 		.buf = try allocator.alloc(u8, 512),
 		.nesting = try allocator.alloc(NestType, 10),
 	};
@@ -463,7 +463,7 @@ fn parse(allocator: Allocator, input: []const u8) !Something {
 	// the allocator we'll use internally
 	const aa = arena.allocator();
 
-	var state = State{
+	const state = State{
 		// we're using aa here!
 		.buf = try aa.alloc(u8, 512),
 
@@ -582,6 +582,8 @@ pub fn main() !void {
 		<p>Another possible alternative to dynamic allocations is streaming data to an <code>std.io.Writer</code>. Like our <code>Allocator</code>, <code>Writer</code> is an interface implemented by many types, such as files. Above, we used <code>stringifyAlloc</code> to serialize JSON into a dynamically allocated string. We could have used <code>stringify</code> and provided a <code>Writer</code>:</p>
 
 {% highlight zig %}
+const std = @import("std");
+
 pub fn main() !void {
 	const out = std.io.getStdOut();
 
@@ -592,7 +594,6 @@ pub fn main() !void {
 	}, .{.whitespace = .indent_2}, out.writer());
 }
 {% endhighlight %}
-
 
 		<aside>While allocators are often given as the first parameter of a function, writers are normally the last. <span style="font-family: monospace;">ಠ_ಠ</span></aside>
 

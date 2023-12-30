@@ -38,7 +38,6 @@ pub fn main() !void {
 	const goku = User{.power = 9001};
 
 	try lookup.put("Goku", goku);
-	const entry = lookup.getPtr("Goku").?;
 
 	// returns an optional, .? would panic if "Goku"
 	// wasn't in our hashmap

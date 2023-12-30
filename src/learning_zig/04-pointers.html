@@ -19,7 +19,7 @@ permalink: "/learning_zig/pointers/"
 	<p>We'll begin by talking about pointers, which is an important topic to discuss in and of itself, but also to start training ourselves to see our program's data from a memory-oriented point of view. If you're already comfortable with pointers, heap allocations and dangling pointers, feel free to skip ahead a couple of parts to <a href=/learning_zig/heap_memory/>heap memory & allocators</a>, which is more Zig-specific.</p>
 
 	<section>
-		<p>The following code creates a user with a <code>power</code> of 1, and then calls the <code>levelUp</code> function which increments the user's power by 1. Can you guess the output?</p>
+		<p>The following code creates a user with a <code>power</code> of 100, and then calls the <code>levelUp</code> function which increments the user's power by 1. Can you guess the output?</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -45,7 +45,22 @@ pub const User = struct {
 };
 {% endhighlight %}
 
-		<p>That was a unkind trick; the code won't compile: <em>cannot assign to constant</em>. We saw in part 1 that function parameters are constants, thus <code>user.power += 1;</code> is not valid. To fix the compile-time error, we could change the <code>levelUp</code> function to:</p>
+		<p>That was a unkind trick; the code won't compile: <em>local variable is never mutated</em>. This is in reference to the <code>user</code> variable in <code>main</code>. A variable that is never mutated must be declare <code>const</code>. You might be thinking: but in <code>levelUp</code> we <em>are</em> mutating <code>user</code>, what gives? Let's assume the Zig compiler is mistaken and trick it. We'll force the compiler to see that <code>user</code> is mutated:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() void {
+	var user = User{
+		.id = 1,
+		.power = 100,
+	};
+	user.power += 0;
+
+	// rest of the code is the same
+{% endhighlight %}
+
+		<p>Now we get an error in <code>levelUp</code>: <em>cannot assign to constant</em>. We saw in part 1 that function parameters are constants, thus <code>user.power += 1;</code> is not valid. To fix the compile-time error, we could change the <code>levelUp</code> function to:</p>
 
 {% highlight zig %}
 fn levelUp(user: User) void {
@@ -84,7 +99,7 @@ user ->   ------------  (id: 1043368d0)
 
 {% highlight zig %}
 pub fn main() void {
-	var user = User{
+	const user = User{
 		.id = 1,
 		.power = 100,
 	};
@@ -108,6 +123,7 @@ pub fn main() void {
 		.id = 1,
 		.power = 100,
 	};
+	user.power += 0;
 
 	const user_p = &user;
 	std.debug.print("{any}\n", .{@TypeOf(user_p)});
@@ -118,10 +134,11 @@ pub fn main() void {
 
 {% highlight zig %}
 pub fn main() void {
-	const user = User{
+	var user = User{
 		.id = 1,
 		.power = 100,
 	};
+	user.power += 0;
 
 	// added this
 	std.debug.print("main: {*}\n", .{&user});
@@ -149,6 +166,9 @@ pub fn main() void {
 		.power = 100,
 	};
 
+	// no longer needed
+	// user.power += 1;
+
 	// user -> &user
 	levelUp(&user);
 	std.debug.print("User {d} has power of {d}\n", .{user.id, user.power});
@@ -166,6 +186,8 @@ pub const User = struct {
 {% endhighlight %}
 
 		<p>We had to make two changes. The first is calling <code>levelUp</code> with the address of user, i.e. <code>&user</code>, instead of <code>user</code>. This means that our function no longer receives a <code>User</code>. Instead, it receives a <code>*User</code>, which was our second change.</p>
+
+		<p>We no longer need that ugly hack of forcing user to be mutated via <code>user.power += 0;</code>. Initially, we failed to get the code to compile because <code>user</code> was a <code>var</code> but, the compiler told us, was never mutated. We thought maybe the compiler was wrong and "tricked" it by forcing a mutation. But, as we now know, the <code>user</code> being mutated in <code>levelUp</code> was a different; the compiler was right.</p>
 
 		<p>The code now works as intended. There are still many subtleties with function parameters and our memory model in general, but we're making progress. Now might be a good time to mention that, aside from the specific syntax, none of this is unique to Zig. The model that we're exploring here is the most common, some languages might just hide many of the details, and thus flexibility, from developers.</p>
 
@@ -334,7 +356,7 @@ const std = @import("std");
 
 pub fn main() void {
 	var name = [4]u8{'G', 'o', 'k', 'u'};
-	var user = User{
+	const user = User{
 		.id = 1,
 		.power = 100,
 		// slice it, [4]u8 -> []u8
