@@ -471,7 +471,7 @@ fn parse(allocator: Allocator, input: []const u8) !Something {
 		.nesting = try aa.alloc(NestType, 10),
 	};
 
-	// we're passing aa here, so any we're guaranteed that
+	// we're passing aa here, so we're guaranteed that
 	// any other allocation will be in our arena
 	return parseInternal(aa, state, input);
 }
