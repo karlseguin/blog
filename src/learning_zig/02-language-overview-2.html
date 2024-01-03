@@ -239,7 +239,7 @@ const Stage = enum {
 
 		<aside>If you want the string representation of an enum, you can use the builtin <code>@tagName(enum)</code> function.</aside>
 
-		<p>Recall struct types can be inferred based on their assigned or return type using the <code>.{...}</code> notation. Above, we see the enum type being inferred based on its comparison to <code>self</code>, which is of type <code>Stage</code>. We could have been explicit and written: <code>return self == Stage.confirmed or self == Stage.err;</code>. But, when dealing with enums you'll often see the enum type omitted via the <code>.$value</code> notation</p>
+		<p>Recall struct types can be inferred based on their assigned or return type using the <code>.{...}</code> notation. Above, we see the enum type being inferred based on its comparison to <code>self</code>, which is of type <code>Stage</code>. We could have been explicit and written: <code>return self == Stage.confirmed or self == Stage.err;</code>. But, when dealing with enums you'll often see the enum type omitted via the <code>.$value</code> notation. This is called an <em>enum literal</em>.</p>
 
 		<p>The exhaustive nature of <code>switch</code> makes it pair nicely with enums as it ensures you've handled all possible cases. Be careful when using the <code>else</code> clause of a <code>switch</code> though, as it'll match any newly added enum values, which may or may not be the behavior that you want.</p>
 	</section>

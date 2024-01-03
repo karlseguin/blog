@@ -455,7 +455,7 @@ pub fn main() void {
 	struct{comptime year: comptime_int = 2023, comptime month: comptime_int = 8}
 	{% endhighlight %}
 
-		<p>Here we gave our anonymous struct field names, <code>year</code> and <code>month</code>. In our original code, we didn't. In that case, the field names are automatically generated as "0", "1", "2", etc. The <code>print</code> function expects a structure with such fields and uses the ordinal position in the string format to get the appropriate argument.</p>
+		<p>Here we gave our anonymous struct field names, <code>year</code> and <code>month</code>. In our original code, we didn't. In that case, the field names are automatically generated as "0", "1", "2", etc. While they're both examples of anonymous structure literal, the one without fields names is often called a <em>tuple</em>. The <code>print</code> function expects a tuple and uses the ordinal position in the string format to get the appropriate argument.</p>
 
 		<p>Zig doesn't have function overloading, and it doesn't have vardiadic functions (functions with an arbitrary number of arguments). But it does have a compiler capable of creating specialized functions based on the types passed, including types inferred and created by the compiler itself.</p>
 	</section>
