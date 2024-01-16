@@ -540,8 +540,8 @@ pub fn main() !void {
 		.last_param = "are options",
 	}, .{.whitespace = .indent_2});
 
-	// We _can_ free this allocation, but since we know that our allocator is
-	// a FixedBufferAllocator, we could simply rely on the above `defer fa.reset()`
+	// We can free this allocation, but since we know that our allocator is
+	// a FixedBufferAllocator, we can rely on the above `defer fa.reset()`
 	defer allocator.free(json);
 
 	std.debug.print("{s}\n", .{json});

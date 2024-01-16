@@ -1,0 +1,397 @@
+---
+layout: post
+date: 2024-01-16
+title: "Zig's HashMap - Part 1"
+description: "A Look at Zig's HashMap, AutoHashMap and StringHashMap as well as the unmanaged variants"
+tags: [zig]
+---
+
+<aside><p>This blog posts assumes that you're comfortable with <a href="/learning_zig/generics/">Zig's implementation of Generics</a>.</p></aside>
+
+<p>Like most hash map implementations, Zig's <code>std.HashMap</code> relies on 2 functions, <code>hash(key: K) u64</code> and <code>eql(key_a: K, key_b: K) bool</code>. The <code>hash</code> function takes a key and returns an unsigned 64 bit integer, known as the <em>hash code</em>. The same key always returns the same hash code. The <code>hash</code> function <em>can</em> produce the same hash code for two different keys which is one reason we also need <code>eql</code>: to determine if two keys are the same.</p>
+
+<p>This is all standard stuff, but Zig's implementation has a few specific details worth exploring. This is particularly true given the number of hash map types in the standard library as well as the fact that the documentation seems incomplete and confusing. Specifically, there are six hash map variants: <code>std.HashMap</code>, <code>std.HashMapUnmanaged</code>, <code>std.AutoHashMap</code>, <code>std.AutoHashMapUnmanaged</code>, <code>std.StringHashMap</code>, <code>std.StringHashMapUnmanaged</code>. One of those, <code>std.HashMapUnmanaged</code>, contains the bulk of the implementation. The other five are thin wrappers: they are composed of an <code>std.HashMapUnmanaged</code>. The documentation for those five variants is challenging because of this composition, which is not, in my opinion, handled well by the document generator.</p>
+
+<aside><p>We'll cover the completely different <code>ArrayHashMap</code> types in part 2</p></aside>
+
+<p>If we look at the <code>put</code> method of <code>std.HashMap</code>, we'll see a pattern that's often repeated:</p>
+
+{% highlight zig %}
+pub fn put(self: *Self, key: K, value: V) Allocator.Error!void {
+  return self.unmanaged.putContext(self.allocator, key, value, self.ctx);
+}
+{% endhighlight %}
+
+<h3>Unmanaged</h3>
+<p>"Unmanaged" types are sprinkled throughout the standard library. It's a naming convention which indicates that the type in question doesn't maintain an allocator. Any method that requires allocations takes an explicit allocator as a parameter. To see this in practice, consider this linked list:</p>
+
+{% highlight zig %}
+pub fn LinkedList(comptime T: type) type {
+  return struct {
+    head: ?*Node = null,
+    allocator: Allocator,
+
+    const Self = @This();
+
+    pub fn init(allocator: Allocator) Self {
+      return .{
+        .allocator = allocator,
+      };
+    }
+
+    pub fn deinit(self: Self) void {
+      var node = self.head;
+      while (node) |n| {
+        node = n.next;
+        self.allocator.destroy(n);
+      }
+    }
+
+    pub fn append(self: *Self, value: T) !void {
+      const node = try self.allocator.create(Node);
+      node.value = value;
+      const h = self.head orelse {
+        node.next = null;
+        self.head = node;
+        return;
+      };
+      node.next = h;
+      self.head = node;
+    }
+
+    pub const Node = struct {
+      value: T,
+      next: ?*Node,
+    };
+  };
+}
+{% endhighlight %}
+
+<p>Our <code>init</code> function takes and stores an <code>std.mem.Allocator</code>. This allocator is then used as needed in <code>append</code> and <code>deinit</code>. This is a common pattern in Zig. The "unmanaged" version of the above code is only slightly different:</p>
+
+{% highlight zig %}
+pub fn LinkedListUnmanaged(comptime T: type) type {
+  return struct {
+    head: ?*Node = null,
+
+    const Self = @This();
+
+    pub fn deinit(self: Self, allocator: Allocator) void {
+      var node = self.head;
+      while (node) |n| {
+        node = n.next;
+        allocator.destroy(n);
+      }
+    }
+
+    pub fn append(self: *Self, allocator: Allocator, value: T) !void {
+      const node = try allocator.create(Node);
+      // .. same as above
+    }
+
+    // Node is the same as above
+    pub const Node = struct {...}
+  };
+}
+{% endhighlight %}
+
+<p>We no longer have an <code>allocator</code> field. The <code>append</code> and <code>deinit</code> functions both take an extra parameter: allocator. Because we no longer need to store the allocator, we're able to initialize a <code>LinkedListUnmanaged(T)</code> exclusively with default values (i.e. <code>head: ?*Node = null</code>) and are able to remove the <code>init</code> function altogether. This isn't a requirement of unamanged types, but it is common. To create a <code>LinkedListUnmanaged(i32)</code>, you'd do:</p>
+
+{% highlight zig %}
+var ll = LinkedListUnmanaged(i32){};
+{% endhighlight %}
+
+<p>It's a bit cryptic, but it's standard Zig. <code>LinkedListUnmanaged(i32)</code> returns a type, so the above is no different than doing: <code>var user = User{}</code> and relying on the default field values of <code>User</code>.</p>
+
+<p>You might be wondering <em>what's the point of unamaged types?</em>. But before we answer that, let's consider how easy it is to provide both managed and unmanaged versions of our <code>LinkedList</code>. We keep our <code>LinkedListUnmanaged</code> as-is, and change our <code>LinkedList</code> to wrap it:</p>
+
+{% highlight zig %}
+pub fn LinkedList(comptime T: type) type {
+  return struct {
+    allocator: Allocator,
+    unmanaged: LinkedListUnmanaged(T),
+
+    const Self = @This();
+
+    pub fn init(allocator: Allocator) Self {
+      return .{
+        .unmanaged = .{},
+        .allocator = allocator,
+      };
+    }
+
+    pub fn deinit(self: Self) void {
+      self.unmanaged.deinit(self.allocator);
+    }
+
+    pub fn append(self: *Self, value: T) !void {
+      return self.unmanaged.append(self.allocator, value);
+    }
+
+    pub const Node = LinkedListUnmanaged(T).Node;
+  };
+}
+{% endhighlight %}
+
+<p>This simple composition is, as we save above, the same as how the various hash map types wrap an <code>std.HashMapUnmanaged</code>.</p>
+
+<p>There are a few benefits to unmanaged types. The most important is that they're more explicit. Rather than knowing that a type, like <code>ListList(T)</code>, will probably need to allocate memory at some point, the explicit API of the unmanaged variant identifies the specific methods that allocate/deallocate. This can help reduce surprises and gives greater control to the caller. A secondary benefit of unamanged types is that they save a few bytes of memory by not having a reference to the allocator. Some applciations might need to store thousands or even millions of these structures, in which case it can add up.</p>
+
+<p>In the name of simplicity, the rest of this post won't mentioned unamanged. Anything we see about the  <code>StringHashMap</code> or <code>AutoHashMap</code> or <code>HashMap</code> applies equally to their *Unmanaged variant.</p>
+
+<h3>HashMap vs AutoHashMap</h3>
+<p><code>std.HashMap</code> is a generic type which takes two type parameters: the type of the key and the type of the value. And, as we saw, hash maps require two functions: <code>hash</code> and <code>eql</code>. Combined, these functions are called the "context". Both functions operate on the key, and there isn't a single <code>hash</code> or <code>eql</code> function that'll work for all types. For example, for integer keys, <code>eql</code> is going to be <code>a_key == b_key</code> where as for <code>[]const u8</code> keys we want <code>std.mem.eql(u8, a_key, b_key)</code>.</p>
+
+<p>When we use <code>std.HashMap</code> we need to provide the context (the two functions). We'll look at this shortly, but for now we can rely on <code>std.AutoHashMap</code> which automatically generate these functions for us. It might surprise you to know that <code>AutoHashMap</code> can even generate a context for more complex keys. The following works: </p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  var h = std.AutoHashMap(User, i32).init(allocator);
+  try h.put(User{.id = 3, .state = .active}, 9001);
+  defer h.deinit();
+}
+
+const User = struct{
+  id: i32,
+  state: State,
+
+  const State = enum {
+    active,
+    pending,
+  };
+};
+{% endhighlight %}
+
+<p>But there's a limit to <code>AutoHashMap</code>'s capabilities. Change our <code>User</code> struct to:</p>
+
+{% highlight zig %}
+const User = struct{
+  id: i32,
+  state: State,
+  login_ids: []i32,
+
+  ...
+};
+{% endhighlight %}
+
+<p>And we get the following compilation error: </p>
+
+<blockquote><code>std.hash.autoHash</code> does not allow slices as well as unions and structs containing slices here (<code>User</code>) because the intent is unclear. Consider using <code>std.hash.autoHashStrat</code> or providing your own hash function instead.</blockquote>
+
+<p>The reality is that there are types with ambiguous equality rules. Slices, like our <code>login_ids</code> above, are a good example. Should two slices pointing to different memory, but with the same length and same content be considered equal? It's application-specific. Similarly, I was surprised to find out that <code>AutoHashMap</code> won't allow floats (either directly or as part of a struct):</p>
+
+{% highlight zig %}
+var h = std.AutoHashMap(f32, i32).init(allocator);
+defer h.deinit();
+try h.put(1.1, 9001);
+{% endhighlight %}
+
+<p>The above gives a compilation error: <em>unable to hash type <code>f32</code></em>. It turns out that <a href="https://readafterwrite.wordpress.com/2017/03/23/how-to-hash-floating-point-numbers/">hashing floats isn't straightforward</a>. It isn't that floats and slices can't be hashed or compared. It's that whatever implementation Zig picks would likely surprise some developers and that unexpectedness could result in misuse which could lead to bugs. In the end, if <code>AutoHashMap</code> can handle your key type, then use it. If not, use a <code>HashMap</code> and provide your own context (which we'll look at shortly).</p>
+
+<h3>AutoHashMap vs StringHashMap</h3>
+<p>You'd be forgiven for thinking that <code>StringHashMap(V)</code> is an alias for <code>AutoHashMap([]const u8, V)</code>. But, as we just saw, <code>AutoHashMap</code> doesn't support slice keys. We can confirm this. Trying to run:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  var h = std.AutoHashMap([]const u8, i32).init(allocator);
+  try h.put("over", 9000);
+  defer h.deinit();
+}
+{% endhighlight %}
+
+<p>gives us the following error:</p>
+
+<blockquote>error: <code>std.auto_hash.autoHash</code> does not allow slices here (<code>[]const u8</code>) because the intent is unclear. Consider using <code>std.StringHashMap</code> for hashing the contents of <code>[]const u8</code>. Alternatively, consider using <code>std.auto_hash.hash</code> or providing your own hash function instead.</blockquote>
+
+<p>As I said earlier, it isn't that slices can't be hashed or compared, it's that some cases might consider slices equal only if they reference the same memory, while others might consider two slices equal if their elements are the same. But, in the cases of strings, most people expect "teg" to equal "teg" regardless of where each is stored.</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  const name1: []const u8 = &.{'T', 'e', 'g'};
+  const name2 = try allocator.dupe(u8, name1);
+
+  const eql1 = std.meta.eql(name1, name2);
+  const eql2 = std.mem.eql(u8, name1, name2);
+  std.debug.print("{any}\n{any}", .{eql1, eql2});
+}
+{% endhighlight %}
+
+<p>The above program prints "false" followed by "true". <code>std.meta.eql</code> compares pointers using: <code>a.ptr == b.ptr and a.len == b.len</code>. But, specifically for strings, most programmers probably expect the behavior of <code>std.mem.eql</code>, which compares the bytes within the strings.</p>
+
+<p>Therefore, just like <code>AutoHashMap</code> wraps <code>HashMap</code> with a auto-generated context, <code>StringHashMap</code> also wraps <code>HashMap</code> with a string-specific context. We'll look more closely at contexts next, but here's the context that <code>StringHashMap</code> uses:</p>
+
+{% highlight zig %}
+pub const StringContext = struct {
+  pub fn hash(self: @This(), s: []const u8) u64 {
+    _ = self;
+    return std.hash.Wyhash.hash(0, s);
+  }
+  pub fn eql(self: @This(), a: []const u8, b: []const u8) bool {
+    _ = self;
+    return std.mem.eql(u8, a, b);
+  }
+};
+{% endhighlight %}
+
+<h3>Custom Context</h3>
+<p>We'll finish part 1 by looking at using <code>HashMap</code> directly, which means providing our own context. We'll start with a simple example: creating a HashMap for case-insensitive ascii strings. We want the following to output: <em>Goku = 9000</em>. Notice though that while we insert using the key "GOKU" we fetch using "goku":</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  var h = std.HashMap([]const u8, i32, CaseInsensitiveContext, std.hash_map.default_max_load_percentage).init(allocator);
+  defer h.deinit();
+  try h.put("Goku", 9000);
+  std.debug.print("Goku = {d}\n", .{h.get("goku").?});
+}
+{% endhighlight %}
+
+<p>Unlike the <code>StringHashMap</code> generic which only takes the value type, or <code>AutoHashMap</code> that takes both the key and value type, <code>HashMap</code> takes the key type, value type, context type and a fill factor. I'm not going to cover the fill factor; above we're using Zig's default fill factor (80). The part that we are interested in is the <code>CaseInsensitiveContext</code>. Let's look at its implementation:</p>
+
+{% highlight zig %}
+const CaseInsensitiveContext = struct {
+  pub fn hash(_: CaseInsensitiveContext, s: []const u8) u64 {
+    var key = s;
+    var buf: [64]u8 = undefined;
+    var h = std.hash.Wyhash.init(0);
+    while (key.len >= 64) {
+      const lower = std.ascii.lowerString(buf[0..], key[0..64]);
+      h.update(lower);
+      key = key[64..];
+    }
+
+    if (key.len > 0) {
+      const lower = std.ascii.lowerString(buf[0..key.len], key);
+      h.update(lower);
+    }
+    return h.final();
+  }
+
+  pub fn eql(_: CaseInsensitiveContext, a: []const u8, b: []const u8) bool {
+    return std.ascii.eqlIgnoreCase(a, b);
+  }
+};
+{% endhighlight %}
+
+<p>The first parameter to both functions is an instance of the context itself. This allows more advanced patterns where the context might have state. In many cases though, it isn't used.</p>
+
+<p>Our <code>eql</code> function uses the existing <code>std.ascii.eqlIgnoreCase</code> function to compare two keys in a case-insensitive manner. Straightforward.</p>
+
+<p>Our <code>hash</code> function can be broken down into two parts. The first is lower-casing  the key. If we want "goku" and "GOKU" to be treated as equal, our <code>hash</code> function has to return the same hash code for both. We do this in batches of 64 bytes to avoid having to allocate a buffer to hold the lower-cased value. This is possible because our hashing function can be updated with new bytes (which is quite common).</p>
+
+<p>This leads us to the second part, what's <code>std.hash.Wyhash</code>? When talking about a hashing algorithm for hash maps (which are distinct from cryptographic hashing algorithms), we're looking for a number of properties, such as performance (every operation on a hash map requires hashing the key), uniform distribution (if our hash function returns an u64, then a random set of inputs should be well distributed within that range) and collision resistance (different values can result in the same hash code, but the less it happens the better). There are a number of algorithms, some specialized for specific inputs (e.g. short strings), some designed for specific hardware. WyHash is a popular option that works well across a number of inputs and characteristics. You essentially feed it bytes and, once done, get a u64 out (or u32 depending on the version).</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  {
+    const name = "Teg";
+
+    var h = std.hash.Wyhash.init(0);
+    h.update(name);
+    std.debug.print("{d}\n", .{h.final()});
+  }
+
+  {
+    const name = "Teg";
+    const err = @intFromError(error.OutOfMemory);
+
+    var h = std.hash.Wyhash.init(0);
+    h.update(name);
+    h.update(std.mem.asBytes(&err));
+    std.debug.print("{d}\n", .{h.final()});
+  }
+}
+{% endhighlight %}
+
+<p>This code outputs: 17623169834704516898 followed by 7758855794693669122. The numbers shouldn't mean anything. The goal is only to show how data can be fed into our hashing function to generate a hash code.</p>
+
+<p>Let's look at another example. Say we have a <code>User</code> that we'd like to use as a key in a hash map:</p>
+
+{% highlight zig %}
+const User = struct {
+  id: u32,
+  name: []const u8,
+};
+{% endhighlight %}
+
+<p>We can't use an <code>AutoHashMap</code> for this since it doesn't support slices (which our <code>name</code> is). Let's start with a skeleton: </p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  var h = std.HashMap(User, i32, User.HashContext, std.hash_map.default_max_load_percentage).init(allocator);
+  defer h.deinit();
+  try h.put(.{.id = 1, .name = "Teg"}, 100);
+  try h.put(.{.id = 2, .name = "Duncan"}, 200);
+
+  std.debug.print("{d}\n", .{h.get(.{.id = 1, .name = "Teg"}).?});
+  std.debug.print("{d}\n", .{h.get(.{.id = 2, .name = "Duncan"}).?});
+}
+
+const User = struct {
+  id: u32,
+  name: []const u8,
+
+  pub const HashContext = struct {
+    pub fn hash(_: HashContext, u: User) u64 {
+      // TODO
+    }
+
+    pub fn eql(_: HashContext, a: User, b: User) bool {
+      // TODO
+    }
+  };
+};
+{% endhighlight %}
+
+<p>We need to implement the <code>hash</code> and <code>eql</code> functions. <code>eql</code>, as is often the case, is straightforward:</p>
+
+{% highlight zig %}
+pub fn eql(_: HashContext, a: User, b: User) bool {
+  if (a.id != b.id) return false;
+  return std.mem.eql(u8, a.name, b.name);
+}
+{% endhighlight %}
+
+<p>And if you look at our other hash examples, you might be able to come up with its implementation:</p>
+
+{% highlight zig %}
+pub fn hash(_: HashContext, u: User) u64 {
+  var h = std.hash.Wyhash.init(0);
+  h.update(u.name);
+  h.update(std.mem.asBytes(&u.id));
+  return h.final();
+}
+{% endhighlight %}
+
+<p>Plug in the two functions and the above example should work.</p>
+
+<h3>Conclusion</h3>
+<p>Hopefully you now have a better understanding of how Zig's hash maps are implemented and how to leverage them within your code. In most cases, <code>std.StringHashMap</code> or <code>std.AutoHashMap</code> are all you'll need. But knowing about the existence and purpose of the  <code>*Unmanaged</code> variants, as well as the more generic <code>std.HashMap</code>, might prove useful. If nothing else, the documentation and their implementation should now be easier to follow.</p>
+
+<p>In the next part we'll look at a few other aspects of hash maps, including the useful <code>getOrPut</code> method, key and value ownership as well as the completely different <code>std.ArrayHashMap</code>.</p>
