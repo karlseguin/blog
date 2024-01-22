@@ -1,0 +1,370 @@
+---
+layout: post
+date: 2024-01-16
+title: "Zig's HashMap - Part 2"
+description: "Understanding and managing keys and values, and key pointers and value pointers, in Zig's HashMap"
+tags: [zig]
+---
+
+<p>In <a href="/Zigs-HashMap-Part-1/">part 1</a> we explored how the six HashMap variants relate to each other and what each offered to developers. We largely focused on defining and initializing HashMaps for various data type and utilizing custom <code>hash</code> and <code>eql</code> functions for types not supported by the <code>StringHashMap</code> or <code>AutoHashMap</code>. In this part we'll focus on keys and values, how they're stored, exposed and our responsibility with respect to their lifetime.</p>
+
+<p>Loosely speaking, Zig's hash map are implemented using two slices: one for keys and one for values. The hash code returned from the <code>hash</code> function is used to find the ideal index of an entry within these arrays. To start simply, if we had this code:</p>
+
+{% highlight zig %}
+var lookup = std.StringHashMap(i32).init(allocator);
+defer lookup.deinit();
+
+try lookup.put("Goku", 9001);
+try lookup.put("Paul", 1234);
+{% endhighlight %}
+
+<p>We could visualize our hash map like so:</p>
+
+{% highlight text %}
+  keys:               values:
+       --------          --------
+       | Paul  |         | 1234 |     @mod(hash("Paul"), 5) == 0
+       --------          --------
+       |      |          |      |
+       --------          --------
+       |      |          |      |
+       --------          --------
+       | Goku |          | 9001 |    @mod(hash("Goku"), 5) == 3
+       --------          --------
+       |      |          |      |
+       --------          --------
+{% endhighlight %}
+
+<p>When we <code>hash</code> our keys and apply a modulo operation with the length of our array (5 above), we get the ideal index for the entry. I say "ideal" because our <code>hash</code> function can return the same hash code for two different keys; the chance of such collisions increase dramatically when we map hash code to one of 5 available slots via <code>@mod</code>. But if we ignore possible collisions, this is a reasonable view of our hash map.</p>
+
+<p>Once our hash map fills up to a certain point (in part 1, we briefly talked about the fill factor and mentioned that Zig defaults to 80%), it needs to grow to accommodate new values and to maintain the constant-time performance of lookups. Growing a hash map is like growing a dynamic array, we allocate a new array and copy the values from the original to the new (a simple algorithm would be making it 2x larger). For this to work with a hash map though, we can't simply copy the keys and values to the same index of the new slices. We need to re-calculate their index. Why? Because the location of an entry has to be consistent and predictable. We can't insert a key-value pair using one algorithm, e.g. <code>@mod(hash("Goku"), 5)</code>, and expect to find it using a different one, e.g. <code>@mod(hash("Goku"), 10)</code> (notice the 5 changed to 10, because our array grew).</code></p>
+
+<p>This basic visualization is going to serve as a foundation for much of this post. Further, the fact that entries can be moved from one backing array to another (i.e. when the hash map fills up and needs to grow) is also something we'll keep revisiting.</p>
+
+<h3>Values</h3>
+<p>If we extend the above snippet and call <code>lookup.get("Paul")</code>, the return value will be <code>1234</code>. The return type of <code>get</code> is a <code>?i32</code>, or more generically, <code>?V</code>. The optional return type allows <code>get</code> to inform us that the key wasn't found. If you've looked through Zig's documentation, you've probably noticed another similar method: <code>getPtr(key)</code> with a slightly different return type: <code>?*V</code>.</p>
+
+<p>Since it's difficult to appreciate the difference between the two methods when talking about primitive types like our <code>i32</code>, consider this version which swaps our <code>i32</code> value for a <code>User</code>:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	var lookup = std.StringHashMap(User).init(allocator);
+	defer lookup.deinit();
+
+	try lookup.put("Goku", .{
+		.id = 9000,
+		.name = "Goku",
+		.super = false,
+	});
+
+	var user = lookup.get("Goku").?;
+
+	user.super = true;
+	std.debug.print("{any}\n", .{lookup.get("Goku").?.super});
+}
+
+const User = struct {
+	id: i32,
+	name: []const u8,
+	super: bool,
+};
+{% endhighlight %}
+
+<p>Even though we set <code>user.super = true</code>, the value of the <code>User</code> in <code>lookup</code> is still <code>false</code>. This is because, in Zig, assignment are done by copy. If we keep the code as-is, but change <code>lookup.get</code> to <code>lookup.getPtr</code>, it'll work. We're still doing an assignment, thus still copying a value, but the value we're copying is the address of the <code>User</code> in our hash map, not the user itself.</p>
+
+<p><code>getPtr</code> allows us to get a reference to the value within the hash map. As we see above, this has behavioral significance; we can directly modify the value stored in our hash map. It also has a performance implication as copying large values can be expensive. But consider our above visualization and remember that, as the hash table fills up, values can be relocated. With that in mind, can you explain why this code crashes?:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	// change the type, just to make it easier to write this snippet
+	// the same would happen with our above StringHashMap(User)
+	var lookup = std.AutoHashMap(usize, usize).init(allocator);
+	defer lookup.deinit();
+
+	try lookup.put(100, 100);
+	const first = lookup.getPtr(100).?;
+
+	for (0..50) |i| {
+		try lookup.put(i, i);
+	}
+	first.* = 200;
+}
+{% endhighlight %}
+
+<p>If the <code>first.* = 200;</code> syntax is a confusing, we're dereferencing the pointer and writing a value to it. Our pointer is the address of an index in our values array, so what this syntax does is write directly into our array. It crashes because our inserting-loop has forced the hash table to grow, causing the underlying key and values to be re-allocated and all keys and values to be moved. The pointer returned by <code>getPtr</code> is no longer valid. At the time of this writing, the default hash map size is 8 with a fill factor of 80%. If we looped <code>0..5</code> the code would work, but one more iteration (<code>0..6</code>) causes the growth and thus our crash. With typical usage, this issue isn't normally a problem; you won't hold a reference to an entry while modifying the hash map. But understanding that it can happen and understanding why it happens will help us better utilize other hash map features that return value and key pointers.</p>
+
+<p>Going back to our <code>User</code> example, what if we changed the type of <code>lookup</code> from <code>std.StringHashMap(User)</code> to <code>std.StringHashMap(*User)</code>? The biggest impact will be with respect to the lifetime of our values. With our original <code>std.StringHashMap(User)</code>, we could say that the lookup <em>owns</em> the values - the users we insert are embedded with the hash map's value array. This makes lifetime management easy, when we <code>deinit</code> our <code>lookup</code> the backing keys and values arrays are freed.</p>
+
+<aside><p>Our <code>User</code> has a <code>name: []const u8</code> field. Our examples use a string literal, which statically exist throughout the lifetime of the program. If our name was dynamically allocated though, we would have to free it explicitly. We'll cover that as we explore pointer values in more detail.</p></aside>
+
+<p>Using a <code>*User</code> breaks that ownership. Our hash map stores pointers, but it doesn't own what they point to. Despite the call to <code>lookup.deinit</code>, this code leaks the user:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	const allocator = gpa.allocator();
+
+	var lookup = std.StringHashMap(*User).init(allocator);
+	defer lookup.deinit();
+
+	const goku = try allocator.create(User);
+	goku.* = .{
+		.id = 9000,
+		.name = "Goku",
+		.super = false,
+	};
+	try lookup.put("Goku", goku);
+}
+
+const User = struct {
+	id: i32,
+	name: []const u8,
+	super: bool,
+};
+{% endhighlight %}
+
+<p>Let's visualize it:</p>
+
+{% highlight text %}
+lookup
+ ===============================
+ ║  keys:       values:        ║
+ ║  --------    -------------  ║
+ ║  | Goku* |   | 1024d4000 | ----> -------------
+ ║  --------    -------------  ║    |   9000    |
+ ║  |       |   |           |  ║    -------------
+ ║  --------    -------------  ║    | 1047300e4 |---> -----------------
+ ===============================    -------------     | G | o | k | u |
+                                    |    4      |     -----------------
+                                    -------------
+                                    |   false   |
+                                    -------------
+{% endhighlight %}
+
+<aside><p>We'll talk about keys in the next section, for now we use "Goku" for simplicity.</p></aside>
+
+<p>The double-lined box is our lookup, and represents the memory it owns and is responsible for. References we put in our hash map will point to values outside that box. This has a number of implications. Most importantly though, it means the lifetime of the values is detached from the lifetime of the hash map, and calling <code>lookup.deinit</code> won't free them.</p>
+
+<p>There is a common case where we want to use pointers <strong>and</strong> associate the lifetime of the value with the hash map. Recall our crashing program, when a pointer to our hash map value became invalid. As I said, that isn't normally a problem, but in more advanced scenarios, you might want to have different parts of code referencing a value that also exists in a hash map. Let's re-examine the above visualization and think about what happens if our hash map grows and relocates the keys and values arrays:</p>
+
+{% highlight text %}
+lookup
+ ===============================
+ ║  keys:       values:        ║
+ ║  --------    -------------  ║
+ ║  |       |   |           |  ║
+ ║  --------    -------------  ║
+ ║  --------    -------------  ║
+ ║  |       |   |           |  ║
+ ║  --------    -------------  ║
+ ║  --------    -------------  ║
+ ║  | Goku* |   | 1024d4000 | ----> -------------
+ ║  --------    -------------  ║    |   9000    |
+ ║  |       |   |           |  ║    -------------
+ ║  --------    -------------  ║    | 1047300e4 |---> -----------------
+ ===============================    -------------     | G | o | k | u |
+                                    |    4      |     -----------------
+                                    -------------
+                                    |   false   |
+                                    -------------
+{% endhighlight %}
+
+<p>The two arrays have grown, been reallocated and our entry indexes have been re-calculated, but our actual <code>User</code> still resides at the same place in the heap (memory location 1047300e4). Just like <code>deinit</code> doesn't alter anything outside our double-lined boxes, other changes such as growth, won't alter them.</p>
+
+<p>Generally speaking, it'll be obvious if you should be storing values or pointer to values. This is largely because methods like <code>getPtr</code> make it possible to efficiently retrieve and modify values directly from our hash map. Either way, we can have our performance cake, so performance isn't the main consideration. What does matter is whether values need to outlive the hash map and/or whether references to values need to exist (and thus remain valid) while the hash map undergoes changes.</p>
+
+<p>In cases where where the hash map and the referenced values should be linked, we need to iterate through the values and clean them up before we call <code>lookup.deinit</code>:</p>
+
+{% highlight zig %}
+defer {
+	var it = lookup.valueIterator();
+	while (it.next()) |value_ptr| {
+		allocator.destroy(value_ptr.*);
+	}
+	lookup.deinit();
+}
+{% endhighlight %}
+
+<p>If the dereferencing (<code>value_ptr.*</code>) doesn't seem right, go back to the visualization. Our <code>valueIterator</code> is giving us a pointer to the value in the array, and the value in the array is a <code>*User</code>. Thus, <code>value_ptr</code> is a <code>**User</code>.</p>
+
+<p>Whether we're storing a <code>User</code> or a <code>*User</code>, any allocated fields within the value are always our responsibility. In a real application, your user's <code>name</code> wouldn't be string literals, they would be  dynamically allocated. In that case, our <code>while</code> loop above would have to change to:</p>
+
+{% highlight zig %}
+while (it.next()) |value_ptr| {
+	const user = value_ptr.*;
+	allocator.free(user.name);
+	allocator.destroy(user);
+}
+{% endhighlight %}
+
+<p>Even if our value is a <code>User</code>, its fields are our responsibility (it's a bit silly to think <code>lookup.deinit</code> would know how/what needs to be freed anyways):</p>
+
+{% highlight zig %}
+while (it.next()) |value_ptr|
+	allocator.free(value_ptr.name);
+}
+{% endhighlight %}
+
+<p>In this last case, since we're storing <code>User</code>, our <code>value_ptr</code> is a <code>*User</code> (a pointer to a <code>User</code>, not a pointer to a pointer to a <code>User</code> as before).</p>
+
+<h3>Keys</h3>
+<p>We could start and end this section by saying: everything we said about values applies equally to keys. That is 100% true, but it's somehow less intuitive. Most developers quickly understand that a heap-allocated <code>User</code> stored within a hash map has its own lifetime and need to be explicitly managed/freed. But for some reason, it isn't quite so obvious with keys.</p>
+
+<p>Like values, if our keys are primitive types we don't have to do anything special. A key such as an integer is stored directly within our hash map's key array and thus has its lifetime and memory tied to the hash map. This is a very common case. But another common case is using string keys with the <code>std.StringHashMap</code>. This often trips up developers new to Zig, but you need to guarantee that string keys are valid for as long as they're used by the hash map. And, if they're dynamically allocated, you need to make sure they're freed when no longer used. This means doing for keys exactly what we did for values.</p>
+
+<p>Let's visualize our hash map again, but this time properly represent a string key:</p>
+
+{% highlight text %}
+lookup
+ ===================================
+ ║  keys:       values:            ║
+ ║  -------------    ------------  ║
+ ║  | 1047300e4 |   | 1024d4000 | ----> -------------
+ ║  -------------   -------------  ║    |   9000    |
+ ║  |           |   |           |  ║    -------------
+ ║  -------------   -------------  ║    | 1047300e4 |---> -----------------
+ ===================================    -------------     | G | o | k | u |
+                                        |    4      |     -----------------
+                                        -------------
+                                        |   false   |
+                                        -------------
+{% endhighlight %}
+
+<p>In this example, our key is actually the <code>user.name</code>. Having the key be part of the value is pretty common. Here's what that might look like:</p>
+
+{% highlight zig %}
+const user = try allocator.create(User);
+user.* = . {
+	.id = 9000,
+	.super = false,
+	// simulate a name that comes from a dynamic source, like a DB
+	.name = try allocator.dupe(u8, "Goku"),
+};
+try lookup.put(user.name, user);
+{% endhighlight %}
+
+<p>In this case, our previous cleanup code is sufficient since we were already freeing <code>user.name</code> which is our key:</p>
+
+{% highlight zig %}
+defer {
+	var it = lookup.iterator();
+	while (it.next()) |value_ptr| {
+		const user = value_ptr.*;
+		allocator.free(user.name);
+		allocator.destroy(user);
+	}
+	lookup.deinit();
+}
+{% endhighlight %}
+
+<p>But for cases where the key isn't part of the value, we need to iterate and free the keys. In many cases, you'll want to iterate both the keys and values and free both. We can simulate this by freeing the name as referenced by the key instead of the user:</p>
+
+
+{% highlight zig %}
+defer {
+	var it = lookup.iterator();
+	while (it.next()) |kv| {
+		// This..
+		allocator.free(kv.key_ptr.*);
+
+		// Is the same as the following, but only because user.name is our key
+		// allocator.free(user.name);
+
+		allocator.destroy(kv.value_ptr.*);
+	}
+	lookup.deinit();
+}
+{% endhighlight %}
+
+<p>Instead of <code>iteratorValue()</code> we're using <code>iterator()</code> to get access to both a <code>key_ptr</code> and <code>value_ptr</code>.</p>
+
+<p>The last thing to consider is how to remove values from our lookup. This code leaks both the name/key and the heap-allocated user <code>User</code> despite using our improved cleanup logic:</p>
+
+{% highlight zig %}
+var lookup = std.StringHashMap(*User).init(allocator);
+
+defer {
+	var it = lookup.iterator();
+	while (it.next()) |kv| {
+		allocator.free(kv.key_ptr.*);
+		allocator.destroy(kv.value_ptr.*);
+	}
+	lookup.deinit();
+}
+
+const user = try allocator.create(User);
+user.* = . {
+	.id = 9000,
+	.super = false,
+	// simulate a name that comes from a dynamic source, like a DB
+	.name = try allocator.dupe(u8, "Goku"),
+};
+try lookup.put(user.name, user);
+
+// We added this!
+_ = lookup.remove(user.name);
+{% endhighlight %}
+
+<p>The last line removes the entry from our hash map, so our cleanup routine no longer iterates over it and don't free the <code>name</code> or <code>user</code>. We need to use <code>fetchRemove</code> instead of <code>remove</code> to get the key and value that was removed:</p>
+
+{% highlight zig %}
+if (lookup.fetchRemove(user.name)) |kv| {
+	allocator.free(kv.key);
+	allocator.destroy(kv.value);
+}
+{% endhighlight %}
+
+<p><code>fetchRemove</code> doesn't return key and value pointers, it returns the actual key and value. That doesn't change how we use it, but it should be obvious why the key and value are returned as opposed to a pointer to the key and value. With the items removed from the hash map, there is no valid pointer to the keys and values within the hash map - they've been removed.</p>
+
+<p>All of this assumes that your values and keys need to be freed/invalidated when removed from the hash map. There can be cases where the lifetimes of your values (and more rarely your keys) are completely unrelated to their presence within the hash map. In those cases, you need to free the memory when it makes sense for your application to do so. There's no general pattern/guidance that applies.</p>
+
+<p>For most cases, when dealing with non primitive keys or values, the takeway is that when you call <code>deinit</code> on your hash map, any allocations you made for your keys and/or values won't be magically freed; you'll need to do that yourself.</p>
+
+<h3>getOrPut</h3>
+<p>While there are a number of implications to what we've talked about so far, for me, one of the best benefits that comes from exposing key and value pointers directly is the <code>getOrPut</code> method.</p>
+
+<p>If I asked you to store a named counters in a map in Go, or most languages, you'd end up with something like:</p>
+
+{% highlight go %}
+count, exists := counters[name]
+if exists == false {
+	counters[name] = 1
+} else {
+	counters[name] = count + 1;
+}
+{% endhighlight %}
+
+<p>This code requires two lookups. While we've been trained not to look beyond the fact that hash map access is O(1), the reality is that fewer operations are faster than more, calculating the hash code isn't the cheapest operation (and its performance varies depending on the key type and length), and collisions add overhead to the entire process. The <code>getOrPut</code> method solves this problem by returning a value pointer and a boolean indicating whether or not the value was found.</p>
+
+<p>In other words, with <code>getOrPut</code> we either get a pointer to the found value, or we get a pointer to where the item should go. We also get a boolean indicating which of the two scenarios e have. sThis allows the above kind of upsert to be written with a single lookup:</p>
+
+{% highlight zig %}
+const gop = try counters.getOrPut(name);
+if (gop.found_existing) {
+	gop.value_ptr.* += 1;
+} else {
+	gop.value_ptr.* = 1;
+}
+{% endhighlight %}
+
+<p>Of course, like any other value or key pointer, <code>value_ptr</code> should only be considered valid so long as no changes to the hash map is made. This, by the way, also applied to the iterated keys and values we get from <code>iterator()</code>, <code>valueIterator</code> and <code>keyIterator()</code>, for the same reason.</p>
+
+<h3>Conclusion</h3>
+<p>Hopefully you're now more comfortable with using <code>std.HashMap</code>, <code>std.AutoHashMap</code> and <code>std.StringHashMap</code> and, if appropriate, their unmanaged variants. While you might never have to provide your own context (<code>hash</code> and <code>eql</code> function), it's good to know that it's an option. For day to day programming, I find it immensely useful to visualize data, particularly when pointers are used and levels of indirection are added. Whenever I'm dealing with a <code>value_ptr</code> or <code>key_ptr</code>, I think of those two slices and the difference between the value or key and the address of the value or key in those slices.</p>
+
+<div class=pager>
+	<a class=prev href=/Zigs-HashMap-Part-1/>part 1</a>
+	<span></span>
+</div>

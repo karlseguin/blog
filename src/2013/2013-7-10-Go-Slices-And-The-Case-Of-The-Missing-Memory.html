@@ -6,7 +6,7 @@ description: "Is that a byte array or a slice holding a reference to a much larg
 tags: [golang]
 ---
 
-<p>Slices in Go are an efficient way to represent a portion of an array. What makes slices so useful, besides the fact that <a href="http://golang.org/pkg/reflect/#SliceHeader">they require very little overhead</a>, is that they can always be transparently substituted with an actual array:</p>
+<p>Slices in Go are an efficient way to represent a portion of an array. What makes slices so useful, besides the fact that <a href="https://cs.opensource.google/go/go/+/refs/tags/go1.21.6:src/reflect/value.go;l=2788">they require very little overhead</a>, is that they can always be transparently substituted with an actual array:</p>
 
 {% highlight go %}
 a := []string{"b", "a", "m", "i", "h", "n", "f"}
