@@ -1,0 +1,72 @@
+---
+layout: post
+date: 2024-02-05
+title: "Compile-Time Configuration For Zig Libraries"
+description: "Two ways to enable compile-time optiosn for Zig library develoeprs"
+tags: [zig]
+---
+<p>If you're writing a Zig library, you might find yourself wishing to expose a compile-time configuration option to application developers. One of the reasons you might want to do this for performance reasons, preferring to do something at compile-time versus runtime. Consider this example using my <a href="https://github.com/karlseguin/pg.zig">PostgreSQL library</a>:</p>
+
+{% highlight zig %}
+var result = try pool.query("select id, name from users where power > $1", .{9000});
+defer result.deinit();
+
+while (try result.next()) |row| {
+  const id = row.get(i32, 0);
+  const name = row.get([]u8, 1);
+  // ...
+}
+{% endhighlight %}
+
+<p>When I wrote the library, I was unsure what level of runtime check I should add to <code>row.get</code>. My instinct was to add none. As the developer, you know that column 0 is an <code>integer not null</code> and column 1 is a <code>text not null</code>. Is it <em>really</em> worth adding an additional type and nullability check? But I wasn't sure if that was the right assumption to make.</p>
+
+<p>One option would be to have two different <code>get</code> methods, one safe and one not. But that's a more confusing API and isn't always straightforward to implement without duplications (not all checks can be done at the top of the function as a guard clause). Another option would be to use <code>std.debug.assert</code>, whose behavior is controlled by Zig's optimization flag (e.g. <code>ReleaseFast</code>). But this is a blunt tool affecting all code. I myself want to run some code in <code>RelaseSafe</code>, but not have these specific PostgreSQL checks.</p>
+
+<p>Zig offers two solutions. The first is to use global declarations in the root source file. The "root source file" is the program's main entry point (where the <code>pub main() void</code> function is located). By convention this is the application's "main.zig", but a developer can use any file name. The point is that it's controlled by the application developer, but can be accessed by a library developer using <code>@import("root")</code>. In our library code, we could do:</p>
+
+{% highlight zig %}
+const root = @import("root");
+
+const assert_ = if (@hasDecl(root, "pg_assert")) root.pg_assert else true;
+pub fn assert(ok: bool) void {
+  if (comptime assert_) {
+    std.debug.assert(ok);
+  } else {
+    unreachable;
+  }
+}
+{% endhighlight %}
+
+<p>Having our own <code>assert</code> function based on our own comptime configuration allows the application to run the whole of the application <code>ReleaseSafe</code> while excluding our library's assertion. To do so, the application developer merely needs to add the following to their <code>main.zig</code>:</p>
+
+{% highlight zig %}
+pub const pg_assert = false;
+{% endhighlight %}
+
+<p>Zig's standard library uses this approach in a few places. For example, you might have done something like this to change the standard library's log level:</p>
+
+{% highlight zig %}
+pub const std_options = struct {
+  pub const log_level = .debug;
+};
+{% endhighlight %}
+
+<p>There's a second option available through Zig's build system. As a library developer, the code is almost the same. Rather than importing "root", we import "config":</p>
+
+{% highlight zig %}
+const config = @import("config");
+const assert_ = if (@hasDecl(config, "assert")) config.pg_assert else true;
+// ...
+{% endhighlight %}
+
+<p>Application developers must define the options in their <code>build.zig</code>:</p>
+
+{% highlight zig %}
+const pg = b.dependency("pg", dep_opts).module("pg");
+const options = b.addOptions();
+options.addOption(bool, "assert", true);
+pg.addOptions("config", options);
+// add the pg module to their program as they normally would
+{% endhighlight %}
+
+<p>I believe the build-approach is newer and might be intended as the way forward. It is better scoped, i.e. it doesn't rely on library using distinct variable names like "pg_assert", and setting compile-time flags in the build script feels more cohesive than a bunch of globals in the root source file. Whichever approach you take, remember that compile-time configuration is less flexible for application developers since they now have to provide configuration at compile-time that, maybe in some cases, they rather do at runtime. So try to use this sparingly, if at all.</p>
