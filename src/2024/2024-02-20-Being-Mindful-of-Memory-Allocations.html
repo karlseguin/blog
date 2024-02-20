@@ -1,0 +1,41 @@
+---
+layout: post
+date: 2024-02-20
+title: "Being Mindful of Memory Allocations"
+description: "Do garbage collectors make developers lazy and programs slow?"
+tags: [performance, design]
+---
+<p>One consequence of programming without a garbage collector is that you're generally more aware of every memory allocation your program makes. Ideally, this increased awareness results in more prudent memory use. Developers often lament that while hardware has gotten faster, computers feel ever more sluggish. I don't know how true this is, and if it is true, I don't know how big a part careless memory usage by programmers is to blame.</p>
+
+<p>What I do know is that my time in Zig has fundamentally shaped how I look at code and hopefully has impacted my non-Zig coding. As an example, I recently wrote a <a href="https://github.com/karlseguin/pg.zig">PostgreSQL client in Zig</a>. In PostgreSQL, the flow for sending a parameterized query usually involve sending the SQL to PostgreSQL along with a request to "describe" the statement. Part of the response from PostgreSQL is a message that contains the 32 bit integer object id (oid) of each parameter. Libraries can use this information to figure out how to serialize the values given to them by the application.</p>
+
+<p>If we look at <a href="https://github.com/jackc/pgconn/blob/e82f7d1fadf5970c308d0502d196783e72467178/pgconn.go#L849">Go's pgx handling of this</a>, we find:</p>
+
+{% highlight go %}
+case *pgproto3.ParameterDescription:
+  psd.ParamOIDs = make([]uint32, len(msg.ParameterOIDs))
+  copy(psd.ParamOIDs, msg.ParameterOIDs)
+{% endhighlight %}
+
+<p>Your average query might have 2-4 parameters, so we're talking about a very small amount of memory. But this is just one of many allocations made when querying, all of which has GC overhead.</p>
+
+<p>In pg.zig, every connection has a <code>param_oids: []i32</code> field, the size of which is configurable. The code to handle the parameter description looks like:</p>
+
+{% highlight zig %}
+var param_oids = conn.param_oids;
+if (param_count > param_oids.len) {
+    param_oids = try allocator.alloc(i32, param_count);
+}
+var pos: usize = 0;
+for (0..param_count) |i| {
+  const end = pos + 4;
+  param_oids[i] = std.mem.readInt(i32, data[0..end][0..4], .big);
+  pos = end;
+}
+{% endhighlight %}
+
+<p>In short, if the number of parameters fits in our pre-allocated <code>conn.param_oids</code>, we'll use that, else we'll allocate a new larger <code>[]i32</code> to fit the number of parameters. If we do allocate a larger <code>param_oids</code> we'll have to clean it up once our query is done. In this specific case, it's easily handled by the fact that <code>allocator</code> comes from an <code>ArenaAllocator</code> that exists until the query result is freed (when the <code>ArenaAllocator</code> is freed, any allocation made with it are also freed). We could take this a step further and continue re-using the larger <code>param_oids</code>, but that would probably be a surprising behavior.</p>
+
+<p>I've made a few contributions to pgx in the past and consider it a solid library. I used it as a reference when implementing pg.zig and I'm sure it has a number of optimizations that I haven't done or thought of. I don't know the current codebase well enough to say if it's possible to re-use a pre-allocated <code>paramOids</code>. But it's easy to skip these optimizations, especially when languages and runtimes (e.g. garbage collector) hide so much.</p>
+
+<p>For better or worse, I think the age of mindful allocation is behind us. Re-using memory is hard. While some might point to extra edge cases or security consideration, I think the overwhelming driver is developer lazyness - which many have called a good thing. But one of the things I like about Zig and its lack of an established ecosystem is that I can worry about unnecessarily allocating 64 bytes of data.</p>
