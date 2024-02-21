@@ -16,7 +16,7 @@ permalink: "/atom.xml"
 	{%- for post in posts %}
 	<entry>
 		<title>{{ post.title }}</title>
-		<link href="{{post.url}}"/>
+		<link href="https://www.openmymind.net{{post.url}}"/>
 		<updated>{{ post.date | dateToRfc3339 }}</updated>
 		<id>{{ post.url }}</id>
 		<content type="html">
