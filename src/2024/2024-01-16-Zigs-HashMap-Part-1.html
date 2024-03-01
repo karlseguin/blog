@@ -12,7 +12,7 @@ tags: [zig]
 
 <p>This is all standard stuff, but Zig's implementation has a few specific details worth exploring. This is particularly true given the number of hash map types in the standard library as well as the fact that the documentation seems incomplete and confusing. Specifically, there are six hash map variants: <code>std.HashMap</code>, <code>std.HashMapUnmanaged</code>, <code>std.AutoHashMap</code>, <code>std.AutoHashMapUnmanaged</code>, <code>std.StringHashMap</code>, <code>std.StringHashMapUnmanaged</code>. One of those, <code>std.HashMapUnmanaged</code>, contains the bulk of the implementation. The other five are thin wrappers: they are composed of an <code>std.HashMapUnmanaged</code>. The documentation for those five variants is challenging because of this composition, which is not, in my opinion, handled well by the document generator.</p>
 
-<aside><p>We'll cover the completely different <code>ArrayHashMap</code> types in part 2</p></aside>
+<aside><p>There's also a completely different <code>ArrayHashMap</code> which has different properties (e.g. preserving insertion order), which we won't be covering.</p></aside>
 
 <p>If we look at the <code>put</code> method of <code>std.HashMap</code>, we'll see a pattern that's often repeated:</p>
 
@@ -21,6 +21,8 @@ pub fn put(self: *Self, key: K, value: V) Allocator.Error!void {
   return self.unmanaged.putContext(self.allocator, key, value, self.ctx);
 }
 {% endhighlight %}
+
+<p>As I said, most of the heavy lifting is done by <code>std.HashMapUnmanaged</code>, which the other variants wrap in a field named "unmanaged".</p>
 
 <h3>Unmanaged</h3>
 <p>"Unmanaged" types are sprinkled throughout the standard library. It's a naming convention which indicates that the type in question doesn't maintain an allocator. Any method that requires allocations takes an explicit allocator as a parameter. To see this in practice, consider this linked list:</p>
@@ -95,7 +97,7 @@ pub fn LinkedListUnmanaged(comptime T: type) type {
 }
 {% endhighlight %}
 
-<p>We no longer have an <code>allocator</code> field. The <code>append</code> and <code>deinit</code> functions both take an extra parameter: allocator. Because we no longer need to store the allocator, we're able to initialize a <code>LinkedListUnmanaged(T)</code> exclusively with default values (i.e. <code>head: ?*Node = null</code>) and are able to remove the <code>init</code> function altogether. This isn't a requirement of unamanged types, but it is common. To create a <code>LinkedListUnmanaged(i32)</code>, you'd do:</p>
+<p>We no longer have an <code>allocator</code> field. The <code>append</code> and <code>deinit</code> functions both take an extra parameter: <code>allocator</code>. Because we no longer need to store the allocator, we're able to initialize a <code>LinkedListUnmanaged(T)</code> exclusively with default values (i.e. <code>head: ?*Node = null</code>) and are able to remove the <code>init</code> function altogether. This isn't a requirement of unamanged types, but it is common. To create a <code>LinkedListUnmanaged(i32)</code>, you'd do:</p>
 
 {% highlight zig %}
 var ll = LinkedListUnmanaged(i32){};
@@ -135,7 +137,7 @@ pub fn LinkedList(comptime T: type) type {
 
 <p>This simple composition is, as we save above, the same as how the various hash map types wrap an <code>std.HashMapUnmanaged</code>.</p>
 
-<p>There are a few benefits to unmanaged types. The most important is that they're more explicit. Rather than knowing that a type, like <code>ListList(T)</code>, will probably need to allocate memory at some point, the explicit API of the unmanaged variant identifies the specific methods that allocate/deallocate. This can help reduce surprises and gives greater control to the caller. A secondary benefit of unamanged types is that they save a few bytes of memory by not having a reference to the allocator. Some applciations might need to store thousands or even millions of these structures, in which case it can add up.</p>
+<p>There are a few benefits to unmanaged types. The most important is that they're more explicit. Rather than knowing that a type, like <code>LinkList(T)</code>, will probably need to allocate memory at some point, the explicit API of the unmanaged variant identifies the specific methods that allocate/deallocate. This can help reduce surprises and gives greater control to the caller. A secondary benefit of unamanged types is that they save a few bytes of memory by not having a reference to the allocator. Some applications might need to store thousands or even millions of these structures, in which case it can add up.</p>
 
 <p>In the name of simplicity, the rest of this post won't mentioned unamanged. Anything we see about the  <code>StringHashMap</code> or <code>AutoHashMap</code> or <code>HashMap</code> applies equally to their *Unmanaged variant.</p>
 

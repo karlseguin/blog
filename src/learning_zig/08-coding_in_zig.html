@@ -581,32 +581,59 @@ pub fn build(b: *std.Build) !void {
 // function, before the call to addExecutable.
 
 const calc_module = b.addModule("calc", .{
-	.source_file = .{ .path = "PATH_TO_CALC_PROJECT/calc.zig" },
+	.root_source_file = .{ .path = "PATH_TO_CALC_PROJECT/calc.zig" },
 });
 {% endhighlight %}
 
-			<p>You'll need to adjust the path to <code>calc.zig</code>. We now need to add this module to both our existing <code>exe</code> and <code>tests</code> variables:</p>
+			<p>You'll need to adjust the path to <code>calc.zig</code>. We now need to add this module to both our existing <code>exe</code> and <code>tests</code> variables. Since our <code>build.zig</code> is getting busier, we'll try to organize things a little:</p>
 
 {% highlight zig %}
-const exe = b.addExecutable(.{
-	.name = "learning",
-	.target = target,
-	.optimize = optimize,
-	.root_source_file = .{ .path = "learning.zig" },
-});
-// add this
-exe.addModule("calc", calc_module);
-b.installArtifact(exe);
+const std = @import("std");
 
-....
+pub fn build(b: *std.Build) !void {
+	const target = b.standardTargetOptions(.{});
+	const optimize = b.standardOptimizeOption(.{});
 
-const tests = b.addTest(.{
-	.target = target,
-	.optimize = optimize,
-	.root_source_file = .{ .path = "learning.zig" },
-});
-// add this
-tests.addModule("calc", calc_module);
+	const calc_module = b.addModule("calc", .{
+		.root_source_file = .{ .path = "PATH_TO_CALC_PROJECT/calc.zig" },
+	});
+
+	{
+		// setup our "run" cmmand
+
+		const exe = b.addExecutable(.{
+			.name = "learning",
+			.target = target,
+			.optimize = optimize,
+			.root_source_file = .{ .path = "learning.zig" },
+		});
+		// add this
+		exe.root_module.addImport("calc", calc_module);
+		b.installArtifact(exe);
+
+		const run_cmd = b.addRunArtifact(exe);
+		run_cmd.step.dependOn(b.getInstallStep());
+
+		const run_step = b.step("run", "Start learning!");
+		run_step.dependOn(&run_cmd.step);
+	}
+
+	{
+		// setup our "test" command
+		const tests = b.addTest(.{
+			.target = target,
+			.optimize = optimize,
+			.root_source_file = .{ .path = "learning.zig" },
+		});
+		// add this
+		tests.root_module.addImport("calc", calc_module);
+
+		const test_cmd = b.addRunArtifact(tests);
+		test_cmd.step.dependOn(b.getInstallStep());
+		const test_step = b.step("test", "Run the tests");
+		test_step.dependOn(&test_cmd.step);
+	}
+}
 {% endhighlight %}
 
 			<p>From within your project, you're now able to <code>@import("calc")</code>:</p>
@@ -621,7 +648,7 @@ calc.add(1, 2);
 
 {% highlight zig %}
 _ = b.addModule("calc", .{
-	.source_file = .{ .path = "calc.zig" },
+	.root_source_file = .{ .path = "calc.zig" },
 });
 {% endhighlight %}
 
@@ -637,14 +664,14 @@ _ = b.addModule("calc", .{
   .version = "0.0.0",
   .dependencies = .{
     .calc = .{
-      .url = "https://github.com/karlseguin/calc.zig/archive/e43c576da88474f6fc6d971876ea27effe5f7572.tar.gz",
+      .url = "https://github.com/karlseguin/calc.zig/archive/d1881b689817264a5644b4d6928c73df8cf2b193.tar.gz",
       .hash = "12ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
     },
   },
 }
 {% endhighlight %}
 
-		<p>There are two questionable values in this file, the first is <code>e43c576da88474f6fc6d971876ea27effe5f7572</code> within the <code>url</code>. This is simply the git commit hash. The second is the value of <code>hash</code>. As far as I know, there's currently no great way to tell what this value should be, so we use a dummy value for the time being.</p>
+		<p>There are two questionable values in this file, the first is <code>d1881b689817264a5644b4d6928c73df8cf2b193</code> within the <code>url</code>. This is simply the git commit hash. The second is the value of <code>hash</code>. As far as I know, there's currently no great way to tell what this value should be, so we use a dummy value for the time being.</p>
 
 		<p>To use this dependency, we need to make one change to our <code>build.zig</code>:</p>
 
@@ -652,7 +679,7 @@ _ = b.addModule("calc", .{
 
 // replace this:
 const calc_module = b.addModule("calc", .{
-	.source_file = .{ .path = "calc/calc.zig" },
+	.root_source_file = .{ .path = "calc/calc.zig" },
 });
 
 // with this:
@@ -665,12 +692,11 @@ const calc_module = calc_dep.module("calc");
 		<p>If you try to run <code>zig build test</code>, you should see an error:</p>
 
 {% highlight text %}
-error: hash mismatch:
-expected:
-12ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff,
+hash mismatch: manifest declares
+122053da05e0c9348d91218ef015c8307749ef39f8e90c208a186e5f444e818672da
 
-found:
-122053da05e0c9348d91218ef015c8307749ef39f8e90c208a186e5f444e818672d4
+but the fetched package has
+122036b1948caa15c2c9054286b3057877f7b152a5102c9262511bf89554dc836ee5
 {% endhighlight %}
 
 		<p>Copy and paste the correct hash back into the <code>build.zig.zon</code> and try running <code>zig build test</code> again. Everything should now be working.</p>
