@@ -103,8 +103,8 @@ fn List(comptime T: type) type {
 				.items = try allocator.alloc(T, 4),
 			};
 		}
-	}
-};
+	};
+}
 {% endhighlight %}
 
 		<p>The above <code>struct</code> is almost identical to our <code>IntList</code> except <code>i64</code> has been replaced with <code>T</code>. That <code>T</code> might seem special, but it's just a variable name. We could have called it <code>item_type</code>. However, following Zig's naming convention, variables of type <code>type</code> are PascalCase.</p>
