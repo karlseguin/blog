@@ -1,0 +1,85 @@
+---
+layout: post
+date: 2024-03-15
+title: "Zig: Use The Heap to Know A Value's Address"
+description: "If you need to know something's address, place it on the heap, via allocator.create"
+tags: [zig]
+---
+<p>You'll often find yourself wanting to know the address of a newly created value which gets returned from a function. This can happen for a number of reasons, but the most common is creating bidirectional references. For example, if we create a pool of objects, we often want those objects to reference the pool. You might end up with something like:</p>
+
+{% highlight zig %}
+fn init(allocator: Allocator, count: usize) !Pool {
+  var conns = try allocator.alloc(count, Conn);
+  errdefer allocator.free(conns);
+
+  var pool = Pool{
+    .conns = conn;
+  }
+
+  for (0..count) |i| {
+    // This won't work
+    conns[i] = Conn.open(&pool);
+  }
+
+  return pool;
+}
+
+fn deinit(self: *const Pool, allocator: Allocator) void {
+  allocator.free(self.conns);
+}
+{% endhighlight %}
+
+<p>The above skeleton is almost certainly not what you want and would segfault if used as part of a larger program. When we call <code>Call.open(&pool)</code>, we're passing the address of the <code>pool</code> value on the stack. When we return <code>pool</code>, we're returning a copy. Thus, whoever called <code>init</code> gets a copy which will have its own address.</p>
+
+<p>Taking the address of a stack variable and using it beyond the lifetime of the stack is a common error. This error manifests itself in different scenarios but when the problem you're trying to solve is <em>I need to know the address of X (<code>pool</code> in the above case)</em>, you have two options.</p>
+
+<p>The first is to make this the callers problem. Our <code>init</code> would be changed to take a <code>*Pool</code>:</p>
+
+{% highlight zig %}
+fn init(allocator: Allocator, count: usize, pool: *Pool) !void {
+  var conns = try allocator.alloc(count, Conn);
+  errdefer allocator.free(conns);
+
+  for (0..count) |i| {
+    // This won't work
+    conns[i] = Conn.open(pool);
+  }
+
+  pool.conns = conn;
+}
+{% endhighlight %}
+
+<p>You see this pattern a lot in C libraries and you'll see it now and again in Zig code too.</p>
+
+<p>Your other, probably more common, option is to put <code>pool</code> on the heap:</p>
+
+{% highlight zig %}
+fn init(allocator: Allocator, count: usize) !*Pool {
+  const pool = try allocator.create(Pool);
+  errdefer allocator.destroy(pool);
+
+  var conns = try allocator.alloc(count, Conn);
+  errdefer allocator.free(conns);
+
+  pool.* = .{
+    .conns = conn,
+  };
+
+  for (0..count) |i| {
+    // This won't work
+    conns[i] = Conn.open(pool);
+  }
+
+  return pool;
+}
+
+fn deinit(self: *Pool, allocator: Allocator) void {
+  allocator.free(self.conns);
+  // cannot use self after this!
+  allocator.destroy(self);
+}
+{% endhighlight %}
+
+<p>Notice that our function returns a <code>*Pool</code> instead of <code>Pool</code>. Also notice that to create our array of <code>conns</code>, we're using <code>allocator.alloc</code>, but to create <code>pool</code>, we're using <code>allocator.create</code>. And, related, to free <code>conns</code> we're using <code>allocator.free</code>, but to free <code>pool</code>, we're using <code>allocator.destroy</code>. This tripped me up when I started to learn Zig, but you get used to it. <code>alloc/free</code> is to create and free an array of items, whereas <code>create/destroy</code> is to create and free a single item.</p>
+
+<p>Generally speaking, it's obvious whether a value can stay on the stack or has to be pushed onto the heap. The point of this post is to say: it's ok to create a value on the heap. You will find yourself in situations where you need to know the address of a value but don't know its final resting place (because you're returning the value to the caller and that, as far as your function is concerned, is its "owner"). When that happens, a reasonable (and in many cases only) option is to make the "final resting place", the heap. Just make sure to <code>destroy</code> the created item.</p>
