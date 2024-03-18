@@ -27,9 +27,9 @@ while (try result.next()) |row| {
 {% highlight zig %}
 const root = @import("root");
 
-const assert_ = if (@hasDecl(root, "pg_assert")) root.pg_assert else true;
+const assert_enabled = if (@hasDecl(root, "pg_assert")) root.pg_assert else true;
 pub fn assert(ok: bool) void {
-  if (comptime assert_) {
+  if (comptime assert_enabled) {
     std.debug.assert(ok);
   } else {
     unreachable;
@@ -55,7 +55,7 @@ pub const std_options = struct {
 
 {% highlight zig %}
 const config = @import("config");
-const assert_ = if (@hasDecl(config, "assert")) config.pg_assert else true;
+const assert_enabled = if (@hasDecl(config, "assert")) config.pg_assert else true;
 // ...
 {% endhighlight %}
 
