@@ -460,7 +460,7 @@ pub fn build(b: *std.Build) !void {
 		.name = "learning",
 		.target = target,
 		.optimize = optimize,
-		.root_source_file = .{ .path = "learning.zig" },
+		.root_source_file = b.path("learning.zig"),
 	});
 	b.installArtifact(exe);
 }
@@ -492,7 +492,7 @@ run_step.dependOn(&run_cmd.step);
 const tests = b.addTest(.{
 	.target = target,
 	.optimize = optimize,
-	.root_source_file = .{ .path = "learning.zig" },
+	.root_source_file = b.path("learning.zig"),
 });
 
 const test_cmd = b.addRunArtifact(tests);
@@ -562,7 +562,7 @@ pub fn build(b: *std.Build) !void {
 	const tests = b.addTest(.{
 		.target = target,
 		.optimize = optimize,
-		.root_source_file = .{ .path = "calc.zig" },
+		.root_source_file = b.path("calc.zig"),
 	});
 
 	const test_cmd = b.addRunArtifact(tests);
@@ -581,7 +581,7 @@ pub fn build(b: *std.Build) !void {
 // function, before the call to addExecutable.
 
 const calc_module = b.addModule("calc", .{
-	.root_source_file = .{ .path = "PATH_TO_CALC_PROJECT/calc.zig" },
+	.root_source_file = b.path("PATH_TO_CALC_PROJECT/calc.zig"),
 });
 {% endhighlight %}
 
@@ -595,7 +595,7 @@ pub fn build(b: *std.Build) !void {
 	const optimize = b.standardOptimizeOption(.{});
 
 	const calc_module = b.addModule("calc", .{
-		.root_source_file = .{ .path = "PATH_TO_CALC_PROJECT/calc.zig" },
+		.root_source_file = b.path("PATH_TO_CALC_PROJECT/calc.zig"),
 	});
 
 	{
@@ -605,7 +605,7 @@ pub fn build(b: *std.Build) !void {
 			.name = "learning",
 			.target = target,
 			.optimize = optimize,
-			.root_source_file = .{ .path = "learning.zig" },
+			.root_source_file = b.path("learning.zig"),
 		});
 		// add this
 		exe.root_module.addImport("calc", calc_module);
@@ -623,7 +623,7 @@ pub fn build(b: *std.Build) !void {
 		const tests = b.addTest(.{
 			.target = target,
 			.optimize = optimize,
-			.root_source_file = .{ .path = "learning.zig" },
+			.root_source_file = b.path("learning.zig"),
 		});
 		// add this
 		tests.root_module.addImport("calc", calc_module);
@@ -648,7 +648,7 @@ calc.add(1, 2);
 
 {% highlight zig %}
 _ = b.addModule("calc", .{
-	.root_source_file = .{ .path = "calc.zig" },
+	.root_source_file =  b.path("calc.zig"),
 });
 {% endhighlight %}
 
@@ -679,7 +679,7 @@ _ = b.addModule("calc", .{
 
 // replace this:
 const calc_module = b.addModule("calc", .{
-	.root_source_file = .{ .path = "calc/calc.zig" },
+	.root_source_file = b.path("calc/calc.zig"),
 });
 
 // with this:

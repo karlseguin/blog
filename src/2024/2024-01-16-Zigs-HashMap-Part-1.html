@@ -1,4 +1,4 @@
----
+a---
 layout: post
 date: 2024-01-16
 title: "Zig's HashMap - Part 1"
@@ -135,7 +135,7 @@ pub fn LinkedList(comptime T: type) type {
 }
 {% endhighlight %}
 
-<p>This simple composition is, as we save above, the same as how the various hash map types wrap an <code>std.HashMapUnmanaged</code>.</p>
+<p>This simple composition is, as we saw above, the same as how the various hash map types wrap an <code>std.HashMapUnmanaged</code>.</p>
 
 <p>There are a few benefits to unmanaged types. The most important is that they're more explicit. Rather than knowing that a type, like <code>LinkList(T)</code>, will probably need to allocate memory at some point, the explicit API of the unmanaged variant identifies the specific methods that allocate/deallocate. This can help reduce surprises and gives greater control to the caller. A secondary benefit of unamanged types is that they save a few bytes of memory by not having a reference to the allocator. Some applications might need to store thousands or even millions of these structures, in which case it can add up.</p>
 
