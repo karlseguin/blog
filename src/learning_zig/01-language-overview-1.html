@@ -83,7 +83,7 @@ pub const User = struct {
 {% highlight zig %}
 const user = @import("models/user.zig");
 const User = user.User;
-const MAX_POWER = user.MAX_POWER
+const MAX_POWER = user.MAX_POWER;
 {% endhighlight %}
 
 		<p>At this point, you might have more questions than answers. In the above snippet, what's <code>user</code>? We haven't seen it yet, but what if we use <code>var</code> instead of <code>const</code>? Or maybe you're wondering how to use third party libraries. These are all good questions, but to answer them, we first need to learn more about Zig. For now we'll have to be satisfied with what we've learned: how to import Zig's standard library, how to import other files and how to export definitions.</p>
