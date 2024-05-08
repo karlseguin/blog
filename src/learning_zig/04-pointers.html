@@ -187,7 +187,7 @@ pub const User = struct {
 
 		<p>We had to make two changes. The first is calling <code>levelUp</code> with the address of user, i.e. <code>&user</code>, instead of <code>user</code>. This means that our function no longer receives a <code>User</code>. Instead, it receives a <code>*User</code>, which was our second change.</p>
 
-		<p>We no longer need that ugly hack of forcing user to be mutated via <code>user.power += 0;</code>. Initially, we failed to get the code to compile because <code>user</code> was a <code>var</code> but, the compiler told us, was never mutated. We thought maybe the compiler was wrong and "tricked" it by forcing a mutation. But, as we now know, the <code>user</code> being mutated in <code>levelUp</code> was a different; the compiler was right.</p>
+		<p>We no longer need that ugly hack of forcing user to be mutated via <code>user.power += 0;</code>. Initially, we failed to get the code to compile because <code>user</code> was a <code>var</code>, but the compiler told us, was never mutated. We thought maybe the compiler was wrong and "tricked" it by forcing a mutation. But, as we now know, the <code>user</code> being mutated in <code>levelUp</code> was a different; the compiler was right.</p>
 
 		<p>The code now works as intended. There are still many subtleties with function parameters and our memory model in general, but we're making progress. Now might be a good time to mention that, aside from the specific syntax, none of this is unique to Zig. The model that we're exploring here is the most common, some languages might just hide many of the details, and thus flexibility, from developers.</p>
 
