@@ -317,7 +317,7 @@ try lookup.put(user.name, user);
 _ = lookup.remove(user.name);
 {% endhighlight %}
 
-<p>The last line removes the entry from our hash map, so our cleanup routine no longer iterates over it and don't free the <code>name</code> or <code>user</code>. We need to use <code>fetchRemove</code> instead of <code>remove</code> to get the key and value that was removed:</p>
+<p>The last line removes the entry from our hash map, so our cleanup routine no longer iterates over it and doesn't free <code>name</code> or <code>user</code>. We need to use <code>fetchRemove</code> instead of <code>remove</code> to get the key and value that was removed:</p>
 
 {% highlight zig %}
 if (lookup.fetchRemove(user.name)) |kv| {
@@ -335,7 +335,7 @@ if (lookup.fetchRemove(user.name)) |kv| {
 <h3>getOrPut</h3>
 <p>While there are a number of implications to what we've talked about so far, for me, one of the best benefits that comes from exposing key and value pointers directly is the <code>getOrPut</code> method.</p>
 
-<p>If I asked you to store a named counters in a map in Go, or most languages, you'd end up with something like:</p>
+<p>If I asked you to store named counters in a map in Go, or most languages, you'd end up with something like:</p>
 
 {% highlight go %}
 count, exists := counters[name]
