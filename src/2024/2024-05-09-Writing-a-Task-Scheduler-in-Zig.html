@@ -94,7 +94,7 @@ const Person = struct {
 
 <p>Be warned though that this example greatly increases the risk of introducing thread-unsafe code. Like our original code, this code has two running threads: the main thread and the thread launched by our call to <code>spawn</code>. However, in this version, the two threads have access to the same memory, the address of <code>person</code>. Since our launched thread reads <code>name</code>, if we changed our main thread to write to <code>name</code>, we'd have to introduce some form of protection (for example, by using a mutex).</p>
 
-<p>Both examples calls <code>thread.join();</code>. When we start a thread, we should call either <code>detach</code> or <code>join</code>. These don't have to be called immediately (as we'll eventually see). The thread which calls <code>join</code> blocks until the joined thread stops. Conversely, calling <code>detach</code> allows the calling thread to continue. If you replace <code>thread.join()</code> with <code>thread.detach()</code> the program will exit before the launched thread has time to finish executing. This is because the thread that calls <code>detach</code> is, in this case, our main thread, and after calling <code>detach</code> it continues to execute normally. For this program, that means reaching the end of <code>main</code> and exiting. Programs don't wait for all threads to finish, in this regards, the main / original thread is special.</p>
+<p>Both examples calls <code>thread.join();</code>. When we start a thread, we should call either <code>detach</code> or <code>join</code>. These don't have to be called immediately. The thread which calls <code>join</code> blocks until the joined thread ends. Conversely, calling <code>detach</code> allows the calling thread to continue. If you replace <code>thread.join()</code> with <code>thread.detach()</code> the program will exit before the launched thread has time to finish executing. This is because the thread that calls <code>detach</code> is, in this case, our main thread, and after calling <code>detach</code> it continues to execute normally. For this program, that means reaching the end of <code>main</code> and exiting. Programs don't wait for all threads to finish, in this regards, the main / original thread is special.</p>
 
 <p>As a final point, a <code>while (true)</code> loop can be added to run a recurring job:</p>
 
@@ -280,19 +280,19 @@ while (true) {
 
 <p>But this is hardly the only timing issue we have. We also need to handle the case where <code>timeUntilNextTask</code> returns a negative value. More seriously, our scheduler assumes that the tasks are inserted in order that they should be run. If we schedule a task to be run in 1 hour, then schedule a task to be run in 10 seconds, our scheduler will sleep for 1 hour and our 2nd task will be run much too late. Finally, our handling of the empty queue isn't ideal; it would be nice to come up with an alternative to waking the thread every second.</p>
 
-<p>The final major issue with this implementation is that it isn't thread-safe. The <code>run</code> method runs in its own thread, started by the <code>start</code> method. The <code>schedule</code> and <code>scheduleIn</code> methods are meant to be called from the main thread, or any other thread. However, both share and operate on the same <code>queue</code> field. This type of access has to be synchronized. If one thread happens to <code>append</code> to the <code>queue</code> via a call to <code>schedule</code>, while <code>run</code> calls <code>remove</code>, the behavior is undefined (e.g. the program will likely crash).</p>
+<p>The final major issue with this implementation is that it isn't thread-safe. The <code>run</code> method runs in its own thread, started by the <code>start</code> method. The <code>schedule</code> and <code>scheduleIn</code> methods are meant to be called from the main thread, or any other thread. However, both share and operate on the same <code>queue</code> field. This type of access has to be synchronized. If one thread happens to <code>append</code> to the <code>queue</code> via a call to <code>schedule</code>, while <code>run</code> calls <code>remove</code>, the behavior is undefined; the best possible outcome is a crash.</p>
 
 <p>The threading issue can be fixed by adding a mutex, but the scheduling issue requires more fundamental changes. So while this was a good first step, it's time to look at a more correct implementation.</p>
 
 <h3>Scheduler</h3>
 <p>At a high level, the shortcomings of our naive implementation can be solved by:
 <ol>
-  <li>Using a sortable data structure to order pending jobs by their <code>run_at</code> field,
-  <li>Using a thread-safe signal to notify our scheduler when new jobs are added,
+  <li>Using a sortable data structure to order pending jobs by their <code>run_at</code> field
+  <li>Using a thread-safe signal to notify our scheduler when new jobs are added
   <li>Ensuring that all access to our shared data structure is synchornized by a mutex
 </ol>
 
-<p>We begin by replacing our <code>std.DoublyLinkedList</code> with an <code>std.PriorityQueue</code>. Like our linked list, the priority queue allows us to append new jobs and pop existing ones off. It also requires that we provide a function to compare two entries so that ordering can be preserved. We begin with a new skeleton, which is similar to what we started with before:</p>
+<p>We begin by replacing our <code>std.DoublyLinkedList</code> with an <code>std.PriorityQueue</code>. Like our linked list, the priority queue allows us to append new jobs and pop existing ones off. It also requires that we provide a function to compare two entries to control how entries are ordered. We begin with a new skeleton, which is similar to what we started with before:</p>
 
 {% highlight zig %}
 fn Scheduler(comptime T: type) type {
@@ -321,7 +321,7 @@ fn Scheduler(comptime T: type) type {
 }
 {% endhighlight %}
 
-<p>Our <code>Queue</code> has changed. Not only does the <code>PriorityQueue</code> take the type of value to store (as <code>DoublyLinkedList</code> did), it also takes a context and a function to compare two nodes. The context exits for cases where comparison is stateful. Whatever context we pass to <code>Queue.init</code> gets passed as the first parameter to the <code>compare</code> function. We could then use it to inform how to compare the two values. In many cases, including our own, there will be no context, and thus specify a <code>void</code> context type with a void context value (<code>{}</code>) passed to <code>init</code>.</p>
+<p>Our <code>Queue</code> has changed type. Not only does the <code>PriorityQueue</code> take the type of value to store (as <code>DoublyLinkedList</code> does), it also takes a context and a function to compare two nodes. The context exits for cases where comparison is stateful. Whatever context we pass to <code>Queue.init</code> gets passed as the first parameter to the <code>compare</code> function. The context can be used to inform how two values should be compared. In many cases, including our own, there will be no context, and thus we specify a <code>void</code> context type and pass a void context value (<code>{}</code>) to <code>init</code>.</p>
 
 <p>We've also added a <code>std.Thread.Mutex</code>, which we'll use in the following code to synchronize access to the <code>queue</code>. The mutex is initialized using the following syntax: <code>.mutex = .{}</code>. This is the same syntax and the same behavior as <code>Thread.spawn's</code> <code>config</code> parameter; again relying on Zig's type inference and default field values.</p>
 
@@ -344,11 +344,11 @@ pub fn scheduleIn(self: *Self, task: T, ms: i64) !void {
 }
 {% endhighlight %}
 
-<p>When using the <code>DoublyLinkedList</code>, we were responsible for managing the <code>Node</code> memory. We had to create the nodes and free them, both in <code>deinit</code> and after running the task in <code>run</code>. The <code>PriorityQueue</code> has a different interface and manages its nodes internally. Discounting the introduction of our <code>mutex</code>, this makes both our <code>deinit</code> and <code>schedule</code> methods simpler. In fact, you might have noticed that our <code>Scheduler(T)</code> no longer holds a reference to the allocator.</p>
+<p>When using the <code>DoublyLinkedList</code>, we were responsible for managing the <code>Node</code> memory. We had to create the nodes and free them, both in <code>deinit</code> and after running the task in <code>run</code>. The <code>PriorityQueue</code> has a different interface and manages its nodes internally. Discounting the introduction of our <code>mutex</code>, this makes both our <code>deinit</code> and <code>schedule</code> methods simpler. In fact, you might have noticed that our <code>Scheduler(T)</code> no longer holds a reference to the allocator since we no longer manage any memory direclty ourselves.</p>
 
-<aside><p>You might wonder why <code>DoublyLinkedList</code> doesn't manage its own memory. I think it's because it doesn't have to. Unlike the <code>PriorityQueue</code> or <code>std.ArrayList</code> or one of the various standard HashMaps, a linked list (single or double) never has to move its nodes. It might mutate the nodes, specifically changing the <code>next</code> and <code>prev</code> pointers, but it doesn't relocate them in memory. As <code>PriorityQueues</code>, <code>ArrayLists</code> and <code>HashMaps</code> grow, the internal representation often has to be moved (to a larger contiguous block of memory).</p></aside>
+<aside><p>You might wonder why <code>DoublyLinkedList</code> doesn't manage its own memory. I think it's because it doesn't have to. Unlike the <code>PriorityQueue</code> or <code>std.ArrayList</code> or one of the various <a href="/Zigs-HashMap-Part-1/">HashMaps</a>, a linked list (single or double) never has to move its nodes. It might mutate the nodes, specifically changing the <code>next</code> and <code>prev</code> pointers, but it doesn't relocate them in memory. As <code>PriorityQueues</code>, <code>ArrayLists</code> and <code>HashMaps</code> grow, the internal representation often has to be moved (to a larger contiguous block of memory).</p></aside>
 
-<p>Although this code is useless without the <code>start</code> and <code>run</code> methods, it's worth re-iterating how important synchronizing access to <code>self.queue</code> is. Even with only <code>schedule</code>, if our application is multi-threaded, two threads could call <code>schedule</code> at the same time and thus attempt to mutate <code>self.queue</code> at the same time.</p>
+<p>Although this code is useless without the <code>start</code> and <code>run</code> methods, it's worth re-iterating how important synchronizing access to <code>self.queue</code> is. Even with <code>schedule</code> alone, if our application is multi-threaded, two threads could call <code>schedule</code> at the same time and thus attempt to mutate <code>self.queue</code> at the same time, which would be an undefined behavior.</p>
 
 <p>Switching to a <code>PriorityQueue</code> gets us half way there. We can now be sure that the first task in our <code>queue</code> is the one that should be run soonest. But we still face the issue of having tasks scheduled out of order. The core of our issue is the call to <code>std.time.sleep</code> in <code>run</code>. Even if new tasks get properly ordered within our queue, once our <code>run</code> thread goes to sleep, there's nothing we can do. Recall our previous code that looked something like:</p>
 
@@ -357,13 +357,13 @@ const ms = self.timeUntilNextTask();
 std.time.sleep(@intCast(ms * std.time.ns_per_ms));
 {% endhighlight %}
 
-<p>Once we go to sleep, newly added tasks cannot be processed until this sleep ends. What we need is a way to wake up the thread when a new task gets scheduled. Better yet, we only need to wake the thread up if a newly scheduled task needs to run before the sleep expires. The behavior we want is:
+<p>Once we go to sleep, newly added tasks cannot be processed until this sleep ends. What we need is a way to wake up the thread when a new task gets scheduled. Better yet, we only need to wake the thread up if a newly scheduled task needs to run before the current sleep will end. The behavior we want is:
 
 <ol>
-  <li>We start the schedule. The queue is empty. It goes to sleep forever.
+  <li>We start the scheduler. The queue is empty. It goes to sleep "forever".
   <li>We schedule a task to run in 10 seconds. We wake the scheduler up, it detects that the next job should run in 10 seconds, so goes to sleep for 10 seconds.
   <li>We immediately schedule a new task to run in 5 seconds. We wake the scheduler up, it detects that the next job should run in 5 seconds, so goes to sleep for 5 seconds.
-  <li>We immediately schedule yet another job, but this one to run in 7 seconds. We don't need to wake the scheduler up, because this job is meant to run after our next one (7 > 5)
+  <li>We immediately schedule yet another job, but this one to run in 7 seconds. We don't need to wake the scheduler up, because this job is meant to run after our next one (7 > 5).
 </ol>
 
 <p>Again, the <code>PriorityQueue</code> solves the issue of ordering. To solve the issue of waking up our scheduler, we turn to <code>std.Thread.Condition</code>. A condition variable provides a thread-safe way for threads to signal each other. Condition variables interact in specific ways with a mutex to provide certain guarantees, and this interaction is important to understand. We'll begin by adding our condition variable:</p>
@@ -406,13 +406,15 @@ fn run(self: *Self) void {
 
 <p>The difference between <code>cond.wait</code> and <code>sleep</code> is that <code>cond.wait</code> blocks until it receives a signal. This is the mechanism we need in order to let newly scheduled tasks wake our scheduler. This isn't quite our final solution. We actually need a mix of the two behaviors: sleeping until it's time to run the next task OR until we receive a signal indicating newly added tasks. For this, we'll eventually use <code>cond.timedWait</code>, which does exactly what we need, but we'll get to that in a bit.</p>
 
-<p>As for the first question, <code>cond.wait</code> and <code>cond.timedWait</code> expect a locked mutex, internally release the mutex before going to sleep and always re-establish the lock before returning. By passing in a locked mutex, and receiving a locked mutex, the condition variable can be setup atomically, without the risk of another thread slipping in.</p>
+<p>As for the first question, <code>cond.wait</code> and <code>cond.timedWait</code> expect a locked mutex, and internally release the mutex before going to sleep. Furthermore, the mutex is always locked before the call returns. By passing in a locked mutex, and receiving a locked mutex, the condition variable can be setup atomically, without the risk of another thread slipping in.</p>
 
-<p>As for the while loop, it serves two purposes. First, it's possible for multiple threads to wait on the same condition and be woken up by the same signal (called a broadcast in that case). Second, condition variables can be <a href="https://en.wikipedia.org/wiki/Spurious_wakeup">victims of spurious wakeups</a>, that is being woken up when it really shouldn't be. So even though we only have 1 thread waiting, we still need to handle the second case. Either way, you always want to re-check the condition after waking up. Keep in mind that when we do wake up, the <code>mutex</code> will be locked for us. So whenever you see a call to <code>cond.wait</code> or <code>cond.timedWait</code>, your mental model should be something like:</p>
+<p>As for the while loop, it serves two purposes. First, it's possible for multiple threads to wait on the same condition and be woken up by the same signal (called a broadcast in that case). Second, condition variables can be <a href="https://en.wikipedia.org/wiki/Spurious_wakeup">victims of spurious wakeups</a>, that is, being woken up when it really shouldn't. Both cases are solved by re-checking the condition, which is what our inner <code>while</code> loop does. Keep in mind that when we do wake up, the <code>mutex</code> will be locked for us. So whenever you see a call to <code>cond.wait</code> or <code>cond.timedWait</code>, your mental model should be something like:</p>
 
 {% highlight zig %}
-fn wait(c: Condition, mutex: *std.Thread.Mutex) void {
+fn wait(c: *std.Thread.Condition, mutex: *std.Thread.Mutex) void {
   // do some setup
+  // ...
+
   mutex.unlock();
 
   // whatever happens, we'll always return with this locked
@@ -420,6 +422,7 @@ fn wait(c: Condition, mutex: *std.Thread.Mutex) void {
 
   // wait for signal
   // or timeout if calling timedWait
+  // ...
 }
 {% endhighlight %}
 
@@ -435,7 +438,7 @@ pub fn schedule(self: *Self, task: T, run_at: i64) !void {
   self.mutex.lock();
   defer self.mutex.unlock();
   try self.queue.add(job);
-  self.cond.signal()
+  self.cond.signal(); // <-- added this
 }
 {% endhighlight %}
 
@@ -464,6 +467,7 @@ pub fn schedule(self: *Self, task: T, run_at: i64) !void {
   try self.queue.add(job);
 
   if (reschedule) {
+    // only send the signal under the above two conditions
     self.cond.signal();
   }
 }
@@ -492,7 +496,7 @@ pub fn schedule(self: *Self, task: T, run_at: i64) !void {
     }
     try self.queue.add(job);
 
-    // mutex is unlocked here
+    // mutex is unlocked here by the above defer
   }
 
   if (reschedule) {
@@ -504,7 +508,7 @@ pub fn schedule(self: *Self, task: T, run_at: i64) !void {
 }
 {% endhighlight %}
 
-<p>The <code>self.cond.signal()</code> call is no longer done under lock. This is maybe more efficient since we hold the lock for a shorter amount of time. But it does highlight something else, in Zig, <code>defer</code> is run at the end of the current block. The above would be riskier to do in Go where defer is run at the end of the function. Instead, in Go, we wouldn't be able to use <code>defer</code> and would have to place calls to <code>unlock</code> at the correct places, keeping in mind that <code>self.queue.add</code> could fail, and new control flow could be added in the future.</p>
+<p>The <code>self.cond.signal()</code> call is no longer called under lock. This is a tiny bit more efficient since we hold the lock for a shorter amount of time. But it does highlight something important: in Zig, <code>defer</code> is run at the end of the current block. The above would be riskier to do in Go where <code>defer</code> is run at the end of the function. Instead, in Go, we wouldn't be able to use <code>defer</code> and would have to place calls to <code>unlock</code> at the correct places, keeping in mind that <code>self.queue.add</code> could fail, and new control flow could be added in the future.</p>
 
 <p>With <code>schedule</code> finished, all that's left is to fully implement <code>run</code>:</p>
 
@@ -514,7 +518,7 @@ fn run(self: *Self) void {
     self.mutex.lock();
     if (self.timeUntilNextTask()) |ms| {
       if (ms > 0) {
-        const ns = @intCast(std.time.ns_per_ms * ms);
+        const ns: u64 = @intCast(std.time.ns_per_ms * ms);
         self.cond.timedWait(&self.mutex, ns) catch {
           // only error possible from timedWait
           std.debug.assert(err == error.Timeout);
@@ -558,7 +562,7 @@ fn timeUntilNextTask(self: *Self) ?i64 {
 
 <p>This is a big leap, but it mostly combined everything we've seen so far. When the queue is empty we use <code>cond.wait</code>, meaning we'll sleep until a task is scheduled and <code>cond.signal</code> is called. When the queue isn't empty, we use <code>cond.timedWait</code>. In this case there are two ways for us to wake up. The first is, again, via a signal sent by the <code>schedule</code> method. The second is if our <code>timedWait</code> times out, indicating that we have a task to run.</p>
 
-<p>Once we unblock, the logic is the same. First, we're defensive and make sure that (a) we do indeed have a task and (b) it should be run. We can them remove the task from the queue and unlock the queue while the task is run. Unlocking here is important as it allows other threads to schedule new tasks.</p>
+<p>Once we unblock, the logic is the same in either case. First, we're defensive and make sure that (a) we do indeed have a task and (b) it should be run. We can them remove the task from the queue and unlock the queue while the task is run. Unlocking here is important as it allows other threads to schedule new tasks.</p>
 
 <h3>Conclusion</h3>
 <p>There's a lot more we could add, but this implementation serves my immediate needs. The main thing I'd likely add is a thread pool, but I think that's better done on the application side, since different tasks might have different requirements. My <a href="https://github.com/karlseguin/zul/blob/master/src/scheduler.zig">Zig Utility Library</a> has the complete implementation that can largely be copy and pasted. And while part of the goal was to write a task scheduler, I hope some readers found insight with respect to multi-threaded programming.</p>
