@@ -147,7 +147,7 @@ fn indexOf(haystack: []const u32, needle: u32) ?usize {
 
 		<aside>This is a sneak peek at nullable types.</aside>
 
-		<p>The end of the range is inferred from the length of <code>haystack</code>,  though we could punish ourselves and write: <code>0..hastack.len</code>. <code>for</code> loops don't support the more generic <code>init; compare; step</code> idiom. For this, we rely on <code>while</code>.</p>
+		<p>The end of the range is inferred from the length of <code>haystack</code>,  though we could punish ourselves and write: <code>0..hastack.len</code>. <code>for</code> loops don't support the more generic <code>init; compare; step</code> idiom. For this, we rely on <code>while</code>. To have `<code>init;</code> scoped like in such <code>for</code>, we need to add block around <code>while</code>.</p>
 
 		<p>Because <code>while</code> is simpler, taking the form of <code>while (condition) { }</code>, we have greater control over the iteration. For example, when counting the number of escape sequences in a string, we need to increment our iterator by 2 to avoid double counting a <code>\\</code>:</p>
 
