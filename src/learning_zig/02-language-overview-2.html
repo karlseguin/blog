@@ -147,22 +147,28 @@ fn indexOf(haystack: []const u32, needle: u32) ?usize {
 
 		<aside>This is a sneak peek at nullable types.</aside>
 
-		<p>The end of the range is inferred from the length of <code>haystack</code>,  though we could punish ourselves and write: <code>0..hastack.len</code>. <code>for</code> loops don't support the more generic <code>init; compare; step</code> idiom. For this, we rely on <code>while</code>. To have `<code>init;</code> scoped like in such <code>for</code>, we need to add block around <code>while</code>.</p>
+		<p>The end of the range is inferred from the length of <code>haystack</code>, though we could punish ourselves and write: <code>0..hastack.len</code>. <code>for</code> loops don't support the more generic <code>init; compare; step</code> idiom. For this, we rely on <code>while</code>.</p>
 
-		<p>Because <code>while</code> is simpler, taking the form of <code>while (condition) { }</code>, we have greater control over the iteration. For example, when counting the number of escape sequences in a string, we need to increment our iterator by 2 to avoid double counting a <code>\\</code>:</p>
+		<p>Because <code>while</code> is simpler, taking the form of <code>while (condition) { }</code>, we have greater control over the iteration. For example, when counting the number of escape sequences in a string, we need to increment our iterator by 2 to avoid double counting a <code>\</code>:</p>
 
 {% highlight zig %}
-var i: usize = 0;
 var escape_count: usize = 0;
-while (i < src.len) {
-	if (src[i] == '\\') {
-		i += 2;
-		escape_count += 1;
-	} else {
-		i += 1;
+{
+	var i: usize = 0;
+	while (i < src.len) {
+		// backslash is used as an escape character, thus we need to escape it...
+		// with a backslash.
+		if (src[i] == '\\') {
+			i += 2;
+			escape_count += 1;
+		} else {
+			i += 1;
+		}
 	}
 }
 {% endhighlight %}
+
+		<p>We added an explicit block around our temporary <code>i</code> variable and <code>while</code> loop. This narrows the scope of <code>i</code>. Blocks like this can be useful, though in this case it's probably overkill. Still, the above example is as close to a traditional <code>for(init; compare; step)</code> loop that Zig has.</p>
 
 		<p>A <code>while</code> can have an <code>else</code> clause, which is executed when the condition is false. It also accepts a statement to execute after each iteration. There can be multiple statements speparated with <code>;</code>. This feature was commonly used prior to <code>for</code> supporting multiple sequences. The above can be written as:</p>
 
