@@ -433,7 +433,7 @@ pub fn main() !void {
 }
 {% endhighlight %}
 
-		<p>Our completely explicit an implicit approaches aren't exactly equivalents. For example, references to functions with implicit error sets require using the special <code>anyerror</code> type. Library developers might see advantages to being more explicit, such as self-documenting code. Still, I think both the implicit error sets and the inferred error union are pragmatic; I make heavy use of both.</p>
+		<p>Our completely explicit and implicit approaches aren't exactly equivalents. For example, references to functions with implicit error sets require using the special <code>anyerror</code> type. Library developers might see advantages to being more explicit, such as self-documenting code. Still, I think both the implicit error sets and the inferred error union are pragmatic; I make heavy use of both.</p>
 
 		<p>The real value of error unions is the built-in language support in the shape of <code>catch</code> and <code>try</code>. A function call that returns an error union can include a <code>catch</code> clause. For example, an http server library might have code that looks like:</p>
 
