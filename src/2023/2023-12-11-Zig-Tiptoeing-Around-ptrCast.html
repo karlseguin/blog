@@ -108,7 +108,7 @@ pub fn main() !void {
 }
 {% endhighlight %}
 
-<p>The underlying memory for <code>node1</code> is more than big enough, but the code still crashes. The issue is that <code>node1.next</code> has written data into the memory which isn't valid when interpreted the memory as <code>User</code>. When we're writing to <code>user.id</code> or <code>user1.name</code>, the compiler will enforce correctness: <code>id</code> must be an <code>u32</code> and <code>name</code> must be a <code>[]const u8</code>. When we write to <code>node1.next</code>, our value is valid based on the <code>Node</code> type. But mix those two:  and you'll likely get something invalid.</p>
+<p>The underlying memory for <code>node1</code> is more than big enough, but the code still crashes. When we write to <code>user.id</code> or <code>user1.name</code>, the compiler enforces correctness: <code>id</code> must be an <code>u32</code> and <code>name</code> must be a <code>[]const u8</code>. Similarly, When we write <code>null</code> to <code>node1.next</code>, the code compiles because <code>null</code> is a valid <code>?*Node</code>. But when, at runtime, we try to interpret that <code>null</code> as a part of a <code>User</code>, the behavior becomes undefined (i.e. we'll most likely crash).</p>
 
 <p>One last thing worth pointing out is that, unless a structure is declared as <code>packed</code>, Zig makes no guarantee about its memory layout. In almost all cases, you should not write to memory as one type and read it as another (which is exactly what we've done throughout the post). Unless the struct is <code>packed</code> or the struct is very simple, you cannot predict how those read/writes will be interpreted by different types sharing the same memory.</p>
 
