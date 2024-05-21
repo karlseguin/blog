@@ -8,7 +8,7 @@ tags: [zig]
 
 <p>You're probably familiar with Zig's <code>GeneralPurposeAllocator</code>, <code>ArenaAllocator</code> and <code>FixedBufferAllocator</code>, but Zig's standard library has another allocator you should be keeping at the ready: <code>std.heap.MemoryPool</code>.</p>
 
-<p>What makes the <code>MemoryPool</code> allocator special is that it can only create one type. As compensation for this limitation, it's very fast when allocating and freeing that type. It's really easy to use:</p>
+<p>What makes the <code>MemoryPool</code> allocator special is that it can only create one type. As compensation for this limitation, it's very fast when allocating and freeing that type. Also, it's easy to use:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -17,7 +17,7 @@ pub fn main() !void {
   var gpa = std.heap.GeneralPurposeAllocator(.{}){};
   const allocator = gpa.allocator();
 
-  // This pool can only create and destroy our User
+  // This pool can only create and destroy a User
   var user_pool = std.heap.MemoryPool(User).init(allocator);
   defer user_pool.deinit();
 
