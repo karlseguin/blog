@@ -1,0 +1,206 @@
+---
+layout: post
+date: 2024-05-21
+title: "Zig: Freeing resources referenced in multiple threads"
+description: "Using a mutex with automic referencing counting to safely manage the lifecycle of memory across multiple threads."
+tags: [zig]
+---
+
+<p>As you learn Zig, you'll see examples of memory being allocated and through the use of <code>defer</code>, freed. Often, these allocations and deallocations are wrapped in <code>init</code> and <code>deinit</code> functions. But whatever specific implementation is used, the point is to show a common pattern which is suitable in simple cases. It isn't too much of a leap to take such examples and apply them to more complicated scenarios where allocation and deallocation might happen in different parts of the code.</p>
+
+<p>In <a href=/Zigs-HashMap-Part-2/>Zig's HashMap - Part 2</a> we saw a common example of more complicated memory management. It is up to us to decide and enforce the lifetime of a hashmap's keys and values. Even here simple cases can be complicated. If we want tie the lifetime of a value to the hashmap, we can store the value directly in the hashmap. But care must be taken since the address of these values can change as the hashmap changes (i.e. as the hashmap grows any references to its values will become invalid). This example, taken from that blog post, crashes since <code>first</code> becomes an invalid reference as <code>lookup</code> grows:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  var lookup = std.AutoHashMap(usize, usize).init(allocator);
+  defer lookup.deinit();
+
+  try lookup.put(100, 100);
+  const first = lookup.getPtr(100).?;
+
+  for (0..50) |i| {
+    try lookup.put(i, i);
+  }
+  first.* = 200;
+}
+{% endhighlight %}
+
+<p>As systems grow more complex and data lives longer, managing memory tends to get more complicated. One case where this is particularly true is in multithreaded programming. Let's consider a simple cache; we begin with just two fields:</p>
+
+{% highlight zig %}
+const Cache = struct {
+  allocator: Allocator,
+  lookup: std.StringHashMapUnmanaged([]const u8),
+
+  pub fn init(allocator: Allocator) Cache {
+    return .{
+      .lookup = .{},
+      .allocator = allocator,
+    };
+  }
+
+  // TODO
+}
+{% endhighlight %}
+
+<p>A reasonable first attempt at creating a <code>put</code> method might go something like:</p>
+
+{% highlight zig %}
+pub fn put (self: *Cache, key: []const u8, value: []const u8) !void {
+  const allocator = self.allocator;
+  const gop = try self.lookup.getOrPut(allocator, key);
+
+  if (gop.found_existing) {
+    // if we had an existing entry for this key, free it.
+    allocator.free(gop.key_ptr.*);
+    allocator.free(gop.value_ptr.*);
+  }
+
+  gop.key_ptr.* = try allocator.dupe(u8, key);
+  gop.value_ptr.* = try allocator.dupe(u8, value);
+}
+{% endhighlight %}
+
+<p>If we were to implement <code>get</code> and <code>deinit</code>, we'd have a skeleton. Now, to make this thread-safe, we'd need to synchronize access to <code>lookup</code>, probably with a <code>std.Thread.Mutex</code> or <code>std.Thread.RwLock</code>. But there's another thread-safety issue in <code>put</code>, one specific to manual memory management that won't be fixed with just a mutex. Can you spot it?</p>
+
+<p>Imagine that our cache is populated with data when two threads interact with it thusly: one calls <code>cache.get("goku")</code> while another calls <code>cache.put("goku", "9000!")</code>. A mutex would serialize access to <code>lookup</code>, but that wouldn't stop thread 2 from freeing the value now referenced by thread 1. This isn't strictly a multithreading problem. References to a value or a hashmap entry (or whatever), can be always be referenced from multiple places. But in a single threaded context, there's almost always a clear lifetime and owner for data. More importantly, there's a simple execution model. Look at it this way: in a single threaded context, if we have:</p>
+
+{% highlight zig %}
+if (cache.get("goku")) |power| {
+  ...
+}
+{% endhighlight %}
+
+<p>We know that <code>cache</code> can't be mutated while we're in the <code>if</code> block (unless we explicit do something to mutate it). Because of this, <code>power</code> cannot be invalidated or leaked. But in a multithreaded context, while our <code>if</code> block might not mutate the cache, another thread could. The simple execution model is gone.<p>
+
+<p>I've written at length about having a deep understanding of your data's lifetime and ownership. That leads to clear decisions about where data must be freed: <em>the memory must be freed when it's replaced or when we deinitialize the cache</em>. In a multithreaded context, in addition to that insight, we also need a more generic perspective: <em>the memory must be freed when the last reference is no longer needed</em>.</p>
+
+<p>What does that mean in practice? First, we'll add a new type:</p>
+
+{% highlight zig %}
+const Entry = struct {
+  rc: usize,
+  value: []const u8,
+  allocator: Allocator,
+}
+{% endhighlight %}
+
+<p>Our <code>lookup</code> will now be an <code>std.StringHashMapUnmanaged(*Entry)</code>. The <code>rc</code> field is a reference counter. Whenever we get an entry, we'll increment <code>rc</code> by 1. Whenever we're done with an entry, we'll decrement <code>rc</code> by 1. When <code>rc</code> reaches 0, the entry can be freed. In other words, we don't track the lifetime of a value (i.e., until it's replaced or until the cache is deinitialized), but rather its usage. Let's implement that now:</p>
+
+{% highlight zig %}
+const Entry = struct {
+  rc: usize,
+  value: []const u8,
+  allocator: Allocator,
+
+  pub fn acquire(self: *Entry) void {
+    _ = @atomicRmw(usize, &self.rc, .Add, 1, .monotonic);
+  }
+
+  pub fn release(self: *Entry) void {
+    if (@atomicRmw(usize, &self.rc, .Sub, 1, .monotonic) == 1) {
+      const allocator = self.allocator;
+      allocator.free(self.value);
+      allocator.destroy(self);
+    }
+  }
+};
+{% endhighlight %}
+
+<p><code>@atomicRmw</code> atomically modifies the value and returns the previous value. That's why we free our value and destroy the entry in <code>release</code> when it returns <code>1</code>: if the "previous value" was 1, then the current value (after we subtracted 1) is 0, meaning there are no more references to our entry.</p>
+
+<p>Now our cache's <code>get</code> methods. We previously skipped this because, in our simple implementation, the read path didn't participate in memory management. This is no longer true:</p>
+
+{% highlight zig %}
+pub fn get(self: *Cache, key: []const u8) ?*Entry {
+  self.lock.lockShared();
+  defer self.lock.unlockShared();
+
+  var entry = self.lookup.get(key) orelse return null;
+  entry.acquire();
+
+  return entry;
+}
+{% endhighlight %}
+
+<p>Without telling you, we've added a <code>std.Thread.RwLock</code> to our cache which we see here for the first time. We also <code>acquire</code> the entry, increasing it's <code>rc</code> counter by 1. We return the full <code>*Entry</code> because the calling code is responsible for calling <code>release()</code>:</p>
+
+{% highlight zig %}
+if (cache.get("goku")) |power| {
+  defer power.release();
+  ...
+}
+{% endhighlight %}
+
+<p>If you were trying to really optimize this code, you might be tempted to write <code>get</code> like so:</p>
+
+{% highlight zig %}
+pub fn get(self: *Cache, key: []const u8) ?*Entry {
+  self.lock.lockShared();
+  const entry = self.lookup.get(key);
+  self.lock.unlockShared();
+
+  var e = entry orelse return null;
+  e.acquire();
+  return e;
+}
+{% endhighlight %}
+
+<p>Notice that we've narrowed our lock and no longer hold it over the call to <code>acquire</code>. This seems correct since <code>acquire</code> atomically increments <code>rc</code>, right?. But this version is wrong in the same way as or original naive implementation was. Consider <code>entry</code> just after the lock is released; <code>rc</code> hasn't been incremented yet. Or put differently, our reference hasn't been registered yet. This opens the small possibility that another thread will <code>release</code> its own reference to this entry, possibly causing the entry to clean itself up.</p>
+
+<p>Finally, we have our enhanced <code>put</code>:</p>
+
+{% highlight zig %}
+pub fn put(self: *Cache, key: []const u8, value: []const u8) !void {
+  const allocator = self.allocator;
+
+  // All of this can be done without having to lock!
+  const entry = try allocator.create(Entry);
+  errdefer allocator.destroy(entry);
+  entry.* = .{
+    .rc = 1,
+    .allocator = allocator,
+    .value = try allocator.dupe(u8, value),
+  };
+  errdefer entry.release();
+
+
+  var existing: ?*Entry = null;
+
+  {
+    self.lock.lock();
+    defer self.lock.unlock();
+    const gop = try self.lookup.getOrPut(allocator, key);
+    if (gop.found_existing) {
+      // get a reference to the existing value, so that we can release our
+      // reference to it
+      existing = gop.value_ptr.*;
+    } else {
+      // This is a new entry, dupe the key. The cache itself owns this key now
+      gop.key_ptr.* = try allocator.dupe(u8, key);
+    }
+
+    gop.value_ptr.* = entry;
+  }
+
+  // This can also be done without having to lock
+  if (existing) |e| {
+    e.release();
+  }
+}
+{% endhighlight %}
+
+<p>There's a lot more going on here the before. First, when we create the entry, we set <code>rc</code> to 1. This is because the reference that our hashmap has to the entry is like any other. This is a bit more obvious when we consider the second point: to replace an entry, we don't free it, we <code>release()</code> it. Because the entry might still be referenced by another thread, all we can do is <strong>un</strong>register our interest. If, when we call <code>e.release()</code> we happen to be the last reference to the entry, then yes the entry will freed.</p>
+
+<p>Not related specifically to multithreaded, but we don't store a copy of the <code>key</code> with the <code>Entry</code>. This is an optimization, once we have an entry for a key, say "goku", there's really no need to re-dupe that key. This is because the key, unlike our value, is immutable. In this case, I'd say that the owner of the key is the cache itself. I chose this implementation because it's both more efficient and because it highlights how these different techniques end up living side by side and the complexity that also adds.</p>
+
+<p>Another optimization I've made is to narrow the scope of our write lock. You might be surprised to see that <code>existing.release()</code> is not called under lock, despite making the case that <code>entry.acquire()</code> in <code>get</code> had to be. The entire point of this exercise is to make sure that <code>rc</code> doesn't become <code>0</code> while we still have live references. When we get a new reference we need to make sure no thread decrements <code>rc</code> before we can increment it. If it does, and if <code>rc</code> becomes 0, our reference will become invalid. But, once we have our reference and incremented <code>rc</code> to represent our interest, assuming every <code>acquire()</code> is paired with a <code>release()</code> then <code>rc</code> can never reach 0 prematurely and our reference is always valid until we call <code>release()</code>. After <code>release()</code> is called, the reference should not be used. But the reality of our implementation means that it'll either be freed as part of the call to <code>release()</code> or at some indeterminate time in the future.</p>
+
+<p>Reference counting isn't always something you'll need to rely on when sharing data across threads. Some workloads maintain clear ownership and lifetimes across threads. On the flip side, while we looked at referencing counting in the context of a cache, this is a pattern that can be used for other types of shared data. Further, while we looked at a thread-safe implementation of reference counting (known as ARC, Atomically Reference Counted), reference counting in a single thread context can be useful in some situations as well. In these cases we don't need our lock and can simply increment and decrement <code>rc</code> using <code>+=1</code> and <code>-=1</code>.</p>
+
+<p>I wrote a thread-safe, expiration-aware, <a href="https://github.com/karlseguin/cache.zig">LRU cache for Zig</a> and this is the solution I ended up adopting to deal with entries being removed or replaced while still being referenced from other threads. I've been meaning to blog about it for a while. More recently, I came across the problem again, in another piece of code. I figured if I keep running into this then others might too.</p>
