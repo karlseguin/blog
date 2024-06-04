@@ -1,0 +1,182 @@
+---
+layout: post
+date: 2024-06-05
+title: "Leveraging Zig's Allocators"
+description: "How Zig's allocators can help manage memory and improve performance"
+tags: [zig]
+---
+
+<p>Let's say we wanted to write <a href=https://github.com/karlseguin/http.zig>an HTTP server library for Zig</a>. At the core of this library, we might have a pool of threads to handle requests. Keeping things simple, it might look something like:</p>
+
+{% highlight zig %}
+fn run(worker: *Worker) void {
+  while (queue.pop()) |conn| {
+    const action = worker.route(conn.req.url);
+    action(conn.req, conn.res) catch { // TODO: 500 };
+    worker.write(conn.res);
+  }
+}
+{% endhighlight %}
+
+<p>As a user of this library, a sample action might be:</p>
+
+{% highlight zig %}
+fn greet(req: *http.Request, res: *http.Response) void {
+  res.status = 200;
+  res.body = "hello!;
+}
+{% endhighlight %}
+
+<p>This is promising, but we can probably expect that users of our library will want to write more dynamic content. If we assume that our server is given an allocator on startup, we could pass this allocator into the actions:</p>
+
+{% highlight zig %}
+fn run(worker: *Worker) void {
+  // added
+  const allocator = worker.server.allocator;
+
+  while (queue.pop()) |conn| {
+    const action = worker.route(conn.req.url);
+
+    // we now pass allocator into action
+    action(allocator, conn.req, conn.res) catch { // TODO: 500 };
+
+    worker.write(conn.res);
+  }
+}
+{% endhighlight %}
+
+<p>Which would allow users to write actions like:</p>
+
+{% highlight zig %}
+fn greet(allocator: Allocator, req: *http.Request, res: *http.Response) !void {
+  const name = req.query("name") orelse "guest";
+
+  res.status = 200;
+  res.body = try std.fmt.allocPrint(allocator, "Hello {s}", .{name});
+}
+{% endhighlight %}
+
+<p>While this is a step in the right direction, there's an obvious issue: the allocated greeting is never freed. Our <code>run</code> function can't just call <code>allocator.free(conn.res.body)</code> after writing the response because, in some cases, the body might not need to be freed. We could structure our API so that the action has to <code>write()</code> the response and thus be able to <code>free</code> any allocations it made, but that would make it impossible to add some features, like supporting middleware.</p>
+
+<p>The best and simplest solution is to use an <code>ArenaAllocator</code>. The way it works is simple: when we <code>deinit</code> the arena all of its allocations are freed.</p>
+
+{% highlight zig %}
+fn run(worker: *Worker) void {
+  const allocator = worker.server.allocator;
+
+  while (queue.pop()) |conn| {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    const action = worker.route(conn.req.url);
+    action(arena.allocator(), conn.req, conn.res) catch { // TODO: 500 };
+    worker.write(conn.res);
+  }
+}
+{% endhighlight %}
+
+<p>Because <code>std.mem.Allocator</code> is an "<a href="/Zig-Interfaces/">interfaces</a>", our action doesn't need to change. An <code>ArenaAllocator</code> is a great option for an HTTP server because they're bound to a request, which has a well defined/understood lifetime and is relatively short lived. And while it's probably possible to abuse them, it's probably safe to say: use them more!</p>
+
+<p>We can take this a bit further and re-use the same arena. That might not seem too useful, but take a look at this:</p>
+
+{% highlight zig %}
+fn run(worker: *Worker) void {
+  const allocator = worker.server.allocator;
+
+  var arena = std.heap.ArenaAllocator.init(allocator);
+  defer arena.deinit();
+
+  while (queue.pop()) |conn| {
+    // Here be magic!
+    defer _ = arena.reset(.{.retain_with_limit = 8192});
+
+    const action = worker.route(conn.req.url);
+    action(arena.allocator(), conn.req, conn.res) catch { // TODO: 500 };
+    worker.write(conn.res);
+  }
+}
+{% endhighlight %}
+
+<p>We've moved our arena outside the loop but the important part is inside: after each request, we reset the arena and retain up to 8K of memory. That means that, for many requests, we'll never have to go to our underling allocator (<code>worker.server.allocator</code>) to get more memory. This can significantly improve performance.</p>
+
+<p>Now imagine a sad world where we couldn't reset our arena with <code>retain_with_limit</code>. Could we still apply the same optimization? Yes, by creating our own allocator which first attempts to use a <code>FixedBufferAllocator</code> and then falls back to our arena.</p>
+
+<aside><p>Zig has <code>std.heap.StackFallbackAllocator</code>, but this requires a comptime-known length (since its on the stack), which is a big limitations. It could have been used in this specific example, but in my actual HTTP server, the size is configurable and thus not comptime known.</p></aside>
+
+<p>Here's our full <code>FallBackAllocator</code>:</p>
+
+{% highlight zig %}
+const FallbackAllocator = struct {
+  primary: Allocator,
+  fallback: Allocator,
+  fba: *std.heap.FixedBufferAllocator,
+
+  pub fn allocator(self: *FallbackAllocator) Allocator {
+    return .{
+      .ptr = self,
+      .vtable = &.{.alloc = alloc, .resize = resize, .free = free},
+    };
+  }
+
+  fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ra: usize) ?[*]u8 {
+    const self: *FallbackAllocator = @ptrCast(@alignCast(ctx));
+    return self.primary.rawAlloc(len, ptr_align, ra)
+           orelse self.fallback.rawAlloc(len, ptr_align, ra);
+  }
+
+  fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ra: usize) bool {
+    const self: *FallbackAllocator = @ptrCast(@alignCast(ctx));
+    if (self.fba.ownsPtr(buf.ptr)) {
+      if (self.primary.rawResize(buf, buf_align, new_len, ra)) {
+        return true;
+      }
+    }
+    return self.fallback.rawResize(buf, buf_align, new_len, ra);
+  }
+
+  fn free(_: *anyopaque, _: []u8, _: u8, _: usize) void {
+    // we noop this since, in our specific case, we know
+    // the fallback is an arena, which won't free individual items
+  }
+};
+{% endhighlight %}
+
+<aside><p>If the <code>*anyopaque</code>, <code>ptrCast</code> and <code>@alignCast</code> are confusing, checkout my post on <a href="/Zig-Interfaces/">exploring Zig interfaces</a>.</p></aside>
+
+<p>Our <code>alloc</code> implementation first tries to allocate using our "primary" allocator. If that fails, we use our "fallback" allocator. <code>resize</code>, which we have to implement as part of the <code>std.mem.Allocator</code> interface, determines which allocator owns the memory we're trying to resize and then calls its <code>rawResize</code>. To keep this somewhat simple, I left out the implementation of <code>free</code> - which is OK in this specific case since  "primary" is going to be a <code>FixedBufferAllocator</code> and "fallback" is going to be an <code>ArenaAllocator</code> (thus, all the freeing happens when the arena's <code>deinit</code> or <code>reset</code> are called).</p>
+
+<p>Now we need to change our <code>run</code> method to take advantage of this new allocator:</p>
+
+{% highlight zig %}
+fn run(worker: *Worker) void {
+  const allocator = worker.server.allocator;
+
+  // this is the underlying memory for our FixedBufferAllocator
+  const buf = try allocator.alloc(u8, 8192);
+  defer allocator.free(buf);
+
+  var fba = std.heap.FixedBufferAllocator.init(buf);
+
+  while (queue.pop()) |conn| {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+
+    var fallback = FallbackAllocator{
+      .fba = &fba,
+      .primary = fba.allocator(),
+      .fallback = arena.allocator(),
+    };
+
+    const action = worker.route(conn.req.url);
+    action(fba.allocator(), conn.req, conn.res) catch { // TODO: 500 };
+    worker.write(conn.res);
+  }
+}
+{% endhighlight %}
+
+<p>This achieves something similar to resetting our arena with a <code>retain_with_limit</code>. We create a <code>FixedBufferAllocator</code> which can be reused for each request. This represents the 8K of memory we were previously retaining. Because an action might need more memory, we still need our <code>ArenaAllocator</code>. By wrapping our <code>FixedBufferAllocator</code> and our <code>ArenaAllocator</code> in our <code>FallbackAllocator</code> we ensure that any allocations will first try to use the (very fast) <code>FixedBufferAllocator</code> and when that's full, use the <code>ArenaAllocator</code>.</p>
+
+<p>Because we're exposing an <code>std.mem.Allocator</code>, we're able to make these changes, tweaking how we want our allocator to work, without breaking <code>greet</code>.</p>
+
+<p>Hopefully this example highlights what I consider two real benefits to explicit allocators: simplifying resource management (via something like an <code>ArenaAllocator</code>) and improved performance by re-using allocations (like we did with <code>retain_with_limit</code> or with our<code>FixedBufferAllocator</code>).</p>
+
