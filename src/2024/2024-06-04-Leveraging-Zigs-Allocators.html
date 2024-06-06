@@ -75,7 +75,7 @@ fn run(worker: *Worker) void {
 }
 {% endhighlight %}
 
-<p>Because <code>std.mem.Allocator</code> is an "<a href="/Zig-Interfaces/">interfaces</a>", our action doesn't need to change. An <code>ArenaAllocator</code> is a great option for an HTTP server because they're bound to a request, which has a well defined/understood lifetime and is relatively short lived. And while it's probably possible to abuse them, it's probably safe to say: use them more!</p>
+<p>Because <code>std.mem.Allocator</code> is an "<a href="/Zig-Interfaces/">interface</a>", our action doesn't need to change. An <code>ArenaAllocator</code> is a great option for an HTTP server because they're bound to a request, which has a well defined/understood lifetime and is relatively short lived. And while it's possible to abuse them, it's probably safe to say: use them more!</p>
 
 <p>We can take this a bit further and re-use the same arena. That might not seem too useful, but take a look at this:</p>
 
@@ -99,7 +99,7 @@ fn run(worker: *Worker) void {
 
 <p>We've moved our arena outside the loop but the important part is inside: after each request, we reset the arena and retain up to 8K of memory. That means that, for many requests, we'll never have to go to our underling allocator (<code>worker.server.allocator</code>) to get more memory. This can significantly improve performance.</p>
 
-<p>Now imagine a sad world where we couldn't reset our arena with <code>retain_with_limit</code>. Could we still apply the same optimization? Yes, by creating our own allocator which first attempts to use a <code>FixedBufferAllocator</code> and then falls back to our arena.</p>
+<p>Now imagine a sad world where we couldn't reset our arena with <code>retain_with_limit</code>. Could we still apply the same optimization? Yes, by creating our own allocator which first attempts to use a <code>FixedBufferAllocator</code> and then falling back to our arena.</p>
 
 <aside><p>Zig has <code>std.heap.StackFallbackAllocator</code>, but this requires a comptime-known length (since its on the stack), which is a big limitations. It could have been used in this specific example, but in my actual HTTP server, the size is configurable and thus not comptime known.</p></aside>
 
