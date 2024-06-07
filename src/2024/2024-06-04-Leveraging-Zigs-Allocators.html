@@ -168,7 +168,7 @@ fn run(worker: *Worker) void {
     };
 
     const action = worker.route(conn.req.url);
-    action(fba.allocator(), conn.req, conn.res) catch { // TODO: 500 };
+    action(fallback.allocator(), conn.req, conn.res) catch { // TODO: 500 };
     worker.write(conn.res);
   }
 }
