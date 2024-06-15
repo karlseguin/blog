@@ -158,6 +158,8 @@ fn run(worker: *Worker) void {
   var fba = std.heap.FixedBufferAllocator.init(buf);
 
   while (queue.pop()) |conn| {
+    defer fba.reset();
+
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
 
