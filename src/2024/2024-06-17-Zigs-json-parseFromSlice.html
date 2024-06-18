@@ -1,0 +1,127 @@
+---
+layout: post
+date: 2024-06-18
+title: "Zig's std.json.parseFormSlice and std.json.Parsed(T)"
+tags: [zig]
+---
+
+<p>In Zig's discord server, I see a steady stream of developers new to Zig struggling with parsing JSON. I like helping with this problem because you can learn a lot about Zig through it. A typical, but incorrect, first attempt looks something like:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+const Config = struct {
+  db_path: []const u8,
+};
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  defer _ = gpa.deinit();
+  const allocator = gpa.allocator();
+
+  const config = try parseConfig(allocator, "config.json");
+
+  std.debug.print("db path: {s}\n", .{config.db_path});
+}
+
+fn parseConfig(allocator: Allocator, path: []const u8) !Config {
+  const data = try std.fs.cwd().readFileAlloc(allocator, path, 4096);
+  defer allocator.free(data);
+
+  const parsed = try std.json.parseFromSlice(Config, allocator, data, .{});
+  return parsed.value;
+}
+{% endhighlight %}
+
+<p>This code has two bugs: a dangling pointer and memory leak. Because the use of a dangling pointer is an undefined behavior, this code may or may not crash on the last line of main (which tries to print <code>db_path</code>), but it definitely will report a memory leak.</p>
+
+<h3>Dangling Pointer</h3>
+<p>First we'll fix the dangling pointer. The <code>parseFromSlice</code> function takes our JSON input (<code>data</code>) and tries to parse it into a <code>Config</code>. Our JSON input comes from reading the file. Thanks to the call to <code>defer allocator.free(data)</code>, this data is freed when <code>parseConfig</code> exits. This is the source of our bug. By default, <code>parseFromSlice</code> uses references to the underlying JSON input. So when <code>data</code> is freed, those references are no longer valid.</p>
+
+<p>The last parameter to <code>parseFromSlice</code> is a <code>ParseOption</code>. It controls various aspects of parsing. The option we care about is <code>allocate</code> which defaults to <code>.alloc_if_needed</code>. We need to pass <code>.{.allocate = .alloc_always}</code> to fix our dangling pointer:</p>
+
+{% highlight zig %}
+  ... = try std.json.parseFromSlice(Config, allocator, data, .{
+      .allocate = .alloc_always,
+  });
+{% endhighlight %}
+
+<p>We could consider this fixed, and move on to our memory leak, but let's go a bit deeper. The ability to reference the input data is an optimization. When the input outlives the parsed value, it makes sense to simply reference the existing input. To see this in action, we could change our code so that <code>data</code> outlives our parsed value and not used the <code>alloc_always</code> setting:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  defer _ = gpa.deinit();
+  const allocator = gpa.allocator();
+
+  const data = try std.fs.cwd().readFileAlloc(allocator, "config.json", 4096);
+  defer allocator.free(data);
+
+  const parsed = try std.json.parseFromSlice(Config, allocator, data, .{});
+  std.debug.print("db path: {s}\n", .{parsed.value.db_path});
+}
+{% endhighlight %}
+
+<p>This version doesn't have a dangling pointer and doesn't have to copy the string values of our JSON input to populate the fields of <code>Config</code>. Because <code>data</code> outlives <code>parsed</code>, references from <code>parsed.value</code> to <code>data</code> remain valid (although, someone could mutate <code>data</code>, but that's another problem). This version still has the same memory leak though (we'll get to that soon).</p>
+
+<p>The <code>allocate</code> option has two possible values. The default is <code>alloc_if_needed</code> and the other, the one we used to fix the code, is <code>alloc_always</code>. You could be forgiven for thinking that our code should have worked with the default, <code>alloc_if_needed</code>. After all, our code needed the string value duplicated since our parsed <code>Config</code> outlives the input, right? But the "if needed" part of <code>alloc_if_needed</code> references the parser itself: allocate if the JSON parser needs it. If you think about it, this makes sense. There's no way for <code>parseFromSlice</code> to know that the parsed value outlives the JSON input. I think this option would be less confusing as a boolean called <code>dupe_strings</code>.</p>
+
+<p>When does the parser itself need to make allocations? There are two cases. The first is for internal bookkeeping. Specifically, since JSON can be arbitrarily nested, and nesting can be a mix of arrays and objects, a parser needed to track of the type of value (object or array) of each nesting. Secondly, <code>parseFromSlice</code> is a higher-level API over a low-level JSON scanner. That scanner is more generic and works over a stream of data. If the JSON input is being streamed in, one chunk at a time, a string value might span multiple chunks. In such cases, the string parts must be duped by the scanner in order to produce a single cohesive string value. Because of these two cases, there's no <code>none</code> option to the <code>allocate</code>. An specialized scanner with a max supported nesting, that only worked on a long-lived full JSON input could be implemented without allocations. But that isn't how Zig's scanner works.</p>
+
+<h3>Memory Leak</h3>
+<p>For the second issue, the memory leak, recall the original code called <code>parseFromSlice</code> and assigned the return value to a variable name <code>result</code> and then returned <code>result.value</code>. That's immediately suspicious. If nothing else, what exactly does <code>parseFromSlice</code> return, and why doesn't it return a <code>T</code> (<code>Config</code> in our example) directly? From Zig's documentation, we know that the return type is a <code>std.json.Parsed(T)</code>, but that type isn't documented.</p>
+
+<p><code>Parsed(T)</code> is a simple type. It's obviously a generic and has two fields:</p>
+
+{% highlight zig %}
+pub fn Parsed(comptime T: type) type {
+  return struct {
+    value: T,
+    arena: *ArenaAllocator,
+
+    pub fn deinit(self: @This()) void {
+      //...
+    }
+  };
+}
+{% endhighlight %}
+
+<p>In the previous section we saw that parsing JSON almost always requires allocations, for internal bookkeeping and/or for duping strings. If we don't free those allocations, they'll leak. By using an ArenaAllocator, it's much easier (and faster) to manage the memory as a whole.</p>
+
+<p>The dangling pointer happened because the JSON input had a shorter lifetime than our <code>config</code>, resulting in <code>config</code> referencing no-longer valid memory. Our memory leak is kind of the opposite: by returning only <code>result.value</code>, we've lost any reference to the arena and thus can never free those allocations.</p>
+
+<p>One solution is to change <code>parseConfig</code> so that it returns <code>Parsed(Config)</code>. This allows our caller to <code>deinit</code> the arena:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  defer _ = gpa.deinit();
+  const allocator = gpa.allocator();
+
+  const parsed = try parseConfig(allocator, "config.json");
+  defer parsed.deinit();
+
+  std.debug.print("db path: {s}\n", .{parsed.value.db_path});
+}
+
+fn parseConfig(allocator: Allocator, path: []const u8) !std.json.Parsed(Config) {
+  const data = try std.fs.cwd().readFileAlloc(allocator, path, 4096);
+  defer allocator.free(data);
+
+  return std.json.parseFromSlice(Config, allocator, data, .{
+      .allocate = .alloc_always,
+  });
+}
+{% endhighlight %}
+
+<p>You can't call <code>parsed.deinit()</code> inside of <code>parseConfig</code> and then return <code>parsed.value</code>. Then we'd re-introduce a different dangling pointer where the config references memory allocated by the arena which has since been freed. The <code>arena</code> and <code>value</code> are tightly linked, they exist as a single unit.</p>
+
+<p>Personally, I don't like the name <code>std.json.Parsed(T)</code>. There's nothing JSON-specific about this type. It's just a value of type <code>T</code> and an <code>ArenaAllocator</code>. I would prefer if the type was something like <code>std.Owned(T)</code>. But whatever its name, the value and arena are one and share a lifetime.</p>
+
+<p>In addition to <code>parseFromSlice</code> there's also a <code>parseFromSliceLeaky</code>. The "leaky" version returns <code>T</code> directly. This version is written assuming that the provided allocator is able to free all allocations, without having to track every individual allocations. It essentially assumes that the provided allocator is something like an <code>ArenaAllocator</code> or a <code>FixedBufferAllocator</code>. In practical terms, <code>parseFromSlice</code> internally creates an <code>ArenaAllocator</code> and returns that allocator with the parsed value whereas <code>parseFromSliceLeaky</code> takes an <code>ArenaAllocator</code> (or something like it) and returns the parsed value. In both cases, you end up with a value of type <code>T</code> tied to an allocator.</p>
+
+<h3>Conclusion</h3>
+<p>The short version is that Zig's JSON parser has the ability to either reference the JSON input or make copies of the [string] values. The default is to reference the JSON input, which causes issues if the JSON input <strong>does not</strong> outlive the parsed value. The benefit is better performance (fewer allocations) for cases where the input <strong>does</strong> outlive the parsed value.</p>
+
+<p>Furthermore, since parsing JSON <em>can</em> require allocations, <code>parseFromSlice</code> returns both the parsed value and an <code>ArenaAllocator</code>. To prevent memory leaks, <code>deinit</code> must be called on the <code>Parse(T)</code> returned by the function, at which point the <code>value</code> is no longer valid.</p>
