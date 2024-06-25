@@ -1,0 +1,248 @@
+---
+layout: post
+date: 2024-06-26
+tags: [zig]
+title: Be Careful When Assigning ArenaAllocators
+---
+
+<p>A bug was recently reported in <a href="https://github.com/karlseguin/pg.zig">pg.zig</a> which was the result of a dangling pointer to an ArenaAllocator <sup>(1)</sup>. This amused me since (a) I write a lot about dangling pointers (b) I write a bit about ArenaAllocators and (c) it isn't the first time I've messed this up.</p>
+
+<aside><p><sup>(1)</sup> Actually, multiple bugs were reported (and fixed), but lets not dwell on that.</p></aside>
+
+<h3>Overview</h3>
+<p>If we go back to basics, in <a href="/Zig-Dangling-Pointers/">Zig dangling pointers and segfaults</a> we started off with an easy-to-understad demonstration of a dangling pointer which boiled down to this function:</p>
+
+{% highlight zig %}
+fn powerLevel(over: i32) ![]u8 {
+  var buf: [20]u8 = undefined;
+  return std.fmt.bufPrint(&buf, "over {d}!!!", .{over});
+}
+{% endhighlight %}
+
+<p><code>bufPrint</code> writes the formatted string into <code>buf</code> and returns a slice into <code>buf</code> containing the formatted string (or an error if <code>buf</code> isn't big enough). It might help if we imagine that <code>bufPrint</code> returns the length of the formatted string and adjust our code accordingly:</p>
+
+{% highlight zig %}
+fn powerLevel(over: i32) ![]u8 {
+  var buf: [20]u8 = undefined;
+
+  // If bufPrint returned the length of the formatted string
+  // rather than a slice of buf
+  const n = try std.fmt.bufPrint(&buf, "over {d}!!!", .{over});
+
+  return buf[0..n];
+}
+{% endhighlight %}
+
+<p>Now if you're new to Zig, you might be surprised to find out that, while the above is invalid, this is completely fine:</p>
+
+{% highlight zig %}
+fn getRandom() [16]u8 {
+  var bin: [16]u8 = undefined;
+  std.crypto.random.bytes(&bin);
+  return bin;
+}
+{% endhighlight %}
+
+<p>In Zig, assignments, including return values, are always copies. In the above two examples, and in the actual bug that we'll cover shortly, it all comes down to understanding what it is we are copying. In the first case, we're returning a slice and in the second case, an array. A slice is a length and pointer to an an array. It's that level of indirection that causes the issue. When you return the slice, you're returning a copy of the length (which is fine) and the pointer. That pointer is an address, but, in <code>powerLevel</code> it's an address which stops being valid when the function returns.</p>
+
+<p>With the array, there is no indirection. We're not returning an address of the array, we're returning the array itself. If we changed the function return type to <code>[]u8</code> and then did <code>return &ampbin;</code>, we'd be in trouble again, as now we'd be returning an address which will become invalid.</p>
+
+<p>What does all this have to do with ArenaAllocators?</p>
+
+<h3>ArenaAllocator</h3>
+<p>The issue found in pg.zig can be simulated by a trivial example:</p>
+
+{% highlight zig %}
+const User = struct{
+  name: []const u8,
+  arena: std.heap.ArenaAllocator,
+
+  fn init(allocator: Allocator, name: []const u8) !User {
+    var arena = ArenaAllocator.init(allocator);
+    return .{
+      .arena = arena,
+      .name = try arena.allocator().dupe(u8, name),
+    };
+  }
+
+  fn deinit(self: *const User) void {
+    self.arena.deinit();
+  }
+};
+{% endhighlight %}
+
+<p>Our <code>User</code> has a <code>name</code> and, reasonably, in <code>init</code> we clone the name to ensure that it lives for as long as the <code>user</code> (otherwise, the caller would need to make sure the <code>name</code> passed into <code>init</code> is valid for as long as the returned <code>user</code>). It's a bit premature, but we create an arena to manage any allocations associated with the <code>user</code>. This makes our <code>user.deinit</code> method simple: clear the arena.</p>
+
+<p>Unfortunately, even if <code>user.deinit()</code> is called, this code has a memory leak. If we take the above struct and try to use it in a program, we'll be told that <code>user.name</code> is leaking despite <code>arena.deinint</code> being called:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+  defer _ = gpa.detectLeaks();
+
+  var arena = ArenaAllocator.init(allocator);
+  defer arena.deinit();
+
+  var user = try User.init(allocator, "Teg");
+  defer user.deinit();
+
+  std.debug.print("{s}\n", .{user.name});
+}
+{% endhighlight %}
+
+<p>Can you tell what's going on? Here's a hint, if we make a small change to our <code>User.init</code>, the leak goes away:</p>
+
+{% highlight zig %}
+fn init(allocator: Allocator, name: []const u8) !User {
+  var arena = ArenaAllocator.init(allocator);
+  return .{
+    // the order has been swapped
+    .name = try arena.allocator().dupe(u8, name),
+    .arena = arena,
+  };
+}
+{% endhighlight %}
+
+<p>I think this is the type of bug that some people will see right away and consider obvious. But for me, even looking at this code, specifically designed around the issue, I find it subtle. Why is one version right and the other one wrong? To answer that, we need to understand what an <code>ArenaAllocator</code> <em>is</em> (not how it works).</p>
+
+<p><code>std.heap.ArenaAllocator</code> is a structure with two fields:</p>
+
+{% highlight zig %}
+pub const ArenaAllocator = struct {
+    child_allocator: Allocator,
+    state: State,
+
+    pub const State = struct {
+        buffer_list: std.SinglyLinkedList(usize) = .{},
+        end_index: usize = 0,
+    };
+};
+{% endhighlight %}
+
+<p>What Zig calls the "child_allocator", I would call the "parent_allocator", but either way, this is the allocator passed into <code>init</code>. The structure could be simplified by directly storing the state:</p>
+
+{% highlight zig %}
+pub const ArenaAllocator = struct {
+    child_allocator: Allocator,
+    buffer_list: std.SinglyLinkedList(usize) = .{},
+    end_index: usize = 0,
+};
+{% endhighlight %}
+
+<p>But the existing design allows an optimization: we can reference the state directly. This is what it would look like with our <code>User</code>:</p>
+
+{% highlight zig %}
+const User = struct{
+  name: []const u8,
+
+  // changed
+  arena: ArenaAllocator.State,
+
+  fn init(allocator: Allocator, name: []const u8) !User {
+    var arena = ArenaAllocator.init(allocator);
+    const owned = try arena.allocator().dupe(u8, name);
+    return .{
+      // changed
+      .arena = arena.state,
+      .name = owned,
+    };
+  }
+
+  //changed
+  fn deinit(self: *const User, allocator: Allocator) void {
+    self.arena.promote(allocator).deinit();
+  }
+};
+{% endhighlight %}
+
+<p>The main takeway is that we can "promote" our <code>ArenaAllocator.State</code> back into an <code>ArenaAllocator</code> by providing the same <code>allocator</code> passed to <code>init</code>. This should make some sense. We saw that an <code>ArenaAllocator</code> is two fields: <code>allocator</code> and <code>state</code>. Our user stores the <code>state</code> and can turn that back into a full <code>ArenaAllocator</code> by providing the missing part: the <code>allocator</code>. What does this achieve? It makes our <code>User</code> struct smaller because it [indirectly] has 1 less field, the <code>child_allocator</code>. If you had thousands of ArenaAllocators, that could add up.</p>
+
+<p>None of that answers tells us why this leaks:</p>
+
+{% highlight zig %}
+var arena = std.heap.ArenaAllocator.init(allocator);
+return .{
+  .arena = arena,
+  .name = try arena.allocator().dupe(u8, name),
+};
+{% endhighlight %}
+
+<p>The answer is: assignments are copies. When we assign the <code>arena</code> variable to our <code>arena</code> field, via <code>.arena = arena</code>, we're making a copy of our <code>ArenaAllocator</code>. At that point, it is correct to say we have two <code>ArenaAllocators</code>. One is the <code>arena</code> local variable and one belongs to the returned value. With this perspective, which arena do we <code>dupe</code> from and which do we <code>deinit</code>?</p>
+
+<p>If we go back to our program and print <code>user.arena.state.buffer_list.first</code>, it'll print <code>null</code>. That explains why re-arranging our code fixes the issue.</p>
+
+{% highlight zig %}
+var arena = ArenaAllocator.init(allocator);
+return .{
+  .name = try arena.allocator().dupe(u8, name),
+  .arena = arena,
+};
+{% endhighlight %}
+
+<p>In this version, the copy that we're making happens after the allocation. There are still 2 arenas, but the mutation happens before the copy and thus the copy includes a copy of <code>state</code> which knows about the allocation made with <code>dupe</code>.</p>
+
+<h3>Solution</h3>
+<p>In some cases, simply re-arranging the code as we did, might be suitable. But this would only work for simple cases as it doesn't seem like a particularly robust solution. It's very easy to mess up. It's tempting to think that instead of copying the <code>arena</code>, we could just get its address:</p>
+
+{% highlight zig %}
+const User = struct{
+  name: []const u8,
+  arena: *ArenaAllocator, // changed to a pointer
+
+  fn init(allocator: Allocator, name: []const u8) !User {
+    var arena = ArenaAllocator.init(allocator);
+    return .{
+      .arena = &arena,   // changed to take the address
+      .name = try arena.allocator().dupe(u8, name),
+    };
+  }
+
+  // ...
+};
+{% endhighlight %}
+
+<p>It's true that now we only have 1 arena, because our field assignment is copying an address. But we've introduced a dangling pointer because the address that we're copying lives on the stack which will become invalid when we return.</p>
+
+<p>This is a common problem, and not just with <code>ArenaAllocators</code>. We want to reference something and we need that something to outlive the current stack. That isn't phrased as a question, but the heap is the answer:</p>
+
+{% highlight zig %}
+const User = struct{
+  name: []const u8,
+  arena: *ArenaAllocator,
+
+  fn init(allocator: Allocator, name: []const u8) !User {
+    const arena = try allocator.create(ArenaAllocator);
+    errdefer allocator.destroy(arena);
+    arena.* = ArenaAllocator.init(allocator);
+
+    return .{
+      .arena = arena,
+      .name = try arena.allocator().dupe(u8, name),
+    };
+  }
+
+  fn deinit(self: *const User) void {
+    self.arena.deinit();
+  }
+};
+{% endhighlight %}
+
+<p>We've actually introduced another memory leak, but we're progressing, our original issue is fixed. <code>allocator.create</code> return a <code>*ArenaAllocator</code> (a pointer to an <code>ArenaAllocator</code>). When we assign <code>.arena = arena</code>, we're still making a copy, but rather than making a copy of the <code>ArenaAllocator</code> and its <code>state</code> field, we're creating copy of the address. A copy of an address is still pointing to the same initial instance. Furthermore, our <code>ArenaAllocator</code> no longer lives on the function stack, it lives on the heap. Its outlives the function call.</p>
+
+<p>However, our code is now making a new allocation. Before, we were only allocating a duplicate of <code>name</code>. Now we're also allocating an <code>ArenaAllocator</code> which we never free. That's our new leak. We need to change <code>user.deinit</code>:</p>
+
+{% highlight zig %}
+fn deinit(self: *const User) void {
+  const allocator = self.arena.child_allocator;
+  self.arena.deinit();
+  allocator.destroy(self.arena);
+}
+{% endhighlight %}
+
+<h3>Conclusion</h3>
+<p>The example we used ended up creating a memory leak, but you could get different results, including segfaults. The exact behavior is hard to reason about. In the case of pg.zig, multiple allocations were being made, across copies of the same <code>ArenaAllocator</code>, reallocations were happening, and the "child allocator" had its own complexity. The result was a bus error - something you don't see often.</p>
+
+<p>The issue isn't specific to <code>ArenaAllocator</code>, but from my own experience and help channels, I know others have had the same problem. Maybe that's because <code>ArenaAllocators</code> are frequently used. For me, it highlights the need to be mindful of assignments. You need to know what's being copied and how the original and new copy are being used  after the assignment takes place. Part of the subtlety comes from how simple this example is. The <code>return</code> statement both creates a copy and then mutates the original.</p>
+
+<p>I somehow find this issue obvious in hindsight but also very subtle.</p>
