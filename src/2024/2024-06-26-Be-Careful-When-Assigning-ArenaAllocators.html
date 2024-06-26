@@ -158,7 +158,7 @@ const User = struct{
 
 <p>The main takeway is that we can "promote" our <code>ArenaAllocator.State</code> back into an <code>ArenaAllocator</code> by providing the same <code>allocator</code> passed to <code>init</code>. This should make some sense. We saw that an <code>ArenaAllocator</code> is two fields: <code>allocator</code> and <code>state</code>. Our user stores the <code>state</code> and can turn that back into a full <code>ArenaAllocator</code> by providing the missing part: the <code>allocator</code>. What does this achieve? It makes our <code>User</code> struct smaller because it [indirectly] has 1 less field, the <code>child_allocator</code>. If you had thousands of ArenaAllocators, that could add up.</p>
 
-<p>None of that answers tells us why this leaks:</p>
+<p>None of that tells us why this leaks:</p>
 
 {% highlight zig %}
 var arena = std.heap.ArenaAllocator.init(allocator);
@@ -170,7 +170,7 @@ return .{
 
 <p>The answer is: assignments are copies. When we assign the <code>arena</code> variable to our <code>arena</code> field, via <code>.arena = arena</code>, we're making a copy of our <code>ArenaAllocator</code>. At that point, it is correct to say we have two <code>ArenaAllocators</code>. One is the <code>arena</code> local variable and one belongs to the returned value. With this perspective, which arena do we <code>dupe</code> from and which do we <code>deinit</code>?</p>
 
-<p>If we go back to our program and print <code>user.arena.state.buffer_list.first</code>, it'll print <code>null</code>. That explains why re-arranging our code fixes the issue.</p>
+<p>If we go back to our program and print <code>user.arena.state.buffer_list.first</code>, it'll print <code>null</code>. In short, we're duping from one arena and freeing from another. Now we can understand why re-ordering the field assignment fixes the issue.</p>
 
 {% highlight zig %}
 var arena = ArenaAllocator.init(allocator);
@@ -183,7 +183,7 @@ return .{
 <p>In this version, the copy that we're making happens after the allocation. There are still 2 arenas, but the mutation happens before the copy and thus the copy includes a copy of <code>state</code> which knows about the allocation made with <code>dupe</code>.</p>
 
 <h3>Solution</h3>
-<p>In some cases, simply re-arranging the code as we did, might be suitable. But this would only work for simple cases as it doesn't seem like a particularly robust solution. It's very easy to mess up. It's tempting to think that instead of copying the <code>arena</code>, we could just get its address:</p>
+<p>In some cases, re-arranging the code as we did, might be suitable. But this would only work for simple cases as it doesn't seem like a particularly robust solution. It's very easy to mess up. It's tempting to think that instead of copying the <code>arena</code>, we could just get its address:</p>
 
 {% highlight zig %}
 const User = struct{
@@ -202,9 +202,9 @@ const User = struct{
 };
 {% endhighlight %}
 
-<p>It's true that now we only have 1 arena, because our field assignment is copying an address. But we've introduced a dangling pointer because the address that we're copying lives on the stack which will become invalid when we return.</p>
+<p>It's true that now we only have 1 arena, because our field assignment is copying an address. But we've introduced a dangling pointer since the address that we're copying lives on the stack which will become invalid when we return.</p>
 
-<p>This is a common problem, and not just with <code>ArenaAllocators</code>. We want to reference something and we need that something to outlive the current stack. That isn't phrased as a question, but the heap is the answer:</p>
+<p>This is a common problem, and not just with <code>ArenaAllocators</code>. We want to reference something and we need that something to outlive the current stack. That wasn't phrased as a question, but the answer is <em>put it on the heap</em>:</p>
 
 {% highlight zig %}
 const User = struct{

@@ -218,28 +218,28 @@ tea.full = false;
 <p>Prior to Zig 0.10, the first line of this code:</p>
 
 {% highlight zig %}
-const r = std.rand.DefaultPrng.init(0).random();
+const r = std.Random.DefaultPrng.init(0).random();
 std.debug.print("{d}\n", .{r.uintAtMost(u16, 1000)});
 {% endhighlight %}
 
 <p>Would have been equivalent to:</p>
 
 {% highlight zig %}
-var t = std.rand.DefaultPrng.init(0);
+var t = std.Random.DefaultPrng.init(0);
 const r = t.random();
 {% endhighlight %}
 
 <p>From 0.10 onward however, the same line is now equivalent to:</p>
 
 {% highlight zig %}
-const t = std.rand.DefaultPrng.init(0);
+const t = std.Random.DefaultPrng.init(0);
 const r = t.random();
 {% endhighlight %}
 
 <p>Notice that <code>t</code> has gone from being a <code>var</code> to a <code>const</code>. The difference is important since <code>random()</code> requires a mutable value. In other words, our original code no longer works. You'll get an error saying that a <code>*rand.Xoshiro256</code> was expected, but a <code>*const rand.Xoshiro256</code> was found instead. To make it work, we need to split the original code and explicitly introduce the temporary variable as a <code>var</code>:</p>
 
 {% highlight zig %}
-var t = std.rand.DefaultPrng.init(0);
+var t = std.Random.DefaultPrng.init(0);
 const r = t.random();
 {% endhighlight %}
 
