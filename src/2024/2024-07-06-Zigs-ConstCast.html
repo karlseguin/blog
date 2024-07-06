@@ -1,0 +1,232 @@
+---
+layout: post
+date: 2024-07-06
+tags: [zig]
+title: Zig's @constCast
+---
+
+<p>In the <a href="/learning_zig/coding_in_zig/#ownership">Coding in Zig</a> section of my Learning Zig series, an invalid snippet was recently pointed out to me. The relevant part was:</p>
+
+{% highlight zig %}
+if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |line| {
+  var name = line;
+  if (builtin.os.tag == .windows) {
+    name = std.mem.trimRight(u8, name, "\r");
+  }
+  if (name.len == 0) {
+    break;
+  }
+  try lookup.put(name, .{.power = i});
+}
+{% endhighlight %}
+
+<p>The purpose of the code was to look at more cases of dangling pointers: in this example, <code>name</code> is used as a key in our <code>lookup</code> map, but it isn't valid beyond the <code>if</code> block. To show how clever I am, I included code to deal with Windows' different line ending. But when run on Windows, the code wouldn't compile.</p>
+
+<p>This issue has nothing to do with Windows, and it has nothing to do with the issue this example was trying to highlight. So let's disentangle and simplify the error case.</p>
+
+<p>We begin with a working function that normalizes an user's name:</p>
+
+{% highlight zig %}
+fn normalize(name: []u8) void {
+  // If we have reason to believe that, at this point in our code,
+  // name should never be empty, we should assert it.
+  // (If we weren't sure, then we should add an if check)
+  std.debug.assert(name.len > 0);
+
+  name[0] = std.ascii.toUpper(name[0]);
+}
+{% endhighlight %}
+
+<p>The function mutates the name in-place, which is possible because the name parameter is declared as a <code>[]u8</code> instead of a <code>const []u8</code>. (This is a valid real-world pattern, but equally common would be to have the normalization process dupe the input and mutate that duped variant, in which cae <code>name</code> could be a <code>[]const u8</code>). The next step in our normalization is to trim spaces. This requires changing our <code>normalize</code> function to return a new slice:</p>
+
+{% highlight zig %}
+fn normalize(name: []u8) []u8 {
+  std.debug.assert(name.len > 0);
+
+  name = std.mem.trim(u8, name, " ");
+  name[0] = std.ascii.toUpper(name[0]);
+  return name;
+}
+{% endhighlight %}
+
+<p>This code doesn't compile because we're trying to assign a value to <code>name</code>, and parameters are always <code>const</code>. So we make a small modification, right?:</p>
+
+{% highlight zig %}
+var trimmed = std.mem.trim(u8, name, " ");
+
+// this line will cause an error
+trimmed[0] = std.ascii.toUpper(trimmed[0]);
+
+return trimmed;
+{% endhighlight %}
+
+<p>Just like the example in Learning Zig, This code doesn't compile: <em>error: cannot assign to constant</em> on the line which tries to uppercase the first letter. To me, at first, glance, the problem isn't obvious. <code>trimmed</code> is a <code>var</code> and it's a slice into <code>name</code> which, as before, is a <code>[]u8</code> not a <code>const []u8</code>. What gives?</p>
+
+<p>To understand the issue, we need to look at the definition of <code>std.mem.trim</code>:</p>
+
+{% highlight zig %}
+pub fn trim(comptime T: type, slice: []const T, strip: []const T) []const T
+{% endhighlight %}
+
+<p>This is a generic function, which is to say it can work on any type. Like in this example, there's a good chance that you'll only ever use <code>trim</code> where <code>T == u8</code>. We can make this code just a little less abstract by imagining the implemented generated for <code>u8</code>:</p>
+
+{% highlight zig %}
+pub fn trim(slice: []const u8, strip: []const u8) []const u8
+{% endhighlight %}
+
+<p>Both inputs are of type <code>[]const u8</code>, which makes sense. Neither the <code>slice</code> nor <code>strip</code> are mutated (the function returns a sub-slice of <code>slice</code>). Whenever possible, you should make method parameters <code>const</code>. Not only can this result in optimizations, but it makes it so the function can be used with both non-<code>const</code> and <code>const</code> inputs. Because a non-<code>const</code> value can always be cast to <code>const</code>, Zig does it implicitly. By having <code>slice</code> be a <code>[]const u8</code>, <code>trim</code> is able to operate on both <code>[]u8</code> and <code>[]const u8</code> values.</p>
+
+<aside><p>It's worth repeating: prefer <code>const</code> where possible. Even for functions that take pointers:</p>
+
+{% highlight zig %}
+const User = struct {
+  power_level: u32,
+
+  pub fn isOver9000(self: *const User) bool {
+    return self.power_level > 9000;
+  }
+};
+{% endhighlight %}
+</aside>
+
+<p>Our issue isn't with the input parameters, it's with the return type, which is also <code>[]const u8</code>. If we go back to our code, we can see now why Zig refused to compile when we tried to write into <code>trimmed[0]</code>: the value returned by <code>trim</code> is <code>[]const u8</code>. Although we declared <code>trimmed</code> as <code>var</code>, this only means we can mutate the slice itself (i.e. we can change its length, or change where it points to). The underlying data is a <code>[]const u8</code>, because that's what <code>trim</code> returns.</p>
+
+<h3>@constCast</h3>
+<p>The simplest solution is to use <code>@constCast</code> to strip away the <code>const</code>. This works:</p>
+
+{% highlight zig %}
+fn normalize(name: []u8) []u8 {
+  const trimmed = @constCast(std.mem.trim(u8, name, " "));
+  trimmed[0] = std.ascii.toUpper(trimmed[0]);
+  return trimmed;
+}
+{% endhighlight %}
+
+<p><code>@constCast</code> is similar to <code>@ptrCast</code> and <code>@alignCast</code> which I've talked about in <a href="/Zig-Interfaces/">Zig Interfaces</a> and <a href="/Zig-Tiptoeing-Around-ptrCast/">Tiptoeing Around @ptrCast</a>. All three are tools to override the compiler. An important part of the compiler's job is to know the type of data and make sure our manipulations of that data is valid. <code>@constCast</code> is probably the simplest of the three. It tells the compiler: I know you think this is a <code>const</code>, but trust me, it isn't. This is dangerous because, if you're wrong, what would be a compile-time bug turns into an undefined behavior.</p>
+
+<p>We can easily see this in action. This code won't compile because Zig knows that <code>name</code> is <code>const</code> and won't let us write to it. String literals are always constants:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  const name = "leto";
+  name[0] = 'L';   // error: cannot assign to constant
+  std.debug.print("{s}\n", .{name});
+}
+{% endhighlight %}
+
+<p>Like our <code>trimmed</code> variable, we can try to define <code>name</code> as <code>var</code>, but we'll get the same error. We've made the slice itself mutable (the <code>len</code> and <code>ptr</code> fields), but the underlying data is still <code>const</code>:</p>
+
+
+{% highlight zig %}
+pub fn main() !void {
+  // const changed to var
+  var name = "leto";
+  name[0] = 'L';   // error: cannot assign to constant
+  std.debug.print("{s}\n", .{name});
+}
+{% endhighlight %}
+
+<p>But this version with <code>@constCast</code> <em>will</em> compile:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  const name = @constCast("leto");
+  name[0] = 'L';
+  std.debug.print("{s}\n", .{name});
+}
+{% endhighlight %}
+
+<p>Try to run this code though and it will almost certainly crash. <code>@constCast</code> and its siblings are unsafe and <code>@constCast</code> tends to have fewer legitimate use-case than the others. Some people would say you should never use it. Others, myself included, think the world isn't perfect, libraries aren't perfect (which I'd argue <code>std.mem.trim</code> is a good example of), and it's a useful tool to have. But if you do use it, or its siblings, you must understand the distinction between changing the compiler's perspective and changing reality. <code>@constCast</code> merely changes the compiler's perspective, the reality remains unchanged. If you're wrong, your code will crash.</p>
+
+<p>If we go back to our non-working example, we can see how <code>@constCast</code> is a reasonable solution:</p>
+
+{% highlight zig %}
+fn normalize(name: []u8) []u8 {
+  std.debug.assert(name.len > 0);
+
+  // @constCast added here;
+  name = @constCast(std.mem.trim(u8, name, " "));
+  name[0] = std.ascii.toUpper(name[0]);
+  return name;
+}
+{% endhighlight %}
+
+<p>I say it's "reasonable" because we know <code>name</code> is mutable and we know <code>trim</code> returns a slice into <code>name</code>. I can't think of any future changes to <code>trim</code> which would make this unsafe. I literally can't think of <em>how</em> you'd change <code>trim</code> to make this unsafe, and certainly no reasonable change.</p>
+
+<h3>Alternatives?</h3>
+<p>If we look at <code>trim</code>'s signature again:</p>
+
+{% highlight zig %}
+pub fn trim(comptime T: type, slice: []const T, strip: []const T) []const T
+{% endhighlight %}
+
+<p>It's tempting to think that we could  change the return type to not be <code>const</code>:</p>
+
+{% highlight zig %}
+pub fn trim(comptime T: type, slice: []const T, strip: []const T) []T
+{% endhighlight %}
+
+<p>This works in our specific case where the input <code>slice</code> is mutable and thus the return slice can be mutable. But now we've dangerously broken the other case: where the input <code>slice</code> <strong>is not</strong> mutable. For example, this version of <code>trim</code> would not work in this common case: <code>trim("  Leto ", " ");</code>. We'd end up calling <code>@constCast</code> on data which is a string literal, i.e. a <code>const</code>. As we just saw, that might compile, but it <strong>will</strong> crash.</p>
+
+<p>This <em>can</em> be solved in Zig, but it isn't trivial and isn't something I'd feel comfortable doing (let alone explaining). The solution might involve using <code>anytype</code> instead of a generic. Something like:</p>
+
+{% highlight zig %}
+pub fn trim(slice: anytype, strip: ???) @TypeOf(slice)
+{% endhighlight %}
+
+<p>Now if <code>slice</code> is given as a <code>[]const T</code> our return is <code>[]const T</code> and if <code>slice</code> is a <code>[]T</code> then return is <code>[]T</code>. That's promising. However, if we called <code>trim(" Ghanima ", " ")</code>, then <code>TypeOf(slice) == *const [9:0]u8</code>, which isn't the return type we want. And, we still don't have a type of <code>strip</code>.</p>
+
+<p>Our solution needs to get more complicated. Something like:</p>
+
+{% highlight zig %}
+pub fn trim(slice: anytype, strip: TrimStrip(@TypeOf(slice))) TrimReturn(@TypeOf(slice))
+{% endhighlight %}
+
+<p>Now we can write functions, <code>TrimStrip</code> and <code>TrimReturn</code>, to generate the correct type for <code>strip</code> and our return. These are just normal functions, but they'll be evaluated at comptime (types always have to be known at comptime). In Zig, types and things which return types are, by convention, PascalCase (which is also why the built-in function is <code>@TypeOf</code> instead of <code>@typeOf</code>).
+
+<p>This would be my implementation of <code>TrimReturn</code>:</p>
+
+{% highlight zig %}
+fn TrimReturn(comptime T: type) type {
+  switch (@typeInfo(T)) {
+    .Pointer => |ptr| switch (ptr.size) {
+      .Slice => return if (ptr.is_const) T else []ptr.child,
+      .One => switch (@typeInfo(ptr.child)) {
+        .Array => return if (ptr.is_const) []const std.meta.Elem(ptr.child) else []std.meta.Elem(ptr.child),
+        else => {},
+      },
+      else => {},
+    },
+    else => {},
+  }
+  @compileError("expected a slice, got: " ++ @typeName(T));
+}
+{% endhighlight %}
+
+<p>Again, this type of comptime programming isn't something I'm confident about. I might be missing cases that should or should not be allowed, or mappings which aren't right. The three empty <code>else</code> cases are for unsupported types - they'll fall through to the <code>@compileError</code> which will cause the compiler to emit an error. The <code>@typeInfo</code> built-in returns a tagged union, currently consisting of 24 possible values (like <code>Int</code> of <code>Fn</code>). Here we're only interested in the <code>Pointer</code> type, which has 4 sub-types based on its <code>size</code> field: <code>Slice</code>, <code>One</code>, <code>Many</code> and <code>C</code>. We rely on the <code>is_const</code> and <code>child</code> fields of the <code>Pointer</code> type to generate the correct return type. The goal, at this point, isn't to provide a working example (sorry, I wish it could be), but rather give some insight into this type of comptime programming. </p>
+
+<p>For completeness, where <code>TrimReturn</code> makes the const-ness of the return type match the const-ness of <code>slice</code>, <code>TrimStrip</code> would make it always <code>const</code>. As such, it would be generally similar to the above, but changed slightly:</p>
+
+{% highlight zig %}
+fn TrimStrip(comptime T: type) type {
+  switch (@typeInfo(T)) {
+    .Pointer => |ptr| switch (ptr.size) {
+                                                // always const
+      .Slice => return if (ptr.is_const) T else []const ptr.child,
+      .One => switch (@typeInfo(ptr.child)) {
+                         // always const
+        .Array => return []const std.meta.Elem(ptr.child),
+        else => {},
+      },
+      else => {},
+    },
+    else => {},
+  }
+  @compileError("expected a slice, got: " ++ @typeName(T));
+}
+{% endhighlight %}
+
+<h3>Conclusion</h3>
+<p>While we diverted into a poor introduction to comptime programming, the main goal of this post was to introduce <code>@constCast</code>. To me the interesting part isn't having <code>@constCast</code> as a tool, but rather seeing and being able to interact and change the compiler's perspective. It seems delicate. Not as in frail, because I think runtime bugs caused by compiler bugs are shockingly rare. But as in beautiful. The compiler can infer so much from so little and enforce correctness.
+
+<p>Having escape hatches, whether through functions like <code>@constCast</code> or <code>unsafe</code> blocks found in other languages, can be essential. Be mindful about what those escape hatches are and aren't doing - they aren't changing the data, they're just changing how the compiler treats the data - and remember that you're replacing compile-time safety ith the possibility of undefined behavior at runtime - a trade off no one should want.</p>
