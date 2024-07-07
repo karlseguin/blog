@@ -20,7 +20,7 @@ if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |line| {
 }
 {% endhighlight %}
 
-<p>The purpose of the code was to look at more cases of dangling pointers: in this example, <code>name</code> is used as a key in our <code>lookup</code> map, but it isn't valid beyond the <code>if</code> block. To show how clever I am, I included code to deal with Windows' different line ending. But when run on Windows, the code wouldn't compile.</p>
+<p>The purpose of the code was to look at more cases of dangling pointers: in this example, <code>name</code> is used as a key in our <code>lookup</code> map, but it isn't valid beyond the <code>if</code> block. To show how clever I am, I included code to deal with Windows' different line ending. However, the code failed to compile for Windows.</p>
 
 <p>This issue has nothing to do with Windows, and it has nothing to do with the issue this example was trying to highlight. So let's disentangle and simplify the error case.</p>
 
@@ -68,13 +68,13 @@ return trimmed;
 pub fn trim(comptime T: type, slice: []const T, strip: []const T) []const T
 {% endhighlight %}
 
-<p>This is a generic function, which is to say it can work on any type. Like in this example, there's a good chance that you'll only ever use <code>trim</code> where <code>T == u8</code>. We can make this code just a little less abstract by imagining the implemented generated for <code>u8</code>:</p>
+<p>This is a generic function, which is to say it can work on any type. Like in this example, there's a good chance that you'll only ever use <code>trim</code> where <code>T == u8</code>. We can make this code just a little less abstract by imagining the implemention generated for <code>u8</code>:</p>
 
 {% highlight zig %}
 pub fn trim(slice: []const u8, strip: []const u8) []const u8
 {% endhighlight %}
 
-<p>Both inputs are of type <code>[]const u8</code>, which makes sense. Neither the <code>slice</code> nor <code>strip</code> are mutated (the function returns a sub-slice of <code>slice</code>). Whenever possible, you should make method parameters <code>const</code>. Not only can this result in optimizations, but it makes it so the function can be used with both non-<code>const</code> and <code>const</code> inputs. Because a non-<code>const</code> value can always be cast to <code>const</code>, Zig does it implicitly. By having <code>slice</code> be a <code>[]const u8</code>, <code>trim</code> is able to operate on both <code>[]u8</code> and <code>[]const u8</code> values.</p>
+<p>Both inputs are of type <code>[]const u8</code>, which makes sense. Neither the <code>slice</code> nor <code>strip</code> are mutated (the function returns a sub-slice of <code>slice</code>). Whenever possible, you should make function parameters <code>const</code>. Not only can this result in optimizations, but it makes it so the function can be used with both non-<code>const</code> and <code>const</code> inputs. Because a non-<code>const</code> value can always be cast to <code>const</code>, Zig does it implicitly. By having <code>slice</code> be a <code>[]const u8</code>, <code>trim</code> is able to operate on both <code>[]u8</code> and <code>[]const u8</code> values.</p>
 
 <aside><p>It's worth repeating: prefer <code>const</code> where possible. Even for functions that take pointers:</p>
 
