@@ -1,0 +1,176 @@
+---
+layout: post
+date: 2024-07-15
+tags: [zig]
+title: Using a custom test runner in Zig
+---
+
+<p>Depending on what you're used to, Zig's built-in test runner might seem a little bare. For example, you might prefer a more verbose output, maybe showing your slowest tests. You might fine control over the output in order to integrate it into a larger build process. You might want to have global setup and teardown functions. Maybe you <a href="https://github.com/ziglang/zig/issues/18111">just want to be able to write to stdout</a>. Whatever your needs, Zig makes it easy to write a custom test runner.</p>
+
+<aside><p>If you just want the code, I <a href="https://gist.github.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b">maintain a gist</a> that you can copy and paste into your project. It'll display timing information, slowest tests and provides hooks for global setup / teardown.</p></aside>
+
+<p>In Zig, a test runner is entry point for <code>zig test</code> or any test step added via <code>zig build</code>. In other words, it's code that contains a <code>pub main() !void</code> entrypoint. Here's a simple version:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const builtin = @import("builtin");
+
+pub fn main() !void {
+    const out = std.io.getStdOut().writer();
+
+    for (builtin.test_functions) |t| {
+        t.func() catch |err| {
+            try std.fmt.format(out, "{s} fail: {}\n", .{t.name, err});
+            continue;
+        };
+        try std.fmt.format(out, "{s} passed\n", .{t.name});
+    }
+}
+{% endhighlight %}
+
+<h3>Usage</h3>
+<p>How do you use it? First, save the above as <code>test_runner.zig</code>. If you're using <code>zig test</code>, us ethe <code>--test runner</code> flag, e.g. <code>--test-runner test_runner.zig</code> parameter. If you're using <code>zig build</code> specify a <code>test_runner</code> configuration when calling <code>addTest</code>:</p>
+
+{% highlight zig %}
+  const tests = b.addTest(.{
+    .root_source_file = b.path("src/main.zig"),
+    .test_runner = b.path("test_runner.zig"),  // <--- add this
+    // ... you might have other ields
+});
+{% endhighlight %}
+
+<h3>Basics</h3>
+<p>We can see from our simple test runner that we iterate through <code>builtin.test_functions</code>, which is an array of <code>std.builtin.TestFn</code>. This struct has two fields, a name and the test function:</p>
+
+{% highlight zig %}
+pub const TestFn = struct {
+    name: []const u8,
+    func: *const fn () anyerror!void,
+};
+{% endhighlight %}
+
+<p>While we don't have much to go by, we can extract a fair bit from the <code>name</code>. For example, given a file "server/handshake.zig" with a <code>test "Handshake: parse"</code>, our <code>t.name</code> would be <code>server.handshake.test.Handshake: parse</code>. While it isn't foolproof, in most cases, we can extract the path to the file containing the test, and the test name.</p>
+
+<p>For example, if we just wanted to display the test name and how long each test took, we could use:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const builtin = @import("builtin");
+
+pub fn main() !void {
+    const out = std.io.getStdOut().writer();
+
+    for (builtin.test_functions) |t| {
+        const start = std.time.milliTimestamp();
+        const result = t.func();
+        const elapsed = std.time.milliTimestamp() - start;
+
+        const name = extractName(t);
+        if (result) |_| {
+            try std.fmt.format(out, "{s} passed - ({d}ms)\n", .{name, elapsed});
+        } else |err| {
+            try std.fmt.format(out, "{s} failed - {}\n", .{t.name, err});
+        }
+    }
+}
+
+fn extractName(t: std.builtin.TestFn) []const u8 {
+    const marker = std.mem.lastIndexOf(u8, t.name, ".test.") orelse return t.name;
+    return t.name[marker+6..];
+}
+{% endhighlight %}
+
+<p>One thing to be mindful of is that Zig supports nameless tests. They look like:</p>
+
+{% highlight zig %}
+test {
+  // ....
+}
+{% endhighlight %}
+
+<p>Since they have no name, Zig will name them <code>test_#</code>, starting at 0. So in our fictional "server/handshake.zig" file, the first nameless test would have the name <code>server.handshake.test_0</code> and the second one would be named <code>server.handshake.test_1</code> (although it's pretty unusual to have 2 nameless tests in the same project, let alone the same file).</p>
+
+<h3>Memory Leak Detection</h3>
+<p>To preserve the builtin test runner's memory leak detection, we need want to set <code>std.testing.allocator_instance</code> before each test, and check for leaks after each test:</p>
+
+{% highlight zig %}
+std.testing.allocator_instance = .{};
+const result = t.func();
+if (std.testing.allocator_instance.deinit() == .leak) {
+  try std.fmt.format(out, "{s} leaked memory\n", .{name});
+}
+{% endhighlight %}
+
+<p>The call to <code>deinit()</code> will output details about the leak to stderr.</p>
+
+<h3>Features</h3>
+<p>Any additional feature we want to build has to use the limited information we have access to. Some people like their tests to stop on the first failures. We can achieve this by returning after the first error:</p>
+
+{% highlight zig %}
+...
+else |err| {
+  try std.fmt.format(out, "{s} failed - {}\n", .{t.name, err});
+  std.process.exit(1);
+}
+{% endhighlight %}
+
+<p>If you want to be able to filter which tests are run (something the default test runner can also do), you could use an environment variable and match the test name using:</p>
+
+{% highlight zig %}
+var mem: [4096]u8 = undefined;
+var fba = std.heap.FixedBufferAllocator.init(&mem);
+const test_filter = std.process.getEnvVarOwned(fba.allocator(), "TEST_FILTER") catch |err| blk: {
+    if (err == error.EnvironmentVariableNotFound) break :blk  "";
+    return err;
+};
+
+for (builtin.test_functions) |t| {
+    if (std.mem.indexOf(u8, t.name, test_filter) == null) {
+        continue;
+    }
+    // run the test, same as before
+}
+{% endhighlight %}
+
+<p>A common question I see people ask is how to run setup/teardown. While I know a lot of people will say this is small and should be avoided, I personally have 2 libraries where I've found it useful (both httpz and websocket.zig setup a global server for full end-to-end testing). Again, this is something we can hack around by using a naming convention. Here's an abbreviated version:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  ...
+
+  // first run the setups
+  for (builtin.test_functions) |t| {
+      if (isSetup(t)) {
+          try t.func();
+      }
+  }
+
+  // next run normal tests
+  for (builtin.test_functions) |t| {
+      if (isSetup(t) or isTeardown(t)) {
+        continue
+      }
+      try t.func()
+  }
+
+  // finally run teardowns
+  for (builtin.test_functions) |t| {
+      if (isTeardown(t)) {
+          try t.func();
+      }
+  }
+}
+
+fn isSetup(t: std.builtin.TestFn) bool {
+    return std.mem.endsWith(u8, t.name, "tests:beforeAll");
+}
+
+fn isTeardown(t: std.builtin.TestFn) bool {
+    return std.mem.endsWith(u8, t.name, "tests:afterAll");
+}
+{% endhighlight %}
+
+<p>Now any tests named "tests:beforeAll" will be run first while any tests named "tests:afterAll" will be run last. It isn't the most efficient, but it's simple to follow and modify for your specific needs</p>
+
+<h3>Conclusion</h3>
+<p>In the end, it comes down to taking the first example - which iterates through <code>builtin.test_functions</code> to call each <code>func</code> - and modifying it to meet your needs. If you're looking for something a bit more feature-rich as a template, consider using <a href="https://gist.github.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b">this test runner</a> as your template.</p>
