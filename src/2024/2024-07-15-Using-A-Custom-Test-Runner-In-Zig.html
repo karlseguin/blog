@@ -5,7 +5,7 @@ tags: [zig]
 title: Using a custom test runner in Zig
 ---
 
-<p>Depending on what you're used to, Zig's built-in test runner might seem a little bare. For example, you might prefer a more verbose output, maybe showing your slowest tests. You might fine control over the output in order to integrate it into a larger build process. You might want to have global setup and teardown functions. Maybe you <a href="https://github.com/ziglang/zig/issues/18111">just want to be able to write to stdout</a>. Whatever your needs, Zig makes it easy to write a custom test runner.</p>
+<p>Depending on what you're used to, Zig's built-in test runner might seem a little bare. For example, you might prefer a more verbose output, maybe showing your slowest tests. You might need control over the output in order to integrate it into a larger build process or want to have global setup and teardown functions. Maybe you <a href="https://github.com/ziglang/zig/issues/18111">just want to be able to write to stdout</a>. Whatever your needs, Zig makes it easy to write a custom test runner.</p>
 
 <aside><p>If you just want the code, I <a href="https://gist.github.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b">maintain a gist</a> that you can copy and paste into your project. It'll display timing information, slowest tests and provides hooks for global setup / teardown.</p></aside>
 
@@ -29,7 +29,7 @@ pub fn main() !void {
 {% endhighlight %}
 
 <h3>Usage</h3>
-<p>How do you use it? First, save the above as <code>test_runner.zig</code>. If you're using <code>zig test</code>, us ethe <code>--test runner</code> flag, e.g. <code>--test-runner test_runner.zig</code> parameter. If you're using <code>zig build</code> specify a <code>test_runner</code> configuration when calling <code>addTest</code>:</p>
+<p>How do you use it? First, save the above as <code>test_runner.zig</code>. If you're using <code>zig test</code>, use the <code>--test runner</code> flag, e.g. <code>--test-runner test_runner.zig</code>. If you're using <code>zig build</code> specify a <code>test_runner</code> configuration when calling <code>addTest</code>:</p>
 
 {% highlight zig %}
   const tests = b.addTest(.{
@@ -40,7 +40,7 @@ pub fn main() !void {
 {% endhighlight %}
 
 <h3>Basics</h3>
-<p>We can see from our simple test runner that we iterate through <code>builtin.test_functions</code>, which is an array of <code>std.builtin.TestFn</code>. This struct has two fields, a name and the test function:</p>
+<p>We can see from our simple test runner that we iterate through <code>builtin.test_functions</code>, which is a slice of <code>std.builtin.TestFn</code>. This struct has two fields, a name and the test function:</p>
 
 {% highlight zig %}
 pub const TestFn = struct {
@@ -91,7 +91,7 @@ test {
 <p>Since they have no name, Zig will name them <code>test_#</code>, starting at 0. So in our fictional "server/handshake.zig" file, the first nameless test would have the name <code>server.handshake.test_0</code> and the second one would be named <code>server.handshake.test_1</code> (although it's pretty unusual to have 2 nameless tests in the same project, let alone the same file).</p>
 
 <h3>Memory Leak Detection</h3>
-<p>To preserve the builtin test runner's memory leak detection, we need want to set <code>std.testing.allocator_instance</code> before each test, and check for leaks after each test:</p>
+<p>To preserve the builtin test runner's memory leak detection when using <code>std.testing.allocator</code>, we need want to set <code>std.testing.allocator_instance</code> before each test, and check for leaks after each test:</p>
 
 {% highlight zig %}
 std.testing.allocator_instance = .{};
@@ -99,12 +99,15 @@ const result = t.func();
 if (std.testing.allocator_instance.deinit() == .leak) {
   try std.fmt.format(out, "{s} leaked memory\n", .{name});
 }
+// ... check result for errors
 {% endhighlight %}
 
 <p>The call to <code>deinit()</code> will output details about the leak to stderr.</p>
 
 <h3>Features</h3>
-<p>Any additional feature we want to build has to use the limited information we have access to. Some people like their tests to stop on the first failures. We can achieve this by returning after the first error:</p>
+<p>Any additional feature has to use the limited information we have access to.</p>
+
+<p>Some like their tests to stop on the first failures. We can achieve this by returning after the first error:</p>
 
 {% highlight zig %}
 ...
@@ -132,7 +135,7 @@ for (builtin.test_functions) |t| {
 }
 {% endhighlight %}
 
-<p>A common question I see people ask is how to run setup/teardown. While I know a lot of people will say this is small and should be avoided, I personally have 2 libraries where I've found it useful (both httpz and websocket.zig setup a global server for full end-to-end testing). Again, this is something we can hack around by using a naming convention. Here's an abbreviated version:</p>
+<p>A common request I've seen is having a global setup/teardown. While I know some think this is a small and should be avoided, I've personally found it useful to have in a few cases. This is something we add (admittedly a bit of hack) by using a naming convention. Here's an abbreviated version:</p>
 
 {% highlight zig %}
 pub fn main() !void {
@@ -170,7 +173,7 @@ fn isTeardown(t: std.builtin.TestFn) bool {
 }
 {% endhighlight %}
 
-<p>Now any tests named "tests:beforeAll" will be run first while any tests named "tests:afterAll" will be run last. It isn't the most efficient, but it's simple to follow and modify for your specific needs</p>
+<p>Now any tests named <code>tests:beforeAll</code> will be run first while any tests named <code>tests:afterAll</code> will be run last. It isn't the most efficient, but it's simple to follow and modify for your specific needs</p>
 
 <h3>Conclusion</h3>
-<p>In the end, it comes down to taking the first example - which iterates through <code>builtin.test_functions</code> to call each <code>func</code> - and modifying it to meet your needs. If you're looking for something a bit more feature-rich as a template, consider using <a href="https://gist.github.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b">this test runner</a> as your template.</p>
+<p>In the end, it comes down to taking the first example - which iterates through <code>builtin.test_functions</code> to call each <code>func</code> - and modifying it to meet your needs. If you're looking for something a bit more feature-rich, consider using <a href="https://gist.github.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b">this test runner</a> as your template.</p>
