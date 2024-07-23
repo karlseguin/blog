@@ -1,0 +1,177 @@
+---
+layout: post
+date: 2024-07-23
+tags: [zig]
+title: Zig's Temporary Variable are Const
+---
+
+<p>I frequently run into a silly compilation error which, embarrassingly, always takes me a couple of seconds to decipher. This most commonly happens when I'm writing tests. Here's a simple example:</p>
+
+{% highlight zig %}
+fn add(values: []i64) i64 {
+  var total: i64 = 0;
+  for (values) |v| {
+    total += v;
+  }
+  return total;
+}
+
+test "add" {
+  const actual = add(&.{1, 2, 3, 4, 5});
+  try std.testing.expectEqual(15, actual);
+}
+{% endhighlight %}
+
+<p>Which gives you this error:</p>
+
+{% highlight bash %}
+error: expected type '[]i64', found '*const [5]i64'
+const actual = add(&.{1, 2, 3, 4, 5});
+                   ^~~~~~~~~~~~~~~~~
+{% endhighlight %}
+
+<p>I think part of my problem stems from the <code>&.{...}</code> syntax - so cryptic. Also, the error mentions a <code>*const [5]i64</code>, which my brain always takes a few seconds to place.</p>
+
+<p>The issue is trivial and silly. Let's solve it so we can talk about the more interesting parts. We're passing a <code>const</code> to a function that doesn't take a <code>const</code>. In this case, our function <em>should</em> take a <code>const</code> since it doesn't mutate <code>values</code>. In this specific case, we can solve the issue by changing <code>values</code> to a <code>const</code>:</p>
+
+{% highlight zig %}
+// const added
+fn add(values: []const i64) i64 {
+  ...
+}
+{% endhighlight %}
+
+<p>That fixes the code, but there might be cases where we need to mutate the input. Take this contrived example:</p>
+
+{% highlight zig %}
+fn addX(values: []i64, x: i64) void {
+  for (values) |*v| {
+    v.* += x;
+  }
+}
+{% endhighlight %}
+
+<p><code>values</code> can't be a <code>const</code> because we're mutating it. If we try to call <code>addX</code> with our fancy array literal (<code>addX(&.{1, 2, 3, 4, 5}, 2);</code>), we'll get the original error. Instead, what we need an explicit assignment to a <code>var</code>:</p>
+
+{% highlight zig %}
+test "addX" {
+  var input = [5]i64{1, 2, 3, 4, 5};
+  addX(&input, 2);
+  try std.testing.expectEqualSlices(i64, &.{3, 4, 5, 6, 7}, &input);
+}
+{% endhighlight %}
+
+<p>This works, but things are looking quite different. We've gone from being able to use Zig's array literal to having to declare an explicit <code>var input</code> with an explicit type. It seems like we're throwing around a lot of different syntax for something so simple. Let's break it down.</p>
+
+<p>I don't know what the official name for it is, but I call Zig's <code>.{...}</code> the "figure what I want" operator. Consider this code to initializing a <code>User</code>:</p>
+
+{% highlight zig %}
+var user = User{.name = "Goku", .power = 9001};
+{% endhighlight %}
+
+<p>In cases where the type is known, we can always replace the type (<code>User</code>) with a dot. You see this often with return values:</p>
+
+{% highlight zig %}
+fn empty() User {
+  return .{
+    .name = "",
+    .power = 0,
+  };
+}
+{% endhighlight %}
+
+<p>It's the same syntax, but when the type can be inferred, it can be replaced with a dot. This works for any type, like arrays. These equivalent:
+
+{% highlight zig %}
+const a = [5]i64{1, 2, 3, 4, 5};
+const b: [5]i64 = .{1, 2, 3, 4, 5};
+{% endhighlight %}
+
+<p>In this example the second form is ugly/silly. But the "figure what I want" operator only works when Zig can automatically infer the type. In these simple one-line assignments, we can only showcase the operator by also specifying the type, which defeats the purpose. However, if we go back to our corrected <code>add</code> function, we see how useful it can be:</p>
+
+{% highlight zig %}
+fn add(values: []const i64) i64 {
+  var total: i64 = 0;
+  for (values) |v| {
+    total += v;
+  }
+  return total;
+}
+
+test "add" {
+  const actual = add(&.{1, 2, 3, 4, 5});
+  try std.testing.expectEqual(15, actual);
+}
+{% endhighlight %}
+
+<p>For the writer of the code the short form of the input is nice. (I'm not sure it's great for readers of the code, but that's another story). You've probably noticed the ampersand - we're not just using <code>.{...}</code>, we're using <code>&.{...}</code>. It looks special, but if you keep thinking of that leading dot as an inferred type, then there's no difference between <code>&.{.name = "goku"}</code> and <code>&User{.name = "goku"}</code>. We're just taking the address of the value.</p>
+
+
+<p>Let's re-examine the original error by reverting <code>values</code> and removing the <code>const</code>:</p>
+
+{% highlight bash %}
+error: expected type '[]i64', found '*const [5]i64'
+const actual = add(&.{1, 2, 3, 4, 5});
+                   ^~~~~~~~~~~~~~~~~
+{% endhighlight %}
+
+<p>I <strong>still</strong> seems weird to me. I guess the issue is that I expect the "figure what I want" operator to either succeed or tell me that it can't figure what I want. Instead it has decided that the type should be <code>*const [5]i64</code> which then causes an error because it cannot be coerced into a <code>[]i64</code>. The "figure what I want" operator seems to have made a bad guess! We can mimic what's happening:</p>
+
+{% highlight zig %}
+test "add" {
+  const input = [5]i64{1, 2, 3, 4, 5};
+  const actual = add(&input);
+  try std.testing.expectEqual(15, actual);
+}
+{% endhighlight %}
+
+<p><code>input</code> is a <code>[]const i64</code>. We pass its address to <code>add</code>, turning the type into the  <code>*const [5]i64</code> that we keep running into. Assuming we can't change <code>add</code> to take a <code>const</code>, we can fix this test by changing <code>input</code> to a <code>var</code>:</p>
+
+{% highlight zig %}
+test "add" {
+  var input = [5]i64{1, 2, 3, 4, 5};
+  const actual = add(&input);
+  try std.testing.expectEqual(15, actual);
+}
+{% endhighlight %}
+
+<p>And this works. This begs the question, why is the type of <code>&.{1, 2, 3, 4, 5}</code> a <code>const</code> even though Zig knows the target type isn't? This isn't specific to the "figure what I want" operator. We can make a slight change to the above to initialize <code>var input</code> using <code>.{...}</code> and everything will still work:</p>
+
+{% highlight zig %}
+test "add" {
+  var input: [5]i64 = .{1, 2, 3, 4, 5};
+  const actual = add(&input);
+  try std.testing.expectEqual(15, actual);
+}
+{% endhighlight %}
+
+<p>I believe what's going on here is that, in Zig, temporary/implicit variables are <strong>always</strong> <code>const</code>. This code doesn't compile:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  const r = std.Random.DefaultPrng.init(0).random();
+  std.debug.print("{d}\n", .{r.uintAtMost(u16, 1000)});
+}
+{% endhighlight %}
+
+<p>You'll get this error:</p>
+
+{% highlight bash %}
+error: expected type '*Random.Xoshiro256', found '*const Random.Xoshiro256'
+const r = std.Random.DefaultPrng.init(0).random();
+          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^~~~~~~
+{% endhighlight %}
+
+<p>It <em>seems</em> unrelated to what we've been talking about, but the only thing that's changed are the types. The code is expecting a <code>*Random.Xoshiro256</code> but was given a <code>*const Random.Xoshiro256</code>. The issue is that <code>init</code> returns a variable which is never stored explicitly in a local variable. Zig always makes these temporaries <code>const</code> to protect against mutating data that you might not even realize exists. We can fix this code just like we can fix our test: by explicitly introducing the variable:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  var random = std.Random.DefaultPrng.init(0);
+  const r = random.random();
+  std.debug.print("{d}\n", .{r.uintAtMost(u16, 1000)});
+}
+{% endhighlight %}
+
+<p>This is the same solution we used to fix our <code>addX</code> test. It comes down to the same thing: if we want data to be mutable, it needs to be explicitly assigned to a variable.</p>
+
+<p>This is a good argument for, whenever possible, making things <code>const</code>. Certainly the <code>values</code> parameter of our <code>add</code> function should have been. But in cases where you can't, Zig forces you to be explicit. Error messages could always be better and this is no exception. On the one hand, the error message is perfectly accurate. On the other hand, a hint to help resolve the the conflict between the inferred type and no-implicit-var would probably be welcomed.</p>
