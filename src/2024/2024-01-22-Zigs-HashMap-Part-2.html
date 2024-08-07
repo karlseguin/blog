@@ -259,7 +259,7 @@ try lookup.put(user.name, user);
 
 {% highlight zig %}
 defer {
-	var it = lookup.valueIterator();
+	var it = lookup.iterator();
 	while (it.next()) |value_ptr| {
 		const user = value_ptr.*;
 		allocator.free(user.name);
@@ -288,7 +288,7 @@ defer {
 }
 {% endhighlight %}
 
-<p>Instead of <code>valueIterator()</code> we're using <code>iterator()</code> to get access to both a <code>key_ptr</code> and <code>value_ptr</code>.</p>
+<p>Instead of <code>iteratorValue()</code> we're using <code>iterator()</code> to get access to both a <code>key_ptr</code> and <code>value_ptr</code>.</p>
 
 <p>The last thing to consider is how to remove values from our lookup. This code leaks both the name/key and the heap-allocated user <code>User</code> despite using our improved cleanup logic:</p>
 
@@ -366,5 +366,5 @@ if (gop.found_existing) {
 
 <div class=pager>
 	<a class=prev href=/Zigs-HashMap-Part-1/>part 1</a>
-	<span></span>
+	<a class=next href=/Zigs-HashMap-Part-3/>part 3</a>
 </div>

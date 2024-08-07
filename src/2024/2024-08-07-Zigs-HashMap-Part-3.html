@@ -1,0 +1,175 @@
+---
+layout: post
+date: 2024-08-07
+title: "Zig's HashMap - Part 3"
+description: "Using Zig's adapted context for total HashMap control"
+tags: [zig]
+---
+
+<h3>Previously On...</h3>
+<p>In <a href="/Zigs-HashMap-Part-1/">Part 1</a> we saw how Zig's <code>StringHashMap</code> and <code>AutoHashMap</code> are wrappers around a <code>HashMap</code>. <code>HashMap</code> works across different key types by requiring a <code>Context</code>. Here's the built-in context that <code>StringHashMap</code> uses:</p>
+
+{% highlight zig %}
+pub const StringContext = struct {
+  pub fn hash(_: StringContext, s: []const u8) u64 {
+    return std.hash.Wyhash.hash(0, s);
+  }
+  pub fn eql(_: StringContext, a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+  }
+};
+{% endhighlight %}
+
+<p>The Context is a simple interface which makes <code>HashMap</code> usable for any key. As long as you can provide a <code>hash</code> and <code>eql</code> implementation, you can use any type of key.</p>
+
+<h3>Concurrency</h3>
+<p>The purpose of this post <strong>is not</strong> to make Zig's HashMap thread-safe, but let's consider a common trick used to support multiple concurrent writers: using shards/buckets. If you aren't familiar with this pattern, it involves wrapping multiple HashMaps + Mutex (often called "Buckets" or "Shards"). The wrapper can then direct operations to the bucket "responsible" for the key. </p>
+
+{% highlight zig %}
+pub fn ConcurrentStringHashMap(comptime V: type) type {
+  return struct {
+    buckets: [4]Bucket(V),
+
+    // ...
+
+    pub fn get(self: *Self, key: []const u8) ?V {
+      const hash_code = std.hash.Wyhash.hash(0, key);
+      // because we have 4 buckets
+      const bucket_index = @mod(hash_code, 4);
+      return self.buckets[bucket_index].get(key);
+    }
+  };
+}
+{% endhighlight %}
+
+<aside><p><code>hash_code & 3</code> might perform better than <code>@mod(hash_code, 4)</code>. This is because <code>N & (D-1) == N % D</code>, but only when D is a power or 2</p></aside>
+
+<p>Where <code>Bucket(V)</code> is its own wrapper for a <code>HashMap</code> and <code>RwLock</code>:</p>
+
+{% highlight zig %}
+fn Bucket(comptime V: type) type {
+  return struct {
+    lock: std.Thread.RwLock,
+    hash_map: std.StringHashMap(V),
+
+    // init, deinit, ...
+
+    pub fn get(self: *Self, key: []const u8) ?V {
+      self.lock.lockShared();
+      defer self.lock.unlockShared();
+      return self.hash_map.get(key);
+    }
+  };
+}
+{% endhighlight %}
+
+<p>But there's something that always annoys me about this implementation: every operation requires hashing the <code>key</code> twice. First we calculate the hash code in <code>getIndex</code> to determine the correct bucket. The second time takes place within <code>StringContext.hash</code>. This gnaws at me; hash maps work because hash functions are deterministic. We have the <code>hash_code</code> in our outer <code>get</code>, do we really need to calculate it again?</p>
+
+<p>One option is to use a custom key and context for our <code>Bucket</code>:</p>
+
+{% highlight zig %}
+const Key = struct {
+  key: []const u8,
+  hash_code: u64,
+
+  const Context = struct {
+    pub fn hash(_: Context, k: Key) u64 {
+      return k.hash_code;
+    }
+    pub fn eql(_: Context, a: Key, b: Key) bool {
+      return std.mem.eql(u8, a.key, b.key);
+    }
+  };
+};
+{% endhighlight %}
+
+<p>Our <code>get</code> method becomes:</p>
+
+{% highlight zig %}
+pub fn get(self: *Self, key: []const u8) ?V {
+  const hash_code = std.hash.Wyhash.hash(0, key);
+  const bucket_index = @mod(hash_code, 4);
+  return self.buckets[bucket_index].get(.{.key = key, .hash_code = hash_code});
+}
+{% endhighlight %}
+
+<p>This works, but at the cost of having to store a larger key in our HashMap. While it's tempting to think this'll just use a bit more RAM, the reality is that it could negatively impact performance by increasing CPU-cache misses. Is there a solution that doesn't require this trade off?</p>
+
+<h3>Adapted Context</h3>
+<p>What we want is for our key to be just the string, <code>[]const u8</code>, and our Context to use our pre-generated hash code. At an extreme, we could say that we want our Context to be independent from our key. This is possible through *Adapted variants of the HashMap methods you're already using, such as <code>getAdapted</code>. The *Adapted variants, take an explicit Context per call (much like the Unmanged HashMap variants take an explicit <code>Allocator</code> per call).</p>
+
+<p>Our <code>ConcurrentStringHashMap(V).get</code> only used the calculate hash code to decide which bucket to use. Now we'll pass this to the bucket as well:</p>
+
+{% highlight zig %}
+pub fn get(self: *Self, key: []const u8) ?V {
+  const hash_code = std.hash.Wyhash.hash(0, key);
+  const bucket_index = @mod(hash_code, 4);
+  return self.buckets[bucket_index].get(key, hash_code);
+}
+{% endhighlight %}
+
+<p><code>Bucket(V).get</code> can use this hash code, along with a custom context in order to skip the duplicate key hashing:</p>
+
+{% highlight zig %}
+fn get(self: *Self, key: []const u8, hash_code: u64) ?V {
+  self.lock.lockShared();
+  defer self.lock.unlockShared();
+  return self.hash_map.getAdapted(key, BucketContext{.hash_code = hash_code});
+}
+{% endhighlight %}
+
+<p>With <code>BucketContext</code> being similar to the built-in <code>StringContext</code>:</p>
+
+{% highlight zig %}
+const BucketContext = struct {
+  hash_code: u64,
+
+  // We no longer need to re-calcualte the hash code!
+  pub fn hash(self: BucketContext, key: []const u8) u64 {
+    return self.hash_code;
+  }
+
+  // Same as StringContext.eql
+  pub fn eql(_: BucketContext, a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+  }
+};
+{% endhighlight %}
+
+<p>You could say that we're overwriting the default (stateless) <code>StringContext</code>, with our own stateful <code>BucketContext</code> on a per-call basis. In fact, many of the HashMap method you use every day are thin wrappers around *Adapted variant, where the default context is used.</p>
+
+<p>However, not every method has a direct *Adapted variant. For example, there's no <code>putAdapted</code>. This is likely because <code>put</code> is itself a wrapper around <code>getOrPut</code> and there <em>is</em> a <code>getOrPutAdapted</code>. So using the *Adapted variants means that, sometimes, we'll need to dig a little deeper to find the right method. Here's our <code>Bucket(V).put</code>:</p>
+
+{% highlight zig %}
+fn put(self: *Self, key: []const u8, hash_code: u64, value: V) !void {
+  self.lock.lock();
+  defer self.lock.unlock();
+
+  const result = try self.hash_map.getOrPutAdapted(key, BucketContext{.hash_code = hash_code});
+  result.key_ptr.* = key;
+  result.value_ptr.* = value;
+}
+{% endhighlight %}
+
+<p>When we use <code>map.get</code> or <code>map.put</code>, the type of the key is the generic parameter of our HashMap (a <code>[]const u8</code> in the case of a <code>StringHashMap</code>). But for the *Adapted variants, both the <code>key</code> and <code>context</code> are <code>anytype</code>. This isn't something we're utilizing here, but it provides enormous flexibility by decoupling not just the data, but also the types of the Context with respect to the HashMap.</p>
+
+<aside><p>In fact, <code>get</code> is a wrapper around <code>getContext</code> which is a wrapper around <code>getAdapted</code>. Most of the methods follow this pattern. Like <code>getAdapted</code>, <code>getContext</code> takes an explicit Context. Unlike <code>getAdapted</code> the <code>getContext</code> context isn't <code>anytype</code>, it's of type <code>Context</code>, e.g. <code>StringContext</code> for a <code>StringHashMap</code>.</p></aside>
+
+<h3>Rehasing</h3>
+<p>As items are inserted into a HashMap, it'll start to fill up. At some point (known as the load factor), the HashMap has to grow its underlying storage and re-hash all its entries. This can introduce challenges when using adapted contexts. For example, imagine we insert "a" and provide an adapted context of <code>BucketContext{.hash_code = 2941419223392617777}</code>. Next we insert "b" with its own adapted context of <code>BucketContext{.hash_code = 16239767293555273624}</code>. But when we try to insert "c", the HashMap needs to grow. At this point, our previously inserted entries with the keys "a" and "b" need to be re-hashed, but those explicitly provided adapted contexts are long gone.</p>
+
+<p>In our specific cases, where <code>Bucket(V)</code> is a wrapper for <code>StringHashMap(V)</code>, this isn't actually a problem. Why? Because the re-hashing step will use the default context, aka the <code>StringContext</code> at the top of this post. For a given string, the <code>hash</code> method of <code>StringContext</code> produces the same result as what we're storing in the <code>hash_code</code> field. To be sure of this, instead of using <code>std.hash.Wyhash.hash(0, key)</code> directly, we should probably use <code>std.hash_map.hashString(key)</code>. This would ensure that our hash is always consistent with <code>StringContext</code>.</p>
+
+<p>However, if you were doing something really unique in your adapted context, it could be a problem (don't ask me what kind of thing, because I can't think of any). However, all is not lost, at the very end of this rabbit hole is a <code>getOrPutContextAdapted</code> which accept two adapted contexts! The first is the adapted context to use when looking up the key we want to get or put (just like the adapted context we passed to <code>getOrPutAdapted</code>). The additional one is the adapted context to use when re-hashing.</p>
+
+<h3>Conclusion</h3>
+<p>If you've tried to navigate the HashMap documentation, you know that Zig's HashMaps are built on abstractions. <code>StringHashMap</code> and <code>AutoHashMap</code> are fairly thin wrappers around <code>HashMap</code>, which itself is wrapper around <code>HashMapUnmanaged</code>. Now we see that many of the standard methods, like <code>get</code> are abstractions around *Adapted variants - if not directly then through other layers of abstractions.</p>
+
+<p>My initial encounter with Zig's various HashMaps wasn't great. I didn't understand; I could hardly navigate the code. While there's still some things I don't understand, I'm starting to grasp the <em>why</em>. I understand <em>why</em> we have managed and unmanaged types and why we have *Adapted variants.</p>
+
+<p>You might never needed to use adapted contexts, but it's good to know that they're available. It might seem unrelated, but for me, it's like positive/negative look-ahead/look-behind in regular expressions. I've used these once or twice, long ago, but now only retain a vague sense of how they can be useful - I certainly don't remember the syntax. But that vague awareness is enough to be useful. If I do run into a problem where adapted contexts or negative look-ahead might be useful, there's a good chance I'll be able to recognize it and then can refresh/deepen my understanding.</p>
+
+<div class=pager>
+  <a class=prev href=/Zigs-HashMap-Part-2/>part 2</a>
+  <span></span>
+</div>
