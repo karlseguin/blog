@@ -44,7 +44,7 @@ tags: [learning]
 
 <p>(Notice that the first message starts with <code>0, 9</code> because the message excluding the lenght-prefix itself, is 9 bytes long. Similarly, the second message starts with <code>0, 14</code> because it is 14 bytes long.)</p>
 
-<p>WebSocket uses the first 7 bits of its 2nd byte to support a variable-length length prefix. When those bits are equal or less than 125, then the length of the payload is this value itself. When the bits equal 126, then the next 2 bytes indicate the length of the payload. When the bits equal 127, the the next 8 bytes indicate the length of the payload.</p>
+<p>WebSocket uses the first 7 bits of its 2nd byte to support a variable-length length prefix. When those bits are equal or less than 125, then the length of the payload is this value itself. When the bits equal 126, then the next 2 bytes indicate the length of the payload. When the bits equal 127, the next 8 bytes indicate the length of the payload.</p>
 
 <p>For example, if we wanted to send "hello", then the 2nd byte would contain all the length data needed, namely: <code>byte2 & 127 == 5</code>. But if we wanted to send a payload that was 300 bytes long, then we'd get <code>byte2 & 127 == 126</code> which would tell us to look at the next two bytes to get the length of the payload, in this case, they'd be <code>1, 44</code> (i.e. 256 + 44).</p>
 

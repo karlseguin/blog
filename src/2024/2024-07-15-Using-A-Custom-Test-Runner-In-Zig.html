@@ -135,7 +135,7 @@ for (builtin.test_functions) |t| {
 }
 {% endhighlight %}
 
-<p>A common request I've seen is having a global setup/teardown. While I know some think this is a small and should be avoided, I've personally found it useful to have in a few cases. This is something we add (admittedly a bit of hack) by using a naming convention. Here's an abbreviated version:</p>
+<p>A common request I've seen is having a global setup/teardown. While I know some think this is a smell and should be avoided, I've personally found it useful to have in a few cases. This is something we add (admittedly a bit of hack) by using a naming convention. Here's an abbreviated version:</p>
 
 {% highlight zig %}
 pub fn main() !void {
