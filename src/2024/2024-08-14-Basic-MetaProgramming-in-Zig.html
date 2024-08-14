@@ -1,0 +1,282 @@
+---
+layout: post
+date: 2024-08-14
+title: "Basic MetaProgramming in Zig"
+description: "Getting started with Zig's meta programming capabilities by leveraging a few useful functions"
+tags: [zig]
+---
+
+<p>While I've written a lot about Zig, I've avoided talking about Zig's meta programming capabilities which, in Zig, generally falls under the "comptime" umbrella. The idea behind "comptime" is to allow Zig code to be run at compile time in order to generate code. It's often said that an advantage of Zig's comptime is that it's just Zig code, as opposed to a separate, often limited, language as seen in other languages. In my experience though, Zig's comptime is still a world onto itself. There are limitations to what you can do at comptime, there are parts of the standard library designed for comptime, and even small parts of the language, like <code>inline for</code>, used only at comptime.</p>
+
+<p>I'm still not very comfortable with comptime, which is why I've not written much about it. However there are useful parts that are easy to learn. In particular I'm talking about the <code>@hasField</code>, <code>@hasDecl</code> and <code>@field</code> builtins, along with some corresponding functions in the <code>std.meta</code> namespace.</p>
+
+<aside><p>Function that begin with <code>@</code> are builtin functions. They are provided by the compiler as opposed to the standard library.</p></aside>
+
+<h3>@hasField</h3>
+<p>It might not be the most useful, but <code>@hasField</code> serves as a good introduction to Zig's meta programming capabilities. You give it a type and a field name, and it tells you whether or not the type has the field:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+   std.debug.print("id: {any}\n", .{@hasField(User, "id")});
+   std.debug.print("name: {any}\n", .{@hasField(User, "name")});
+}
+
+const User = struct {
+  id: u32,
+};
+{% endhighlight %}
+
+<p>The above will tell us that <code>User</code> has an <code>id</code> field, but doesn't have a <code>name</code> field. <code>@hasField</code> also works for enums and unions.</p>
+
+<h3>@hasDecl</h3>
+<p><code>@hasDecl</code> is used to indicate if a struct, union or enum has a declaration. A declaration is essentially anything that isn't a field, most notably a function/method or a constant (including nested struct/unions/enums). <code>@hasDecl</code> respects visibility rules. If a declaration isn't marked <code>pub</code>, then <code>@hasDecl</code> will return <code>false</code> - unless <code>@hasDecl</code> is called from within the same file.</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+   std.debug.print("over9000: {any}\n", .{@hasDecl(User, "over9000")});
+}
+
+const User = struct {
+  pub fn over9000(self: *User) bool {
+    return self.power > 9000;
+  }
+};
+{% endhighlight %}
+
+<p><code>@hasDecl</code> is useful for conditionally enabling behavior. For example, you might have a library with some default behavior which your user can conditionally override by implementing their own version. But care should be taken when using it: it doesn't tell us the type of the declaration. If we change <code>User</code> to this oddity, we'll get the same output (<code>over9000: true</code>):</p>
+
+{% highlight zig %}
+const User = struct {
+  pub const over9000 = struct {
+  };
+};
+{% endhighlight %}
+
+<p>Shortly, we'll see how to deal with this.</p>
+
+<h3>@field</h3>
+<p>Unlike <code>@hasField</code> and <code>@hasDecl</code> which behave on a type, <code>@field</code> behaves on an instance. It is used to both get and set the value of the field of an instance.</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var user = User{.id = 0};
+  @field(user, "id") = 99;
+  std.debug.print("id: {d}\n", .{@field(user, "id")});
+}
+
+const User = struct {
+  id: u32,
+};
+{% endhighlight %}
+
+<p>This will print <code>id: 99</code>. This is obviously a silly example. It would have made more sense to use <code>user.id</code> to access the field. You might be thinking: of course, but <code>@field</code> would be great to dynamically get or set a field value based on some database result. Remember though, Zig comptime happens at compile-time. The string field, <code>"id"</code> above, has to be known at compile time. This  limits the usefulness of <code>@field</code>.</p>
+
+<p>Looking at my own libraries, I ever only use it within wider comptime blocks of code. For example, pg.zig has very basic row to struct mapping capabilities. That code iterates through every field of the target struct and use <code>@field</code> to populate it. The code looks a bit like:</p>
+
+{% highlight zig %}
+var value: T = undefined;
+inline for (std.meta.fields(T),) |field| {
+    @field(value, field.name) = row.get(field.type, field.name)
+}
+{% endhighlight %}
+
+<p>This example begins to demonstrate some of the larger comptime world. We see <code>std.meta.fields</code> which returns a list of fields for a type. We also <code>inline for</code> which unrolls the loop. Given a struct with two fields, "id" and "name", we could imagine the above comptime code resulting in:</p>
+
+{% highlight zig %}
+var value: T = undefined;
+@field(value, "id") = row.get(u32, "id");
+@field(value, "name") = row.get([]const, "name");
+{% endhighlight %}
+
+<p>We should take this a step further and also expand the code generated by <code>@field</code>:</p>
+
+{% highlight zig %}
+var value: T = undefined;
+value.id = row.get(u32, "id");
+value.name = row.get([]const, "name");
+{% endhighlight %}
+
+<p>Unfortunately, as far as I know, there's no way to see the Zig-equivalent of comptime generated code, such as the expansion shown above. But it's how I try to visualize comptime code, and, in this case, it highlights why the field names given to <code>@field</code> have to be comptime-known.</p>
+
+<p>Interestingly (and maybe inconsistently) <code>@field</code> works on both fields and declaration.</p>
+
+<h3>std.meta.hasFn</h3>
+<p>The <code>std.meta</code> namespace is worth getting familiar with; it's small but useful. One of the functions that stands out is <code>std.meta.hasFn</code>. It builds on top of <code>@hasDecl</code> determining not only if the type has the specific declaration but whether or not that declaration is a function:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+   std.debug.print("over9000: {any}\n", .{std.meta.hasFn(User, "over9000")});
+   std.debug.print("SAYIAN_LEVEL: {any}\n", .{std.meta.hasFn(User, "SAIYAN_LEVEL")});
+}
+
+const User = struct {
+  pub fn over9000(self: *User) bool {
+    return self.power > 9000;
+  }
+
+  pub const SAIYAN_LEVEL = 9000;
+};
+{% endhighlight %}
+
+<p>This tells us that <code>User</code> does have a <code>over9000</code> function but does not have a <code>SAIYAN_LEVEL</code> function.</p>
+
+
+<h3>std.meta.hasMethod</h3>
+<p>So far, when calling <code>@hasDecl</code> or <code>std.meta.hasFn</code>, we've always used a struct, <code>User</code>. Both of these also work with enums and unions. If we try to call <code>@hasDecl</code> with something else, we'll get a compile-time error:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+   std.debug.print("{any}\n", .{@hasDecl(void, "over9000")});
+}
+{% endhighlight %}
+
+<p><em>error: expected struct, enum, union, or opaque; found 'void'</em>.</p>
+
+<p>If we try the same with <code>std.meta.hasFn</code> the code compiles and returns <code>false</code>. This is all pretty reasonable, but in real world code, there's one common issue we'll run into. Often times, you'll use these functions with a generic type. For example, we might create a cache which optionally calls <code>removedFromCache</code> on items which are purged from the cache:</p>
+
+{% highlight zig %}
+pub fn Cache(comptime T: type) type {
+  return struct {
+    lookup: std.StringHashMap(T),
+    list: std.DoublyLinkedList(T),
+
+    ...
+
+    fn freeSpace(self: *Cache(T)) void {
+      const last = self.list.pop() orelse return;
+      if (comptime std.meta.hasFn(T, "removedFromCache")) {
+        T.removedFromCache(last.data);
+      }
+    }
+  };
+}
+{% endhighlight %}
+
+<p><code>std.meta.hasFn</code> is obviously a better choice than <code>@hasDecl</code>. For one, we need to make sure <code>removedFromCache</code> is a function and not another type of declaration. For another, our code should compile even if <code>T</code> isn't a struct, i.e. maybe we want to cache <code>u64</code> values.</p>
+
+<p>With <code>hasFn</code> our cache works for a struct, like <code>User</code>, or a primitive type, like <code>u32</code>. But it doesn't work for one important case: a pointer to a struct, e.g. <code>*User</code>. We need to fix two things to support this reasonable use case.</p>
+
+<p>The first is that <code>std.meta.hasFn</code> will always return false for a pointer to struct. It might seem like this should print <code>true</code>:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  std.debug.print("{any}\n", .{std.meta.hasFn(*User, "removedFromCache")});
+}
+
+const User = struct {
+  pub fn removedFromCache(self: *User) void {
+    _ = self;
+    // todo
+  }
+};
+{% endhighlight %}
+
+<p>After all, the first parameter to <code>removedFromCache</code> <em>is</em> a <code>*User</code>. But that just isn't how it works. <code>removedFromCache</code> is a function (a declaration), with the <code>User</code> struct. A pointer to a struct doesn't contain declarations, so <code>hasFn</code> will always return false when using a pointer to a struct. To solve this, we can use <code>std.meta.hasMethod</code> instead. If we take the above code and replace <code>hasFn</code> with <code>hasMethod</code> we'll get true for either a <code>User</code> or a <code>*User</code>.</p>
+
+<p>Our second issue is the next line:</p>
+
+{% highlight zig %}
+fn freeSpace(self: *Cache(T)) void {
+  const last = self.list.pop() orelse return;
+  // hasFn -> hasMethod
+  if (comptime std.meta.hasMethod(T, "removedFromCache")) {
+
+    // This won't compile
+    T.removedFromCache(last.data);
+  }
+}
+{% endhighlight %}
+
+<p>The <code>T.removeFromCache(last.data)</code> works when <code>T</code> is <code>User</code>, because that translate to <code>User.removedFromCache</code>. But when <code>T</code> is a <code>*User</code>, it translate to <code>*User.removedFromCache</code>, which isn't valid - again, pointers to structs don't contain declarations.</p>
+
+<p>So while <code>std.meta.hasMethod</code> is useful, it doesn't completely solve our problem.</p>
+
+<h3>@typeInfo</h3>
+<p> You can't talk about metaprogramming in Zig without talking about <code>@typeInfo</code>. It takes a type and returns a tagged union describing that type. Currently, <code>std.builtin.Type</code> returned by <code>@typeInfo</code> can represent one of 24 different types, some of those having sub-types and complex fields. It can be a lot to try to learn all at once. Instead, we can start to get a feel for <code>@typeInfo</code> by looking at how <code>hasFn</code> uses it. Here's the full implementation of <code>std.meta.hasFn</code>:</p>
+
+{% highlight zig %}
+pub inline fn hasFn(comptime T: type, comptime name: []const u8) bool {
+  switch (@typeInfo(T)) {
+    .Struct, .Union, .Enum, .Opaque => {},
+    else => return false,
+  }
+  if (!@hasDecl(T, name))
+    return false;
+
+  return @typeInfo(@TypeOf(@field(T, name))) == .Fn;
+}
+{% endhighlight %}
+
+<p>The code is hopefully simple enough that not only can we get an initial sense for <code>@typeInfo</code>, but we can also see how <code>hasFn</code> is able to use it, along with <code>@hasDecl</code>, to identify if a struct has a specific function. The first part, the <code>switch</code>, ensures that <code>T</code> is a struct, union, enum of an opaque, else it returns false. We saw how <code>hasFn</code> returns false for other types, whereas <code>@hasDecl</code> gives a comptime error. Here we see how <code>@typeInfo</code> can be used to turn that compile time error into value.</p>
+
+<p>After making sure that <code>T</code> is a valid type, <code>@hasDecl</code> can safely be called. If we <em>do</em> have the declaration, we still need to assert that it's a function. Here again <code>@typeInfo</code> is used, but this time to check if the declaration is a function, (<code>.Fn</code>). The <code>@typeInfo</code> + <code>@TypeOf</code> combination is common. <code>@TypeOf</code> <em>always</em> returns a <code>type</code>. It's often used when a function accepts an <code>anytype</code>, but here we see it used on the return value of <code>@field</code>.</p>
+
+<p>With this understanding of <code>hasFn</code>, you might not be surprised to learn that <code>hasMethod</code> is just a wrapper around <code>hasFn</code>:</p>
+
+{% highlight zig %}
+pub inline fn hasMethod(comptime T: type, comptime name: []const u8) bool {
+  return switch (@typeInfo(T)) {
+    .Pointer => |P| switch (P.size) {
+      .One => hasFn(P.child, name),
+      .Many, .Slice, .C => false,
+    },
+    else => hasFn(T, name),
+  };
+}
+{% endhighlight %}
+
+<p>This is a bit more complicated. We're not just using <code>@typeInfo</code> to check the type; in the case of a Pointer, we're going a bit deeper and checking / using some of the compile-time information we have about the type. Specifically we're checking if it's a single-item pointer and, if it is, we're calling <code>hasFn</code> on the "child" of the pointer. This essentially unwraps our <code>*User</code>, turning a call to <code>hasMethod(*User, "x")</code> into a call to <code>hasFn(User, "x")</code>.</p>
+
+<h3>Bringing it Together</h3>
+<p>We took a little detour to start learning about <code>@typeInfo</code>. The hope if that we can use what we've learned to fix our cache implementation. Remember, we had this code:</p>
+
+{% highlight zig %}
+fn freeSpace(self: *Cache(T)) void {
+  const last = self.list.pop() orelse return;
+  if (comptime std.meta.hasMethod(T, "removedFromCache")) {
+    T.removedFromCache(last.data);
+  }
+}
+{% endhighlight %}
+
+<p>Which doesn't compile when <code>T</code> is a pointer to a struct, like <code>*User</code>. If you take a second look at the implementation of <code>hasMethod</code>, can you come up with a possible solution? This is what I'd do:</p>
+
+
+{% highlight zig %}
+fn freeSpace(self: *Cache(T)) void {
+  const last = self.list.pop() orelse return;
+  if (comptime std.meta.hasMethod(T, "removedFromCache")) {
+    switch (@typeInfo(T)) {
+      .Pointer => |ptr| ptr.child.removedFromCache(last.data),
+      else => T.removedFromCache(last.data),
+    }
+  }
+}
+{% endhighlight %}
+
+<p>We can do the same thing as <code>hasMethod</code>: when <code>T</code> is a pointer, use its <code>child</code>. The use of an <code>else</code> fallthrough might see a little reckless. Like I said, <code>@typeInfo</code> represents 24 different types, certainly trying to call <code>removedFromCache</code> wouldn't be valid on a <code>Void</code> type. But this code only executes within a successful <code>hasMethod</code> check. Still, some might prefer being more explicit:</p>
+
+{% highlight zig %}
+switch (@typeInfo(T)) {
+  .Pointer => |ptr| ptr.child.removedFromCache(last.data),
+  .Struct, .Union, .Enum => T.removedFromCache(last.data),
+  else => unreachable,
+}
+{% endhighlight %}
+
+<h3>Conclusion</h3>
+<p>Newcomers to Zig often ask about behavior similar to <code>std.meta.hasFn</code> or <code>@field</code>, and probably come out of the exchange disappointed to learn about the comptime requirement. It's certainly different and in many cases limiting compared to the runtime reflection offered by many higher level languages. But I think it's logical and useful in a different way.</p>
+
+<p>Zig's comptime is approachable, but, for me, still complicated. I wish there was a way to get Zig code out of comptime (a bit like how you can see the full Erlang code generated by Elixir code, including its macros). Still, taking small steps and using the functions we explored above, plus seeing their implementation, has helped me get more comfortable with comptime in general, and the <code>std.builtin.Type</code> in particular. So if you're intimidated by comptime and struggling to learn it, know that you aren't the only one. Take it one step at a time.</p>
