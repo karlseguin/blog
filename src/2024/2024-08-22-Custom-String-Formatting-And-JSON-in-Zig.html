@@ -1,0 +1,141 @@
+---
+layout: post
+date: 2024-08-23
+title: "Custom String Formatting and JSON [De]Serializing in Zig"
+description: "Use Zig's comptime hooks to add a custom string formatter and JSON handling to your struct."
+tags: [zig]
+---
+
+<p>In our <a href="/Basic-MetaProgramming-in-Zig/">last blog post</a>, we saw how builtins like <code>@hasDecl</code> and functions like <code>std.meta.hasMethod</code> can be used to inspect a type to determine its capabilities. Zig's  standard library makes use of these in a few place to allow developers to opt-into specific behavior. In particular, both <code>std.fmt</code> and <code>std.json</code> provide developers the ability to define functions that control how a type is formatted and JSON serialized/deserialized.</p>
+
+<h3>format</h3>
+<p>While Zig does a good job of printing out custom types, it can be useful/necessary to tweak that output. For example, you might want to exclude a specific field from the output. If you define a public <code>format</code> method on your struct, enum or union, Zig will call it rather than using the default formatter:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  const u = User{.power = 9001};
+  std.debug.print("{}\n", .{u});
+}
+
+const User = struct {
+  power: u32,
+
+  pub fn format(self: *const User, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    if (fmt.len != 0) {
+      std.fmt.invalidFmtError(fmt, self);
+    }
+    return writer.print("power level @ {d}!!!", .{self.power});
+  }
+};
+{% endhighlight %}
+
+<p>As you can see, <code>format</code> takes 4 parameters: the value being formatted (your type), the format string, format options, and the writer. It's pretty common to ignore both the format string and format options. Above we <em>did</em> use the format string as a simple guard, ensuring that our user variable was formatted using <code>{}</code> or <code>{any}</code>, and returning an error if something like <code>{s}</code> was used. The real question we need to answer is: what's <code>writer</code>. It's generally understood to be an <code>std.io.Writer</code>, but by using <code>anytype</code> we automatically support anything that can fulfill our needs.</p>
+
+<p>More specifically, the two methods that you're most likely to use are: <code>writer.print</code> and <code>writer.writeAll</code>. We used <code>print</code> above, which is a simple yet powerful way to customize the string representation. We'd use <code>writeAll</code> if we wanted to directly generate a <code>[]const u8</code>. Of course, there's nothing stopping us from using a both methods, as well as the other <code>io.Writer</code> methods like <code>writeByte</code> and <code>writeByteNTimes</code>.</p>
+
+
+<h3>jsonStringify</h3>
+<p>We can control the JSON serialization of a struct, union of enum by defining a <code>jsonStringify</code> method:</p>
+
+{% highlight zig %}
+const User = struct {
+  power: u32,
+
+  pub fn jsonStringify(self: *const User, jws: anytype) !void {
+    try jws.beginObject();
+    try jws.objectField("power");
+    try jws.write(self.power);
+    try jws.endObject();
+  }
+};
+{% endhighlight %}
+
+<p>The signature is simpler, with the writer assumed to be an <code>std.json.WriteStream</code>. Unlike the more generic <code>io.Writer</code> used in <code>format</code>, the <code>WriteStream</code> is designed specifically for JSON. In addition to the <code>beginObject</code> and <code>endObject</code>, there's also a <code>beginArray</code> and <code>endArray</code>. Unlike <code>write</code> and <code>writeAll</code> found on the more generic <code>io.Writer</code>, the <code>write</code> method of the WriteStream is JSON aware. If we called <code>jws.write()</code> on a string value, the value would be quoted and escaped. If we called it on a structure, that structure would be JSON-encoded (either using Zig's default JSON encoder, or the structure's own <code>jsonStringify</code> method).</p>
+
+<p>The <code>WriteStream</code> also has a <code>print</code> method. Like the <code>io.Writer</code>'s <code>print</code> method we used in <code>format</code>, it takes a format string and optional parameters. <code>print</code> will apply the correct indentation (based on the options passed to <code>stringify</code>) but <strong>will not</strong> apply any additional JSON-specific format. So if we changed the code to:</p>
+
+{% highlight zig %}
+const User = struct {
+  name: []const u8,
+
+  pub fn jsonStringify(self: *const User, jws: anytype) !void {
+    try jws.beginObject();
+    try jws.objectField("name");
+    try jws.print("{s}", .{self.name});
+    try jws.endObject();
+  }
+};
+{% endhighlight %}
+
+<p>We'd likely end up generating invalid JSON, since the <code>name</code> value wouldn't be quoted or correctly escaped (notice the value isn't quoted):</p>
+
+{% highlight json %}
+{"name":leto}
+{% endhighlight %}
+
+<p>Care must be taken when using <code>print</code>, but it provides the greatest flexibility; for example it's useful if you want to format numbers a specific way.</p>
+
+<h3>jsonParse</h3>
+<p>The counterpart to the <code>jsonStringify</code> method is the <code>jsonParse</code> function:</p>
+
+{% highlight zig %}
+const User = struct {
+  name: []const u8,
+
+  pub fn jsonParse(allocator: Allocator, source: anytype, options: std.json.ParseOptions) !User {
+    // ...
+  }
+};
+
+{% endhighlight %}
+
+<p>The <code>source</code> is assumed to be either a <code>std.json.Scanner</code> or a <code>std.json.Reader</code>. These both expose the same methods, so, from our point of view, it doesn't really matter which it is. Unfortunately, implementing a custom <code>jsonParse</code> function is a lot more complicated than implementing a custom <code>format</code> or <code>jsonStringify</code> method. This is because the scanner is low-level and reads a token at a time. For example, a naive implementation for the above <code>User</code> with the <code>name</code> field looks like:</p>
+
+{% highlight zig %}
+pub fn jsonParse(allocator: Allocator, source: anytype, options: std.json.ParseOptions) !User {
+  if (try source.next() != .object_begin) {
+    return error.UnexpectedToken;
+  }
+
+  var name: []const u8 = undefined;
+
+  switch (try source.nextAlloc(allocator, .alloc_if_needed)) {
+    .string, .allocated_string => |field| {
+      if (std.mem.eql(u8, field, "name") == false) {
+        return error.UnknownField;
+      }
+    },
+    else => return error.UnexpectedToken,
+  }
+
+  switch (try source.nextAlloc(allocator, options.allocate.?)) {
+    .string, .allocated_string => |value| name = value,
+    else => return error.UnexpectedToken,
+  }
+
+  if (try source.next() != .object_end) {
+    return error.UnexpectedToken;
+  }
+
+  return .{.name = name};
+}
+{% endhighlight %}
+
+<p>Of course, if we were to add more fields, keeping in mind that we should generally support JSON objects to have fields in any order, the code will get much more complicated. Also, we should probably consider the <code>options.ignore_unknown_fields</code> value to determine whether we should error or ignore an unknown field.</p>
+
+<p>You can probably tell from the above code, but the type returned by <code>next</code> and <code>nextAlloc</code> is a tagged union. Specifically, a <code>std.json.Token</code>. Notice that when we're looking for a string (for the field name and field value), we match against both a <code>.string</code> and <code>.allocated_string</code>. Also notice that when we're reading the field, we use <code>nextAlloc</code> with <code>.alloc_if_needed</code>, but when reading the value, we're passing <code>options.allocate.?</code>. Why is this so complicated?</p>
+
+<p>The json <code>Scanner</code>, <code>Reader</code> and <code>Token</code> are all designed to work with both a generic <code>io.Reader</code> and a string input. When dealing with a generic <code>io.Reader</code>, a 4K buffer is used. This has two implications. First, when our buffer fills up, it's reset and reused for the next 4K of data. This invalidates any old references. Second, both field names and field values can get split across multiple reads. For this reason we need to tell <code>nextAlloc</code> how to proceed: should it <strong>always</strong> create a duplicate of the value, or should it only do it when necessary. There's no "never allocate" option, because of the second case mentioned above: when a field name or value is spread out across multiple fills of the buffer, an allocation is required to create a single coherent value.</p>
+
+<p>We use <code>.alloc_if_needed</code> on the field name, because that value is only needed until the next call to <code>next</code> or <code>nextAlloc</code>. We just need the field name to compare it to our expect <code>"name"</code>. Hopefully the full field name is inside the buffer, meaning the scanner won't have to allocate anything. If it doesn't, it'll return a <code>.string</code>. If it does have to allocate, it'll return an <code>.allocated_string</code>. For our <code>jsonParse</code> it doesn't matter which it is, we just need the value. But in some cases, you might care about the difference.</p>
+
+<p><code>options.allocate.?</code> is the option given to the <code>std.json.parseXYZ</code> function. We use that for the field value, letting the caller decide whether or not the always dupe string values. When <code>option.allocate</code> isn't explicit set, the default depends on which parse function is used and whether a <code>Scanner</code> or <code>Reader</code> is provided.</p>
+
+<p>The documentation for <a href="https://ziglang.org/documentation/master/std/#std.json.Token">std.json.Token</a> isn't the clearest, but it does help explain some of this and is probably required reading if you plan on writing your own <code>jsonParse</code>.</p>
+
+<h3>Conclusion</h3>
+<p>I don't think anyone has ever claimed that Zig's documentation is best-in-class. I think these three methods are particularly good examples of the documentation's shortcoming. It isn't just that the behaviors aren't easily discoverable, but the use of <code>anytype</code> - which provides more flexibility - harms understandability.</p>
+
+<p>Still, both <code>format</code> and <code>jsonStringify</code> are straightforward once you've seen an example or two. And they both provide a flexible and expressive API. For <code>jsonParse</code>, you'll almost certainly need/want to write some helpers to deal with the low-level API which is exposed.</p>
