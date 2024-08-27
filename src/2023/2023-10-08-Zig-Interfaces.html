@@ -78,6 +78,7 @@ const File = struct {
   fd: os.fd_t,
 
   fn writeAll(ptr: *anyopaque, data: []const u8) !void {
+    // This re-establishs the type: *anyopaque -> *File
     const self: *File = @ptrCast(@alignCast(ptr));
     // os.write might not write all of `data`, we should really look at the
     // returned value, the number of bytes written, and handle cases where data
@@ -87,6 +88,7 @@ const File = struct {
 
   fn writer(self: *File) Writer {
     return .{
+      // this "erases" the type: *File -> *anyopaque
       .ptr = self,
       .writeAllFn = writeAll,
     };

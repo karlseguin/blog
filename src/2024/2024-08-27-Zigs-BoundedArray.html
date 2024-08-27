@@ -1,0 +1,114 @@
+---
+layout: post
+date: 2024-08-27
+title: "Zig's BoundedArray"
+description: "A quick look at how and why to use Zig's BoundedArray."
+tags: [zig]
+---
+
+<p>In Zig an array always has a compile-time length. The length of the array is part of the type, so a <code>[4]u32</code> is a different type than a <code>[5]u32</code>. But in real-life code, the length that we need is often known only at runtime so we rely on dynamic allocations via <code>allocator.alloc</code>. In some cases the length isn't even known until after we're done adding all the values, so we use an <code>std.ArrayList</code> which can dynamically grow as values are added.</p>
+
+<p>Dynamic allocation, either directly or via <code>std.ArrayList</code>, provides great flexibility but has drawbacks. First of all, more things can go wrong. We can forget to free the dynamically allocated memory and we have to be more mindful of bugs or attacks which might end up allocating more memory than we originally intended. Dynamic allocation also adds overhead, both in terms of performance and in terms of having to manage an allocator.</p>
+
+<p>Sometimes you'll have cases where the length isn't known at compile-time, but it's maximum length is. For example, imagine you need to generate a user's full name, combining their first and last name. If your system enforces a maximum first name and last name length of 100 bytes each, then you know that the combined name, including the space, will be a maximum of 201 bytes. So you could use an allocator:</p>
+
+{% highlight zig %}
+const full_name = try std.fmt.allocPrint(allocator, "{s} {s}", .{first_name, last_name});
+{% endhighlight %}
+
+<p>Or, you could use an array sized to the maximum possible length:</p>
+
+{% highlight zig %}
+std.debug.assert(first_name.len <= 100);
+std.debug.assert(last_name.len <= 100);
+
+var buf: [201]u8 = undefined;
+const full_name = try std.fmt.bufPrint(&buf, "{s} {s}", .{first_name, last_name});
+{% endhighlight %}
+
+<p>Above we see that <code>bufPrint</code> returns a slice to the combined name. This is a slice that points to our <code>buf</code>. An alternative API that you'll run into is a function which returns the length. For example, <code>std.net.Stream.read</code> returns the number of bytes read into the supplied buffer:</p>
+
+{% highlight zig %}
+var buf: [1024]u8 = undefined;
+const n = try stream.read(&buf);
+if (n == 0) {
+  return error.Closed;
+}
+processInput(buf[0..n]);
+{% endhighlight %}
+
+<p>Both <code>stream.read</code> and <code>fmt.bufPrint</code> take a <code>[]u8</code>. The source of that <code>buf</code> doesn't <strong>have</strong> to be an array - it could be a dynamically allocated slice. It's up to use to decide what's the best approach for your specific use-case.</p>
+
+<p>What about cases where you'd normally reach for an <code>std.ArrayList</code>? We can do something similar, but we'll need to add another variable to track the current length. For example, when reading a postgresql <code>[]integer</code> column using <a href="https://github.com/karlseguin/pg.zig">pg.zig</a>, we might do something like: </p>
+
+{% highlight zig %}
+var numbers: [10]i32 = undefined;
+var number_length: usize = 0;
+
+var it = try row.getCol(pg.Iterator(i32), "history");
+while (it.next()) |value| {
+  numbers[number_length] = value;
+  number_length += 1;
+}
+
+// now we can use numbers[0..number_length];
+{% endhighlight %}
+
+<p>It's a bit more clumsy: <code>numbers</code> is tied to <code>numbers_length</code>. It might make more sense to create a structure for both fields and to expose methods to wrap any access to the underlying array. This is where <code>std.BoundedArray</code> comes in. It's a generic with two types: the type of the array and the maximum length of our array. The above could be rewritten as:</p>
+
+{% highlight zig %}
+var numbers = std.BoundedArray(i32, 10){};
+
+var it = try row.getCol(pg.Iterator(i32), "history");
+while (it.next()) |value| {
+  try numbers.append(value);
+}
+
+// now we can use numbers.slice();
+{% endhighlight %}
+
+<p>It's a small thing, but by combining the two variables into a structure and adding an explicit API (i.e. the <code>append</code> and <code>slice</code> methods), things have gotten both cleaner and safer (<code>numbers</code> and <code>number_length</code> can no longer get out of sync).</p>
+
+<p><code>std.BoundedArray</code> has a number of other useful methods, such as <code>get</code>, <code>set</code> and <code>clear</code>. None take an allocator, because we never allocate. <code>std.BoundedArray</code> is a wrapper around an array. The comptime-known length, which an array <em>has</em> to have, was specified as part of the type: <code>std.BoundedArray(i32, 10)</code>.</p>
+
+<p>If the syntax around <code>var numbers = std.BoundedArray(i32, 10){};</code> is unclear, consider this code which initializes a <code>User</code>:</p>
+
+{% highlight zig %}
+var value = User{};
+{% endhighlight %}
+
+<p>Zig requires all fields to be set, so either <code>User</code> has no field, or every field has a default value. Now, replace <code>User</code> with <code>std.BoundedArray(i32, 10)</code>. It's the exact same thing. I doesn't look like it, but <code>std.BoundedArray(i32, 10)</code> is a type, just like <code>User</code>.</p>
+
+<p>One last thing to keep in mind: <code>std.BoundedArray</code> doesn't use any internal pointers. When you see: <code>std.BoundedArray(i32, 10)</code>, you should really be imagining:</p>
+
+{% highlight zig %}
+const BoundedArray = struct {
+  buffer: [10]i32,
+  len: usize = 0,
+};
+{% endhighlight %}
+
+<p>The reason this is important is that an assignment, including passing it by value to a function, will make a copy of the underlying array:</p>
+
+{% highlight zig %}
+var numbers = std.BoundedArray(i32, 10){};
+
+var it = try row.getCol(pg.Iterator(i32), "history");
+while (it.next()) |value| {
+  try numbers.append(value);
+}
+
+// since numbers.buffer is an array, this copies the array
+var c = numbers;
+
+// this modified the copy, not the original `numbers`
+c.set(0, 100);
+
+// this is true
+std.debug.assert(c.get(0) == 100);
+
+// this is also true
+std.debug.assert(numbers.get(0) == 1);
+{% endhighlight %}
+
+<p><code>std.BoundedArray</code> probably isn't something you want to use all the time, but it can be useful in specific cases where the maximum length is known and relatively small and you'd otheriwse want something like an <code>std.ArrayList</code>.</p>
