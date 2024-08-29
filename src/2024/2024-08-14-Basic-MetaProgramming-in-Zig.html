@@ -77,7 +77,7 @@ const User = struct {
 
 <p>This will print <code>id: 99</code>. This is obviously a silly example. It would have made more sense to use <code>user.id</code> to access the field. You might be thinking: of course, but <code>@field</code> would be great to dynamically get or set a field value based on some database result. Remember though, Zig comptime happens at compile-time. The string field, <code>"id"</code> above, has to be known at compile time. This  limits the usefulness of <code>@field</code>.</p>
 
-<p>Looking at my own libraries, I ever only use it within wider comptime blocks of code. For example, pg.zig has very basic row to struct mapping capabilities. That code iterates through every field of the target struct and use <code>@field</code> to populate it. The code looks a bit like:</p>
+<p>Looking at my own libraries, I ever only use it within wider comptime blocks of code. For example, pg.zig has very basic row to struct mapping capabilities. That code iterates through every field of the target struct and uses <code>@field</code> to populate it. The code looks a bit like:</p>
 
 {% highlight zig %}
 var value: T = undefined;
