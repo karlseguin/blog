@@ -1,0 +1,191 @@
+---
+layout: post
+date: 2024-09-03
+title: "Zig's @memcpy, copyForwards and copyBackwards"
+description: "Why we have 3 similar function and how aliasing impacts the compiler"
+tags: [zig]
+---
+
+<p>If you've used Zig for a bit, you've probably come across the <code>@memcpy</code> builtin. It copies bytes from one region of memory to another. For example, if we wanted to concat two arrays, we could write a little helper:</p>
+
+{% highlight zig %}
+fn concat(comptime T: type, allocator: std.mem.Allocator, arr1: []const T, arr2: []const T) ![]T {
+  var combined = try allocator.alloc(T, arr1.len + arr2.len);
+  @memcpy(combined[0..arr1.len], arr1);
+  @memcpy(combined[arr1.len..], arr2);
+  return combined;
+}
+{% endhighlight %}
+
+<p>You might have also come across <code>std.mem.copyForwards</code> and <code>std.mem.copyBackwards</code>. All of these do the same thing, but have slightly different constraint on the parameters. Specifically, each restricts if or how the two parameters can overlap. At first glance, having 3 ways to do the same thing might seem like overkill. If we look at the <code>concat</code> example above, <code>combined</code> is a newly allocated chunk of memory: it can never overlap with the memory of <code>arr1</code> and <code>arr2</code>.<p>
+
+<p>While you're probably using <code>@memcpy</code> in a way similar as <code>concat</code>, there are equally legitimate cases where the two parameters <strong>could</strong> overlap. For example, in <a href="https://github.com/karlseguin/pg.zig">pg.zig</a> we read messages from the PostgreSQL server into a static buffer. For efficiency, we read as much data as possible - ideally, we fill our buffer. As our result, our buffer could be filled with partial payloads. As a made up example, consider:</p>
+
+{% highlight zig %}
+// In reality, we us a much larger buffer
+var buffer: [16]u8 = undefined;
+const n = try socket.read(&buffer);
+{% endhighlight %}
+
+<p>Assuming this fills up our buffer (i.e. <code>n == 16</code>), <code>buffer</code> might look like:</p>
+
+{% highlight text %}
+'D', 0, 4, 'G', 'O', 'K', 'U',            // our first row
+'D', 0, 9, 'O', 'V', 'E', 'R', '9', '0',  // the start of our next row
+{% endhighlight %}
+
+<p>To complete our 2nd row, we need to read more data from the socket, but our buffer is full. We could dynamically allocated a larger buffer. However, since data for the 1st row is no longer needed, our buffer is large enough as long as we move our partially-read 2nd row to the beginning. Unlike our <code>concat</code> which was copying into a totally new memory location, we now need to copy from <code>buffer</code> into <code>buffer</code>. Is that ok? Let's extract this specific example and try:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var buf = [16]u8{
+    'D', 0, 4, 'G', 'O', 'K', 'U',            // our first row
+    'D', 0, 9, 'O', 'V', 'E', 'R', '9', '0',  // the start of our next row
+  };
+
+  @memcpy(buf[0..9], buf[7..16]);
+  std.debug.print("{any}\n", .{&buf});
+}
+{% endhighlight %}
+
+<p>If you try to run the above, you'll get a runtime panic: <em>panic: @memcpy arguments alias</em>. To solve this, we need to use <code>std.mem.copyForwards</code>. If I was to implement my own <code>memcpy</code> functionality, I'd likely end up with something similar to <code>copyFowards:</code>:</p>
+
+{% highlight zig %}
+fn cp(comptime T: type, dest: []T, src: []const u8) void {
+  std.debug.assert(dest.len == src.len);
+  for (0..src.len) |i| {
+    dest[i] = src[i];
+  }
+}
+{% endhighlight %}
+
+<p>But, as a general solution, this code has bugs. Consider this usage:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  var buf = [4]u8{1, 2, 3, 4};
+  cp(u8, buf[1..3], buf[0..2]);
+  std.debug.print("{any}", .{&buf});
+}
+{% endhighlight %}
+
+<p>We're saying copy the values <code>1, 2</code> over <code>2, 3</code>, so presumably we'd expect the result to be <code>1, 1, 2, 4</code>. But, with our simple <code>cp</code> function, we'd get <code>1, 1, 1, 4</code>. The issue is that our <code>cp</code> function overwrites part of <code>src</code> before it's copied into <code>dest</code>. In this case, we can solve the issue by copying backwards. In other words, instead of:</code>
+
+{% highlight zig %}
+buf[1] = buf[0]; // this overwrites buf[1], which we haven't copied yet
+buf[2] = buf[1];
+{% endhighlight %}
+
+<p>We want to do:</p>
+
+{% highlight zig %}
+buf[2] = buf[1]; // this copies buf[1] before we copy it
+buf[1] = buf[0];
+{% endhighlight %}
+
+<p>You can see why we need both a <code>copyForwards</code> and <code>copyBackwards</code>. In some cases we need to copy <code>src</code> front to back and in other cases we need to copy it back to front. It depends on which part (the beginning or the end) of the buffers overlap. In many other cases, like <code>concat</code> above, where there is no overlap, an implementation is free to optimize the copy operation - perhaps copying multiple bytes using a single operation.</p>
+
+<h3>Aliasing</h3>
+<p>In many languages, including Zig, you're allowed to have multiple variable reference the same memory. As we saw above, aliasing can impact the correctness of code. Because of aliasing, <code>@memcpy</code> crashes on overlapping memory and <code>copyForwards</code> and <code>copyBackwards</code> can give unexpected results.</p>
+
+<p>While Zig's documents the behavior of all three functions, the issue is pervasive. This code also crashes:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var buf: [10]u8 = undefined;
+    const prefix = try std.fmt.bufPrint(&buf, "{s}", .{"over"});
+    const warning = try std.fmt.bufPrint(&buf, "{s}{d}!", .{ prefix, "9000" });
+    std.debug.print("{s}\n", .{warning});
+}
+{% endhighlight %}
+
+<p>Because <code>bufPrint</code> internally calls <code>@memcpy</code>, the second time we call it we get a panic. This is because we're trying to copy <code>prefix</code> (which references <code>buf</code>) into <code>buf</code>.</p>
+
+<p>In addition to correctness, when aliasing is possible, compilers need to be careful about the assumptions they make. This often means avoiding certain optimizations. The output for this convoluted code is 30:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var incr = [_]i32{10};
+  var result: i32 = 10;
+
+  add(&result, &incr);
+  std.debug.print("{d}\n", .{result});
+}
+
+fn add(a: *i32, b: []i32) void {
+  a.* += b[0];
+  a.* += b[0];
+}
+{% endhighlight %}
+
+<p>The code is essentially doing <code>10 + 10 + 10</code>. If we keep <code>add</code> exactly as-is, but change how we call it, we'll get a different result:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  var incr = [_]i32{10};
+  const result: *i32 = &incr[0];
+
+  add(result, &incr);
+  std.debug.print("{d}\n", .{result.*});
+}
+{% endhighlight %}
+
+<p>Even though both cases start with <code>a.* == 10</code> and <code>b[0] == 10</code> the result is now <code>40</code>. Why? Because in this second version, <code>a</code> points to <code>b[0]</code>. Thus the first call to <code> a.* += b[0]</code> is incrementing <code>b[0]</code> as well.</p>
+
+<p>When I look at <code>add</code>, I don't think about <code>a</code> referencing <code>b[0]</code>, but the compiler does. And as unlikely as that might be, the compiler has no choice but to play it safe. Instead of loading <code>a[0]</code> once, it has to load it twice: once for each read. More generally, aliasing means that compilers need to handle the possibility that writing to a pointer affects other variables.</p>
+
+<p>Like I said above, this <em>is</em> a convoluted example. But in the name of completeness, we can see all of this in action, albeit indirectly. If we take the complete code, save it as "test.zig" and run it in <code>ReleaseFast</code>, we'll get the aforementioned output of <code>40</code>:
+
+{% highlight zig %}
+// $ zig run test.zig -O ReleaseFast
+// 40
+const std = @import("std");
+
+pub fn main() !void {
+  var incr = [_]i32{10};
+  const result: *i32 = &incr[0];
+
+  add(result, &incr);
+  std.debug.print("{d}\n", .{result.*});
+}
+
+pub fn add(a: *i32, b: []i32) void {
+  a.* += b[0];
+  a.* += b[0];
+}
+{% endhighlight %}
+
+<p>Now if we mark one of both parameters with <code>noalias</code> and run it again, we'll get <code>30</code>:</p>
+
+{% highlight zig %}
+// $ zig run test.zig -O ReleaseFast
+// 30
+const std = @import("std");
+
+pub fn main() !void {
+  var incr = [_]i32{10};
+  const result: *i32 = &incr[0];
+
+  add(result, &incr);
+  std.debug.print("{d}\n", .{result.*});
+}
+
+// only thing that's changed is that we've added noalias
+pub fn add(noalias a: *i32, b: []i32) void {
+  a.* += b[0];
+  a.* += b[0];
+}
+{% endhighlight %}
+
+<p>Why is this happening? Because the <code>noalias</code> hint lets the compiler reorganize the code so that <code>b[0]</code> is read only once. It's important to note that <code>noalias</code> doesn't forbid aliasing. The fact that this code runs, despite <code>a</code> and <code>b[0]</code> referencing the same memory, proves that. It's merely a promise that we're making to the compiler. To be clear, I've never used <code>noalias</code> in the past and I'm 99% sure I'll never use it in the future. The only reason I bring it up is to hopefully explain/show how aliasing impacts the compiler.</p>
+
+<h3>Conclusion</h3>
+<p>In most cases, you'll end up using <code>@memcpy</code>. Thankfully, if it ever gets called with overlapping memory, you'll get a runtime panic (I say thankfully, because a runtime panic is better than an undefined behavior). Still, unless you're copying into newly allocated memory, it's probably worth spending a few seconds to consider whether the source and destination could overlap and, if so, whether <code>std.mem.copyForwards</code> (or, less likely in my experience <code>std.mem.copyBackwars</code>) is the correct choice.</p>
+
+<p>Beyond that, for the sake of readability and simplicity aliasing is something worth minimizing. Some guidelines use the word "avoid", but I've settled on merely being more mindful of it (at least for now); maybe now and again I manage to limit the scope where two variables reference the same memory.</p>
