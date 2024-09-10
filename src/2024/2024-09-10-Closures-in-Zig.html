@@ -1,0 +1,291 @@
+---
+layout: post
+date: 2024-09-10
+title: "Closures in Zig"
+description: "Creating closures in zig and storing anytype as a field"
+tags: [zig]
+---
+
+<p>Zig doesn't have a simple way to create closures because closures require allocation, and Zig has a "no hidden allocation" policy. The values that you want to capture need to live somewhere (i.e. the heap), but there's no way for Zig (the language) to create the necessary heap memory. However, outside of the language, either in the standard library, or our own code, we can write code that takes an allocator and can thus create a closure.</p>
+
+<p>To get our bearings, we'll start with a simple explicit example. We'll worry about making it more generic later. First, we'll create a job:</p>
+
+{% highlight zig %}
+const Job = struct {
+    id: usize,
+
+    pub fn run(self: *Job, message: []const u8) void {
+        std.debug.print("job {d} says: {s}\n", .{self.id, message});
+    }
+};
+{% endhighlight %}
+
+<p>If we wanted to queue a job up, possibly to be run in a separate thread, we could easily create an array of pending jobs and store the <code>job</code> and <code>message</code>. We can start with something like:</p>
+
+{% highlight zig %}
+const JobQueue = struct {
+    len: usize = 0,
+    pending: [5]Data = undefined,
+
+    const Data = struct {
+        job: *Job,
+        message: []const u8,
+    };
+
+    pub fn add(self: *JobQueue, job: *Job, message: []const u8) void {
+        // TODO make sure pending isn't full
+        // Maybe we should be using a std.DoublyLinkedList instead
+        self.pending[self.len] = .{.job = job, .message = message};
+        self.len += 1;
+    }
+
+    pub fn run() {
+      // TODO
+    }
+};
+{% endhighlight %}
+
+<p>The above has some lifetime concerns: both <code>job</code> and <code>message</code> need to remain valid until the job runs. But, that isn't particular germane, so let's make our example a little less trivial.</p>
+
+<p>We'll change the signature of <code>Job.run</code> to take an <code>anytype</code> rather than a <code>[]const u8</code>:</p>
+
+{% highlight zig %}
+const Job = struct {
+    id: usize,
+
+    pub fn run(self: *Job, message: anytype) void {
+        std.debug.print("job {d} says: {any}\n", .{self.id, message});
+    }
+};
+{% endhighlight %}
+
+<p>This introduces some issues with our <code>JobQueue</code>. The <code>Data</code> we were capturing was a <code>job: *Job</code> and a <code>message: []const</code>. What should it be now? We could try changing <code>message</code> to <code>anytype</code>:</p>
+
+{% highlight zig %}
+const JobQueue = struct {
+    len: usize = 0,
+    pending: [5]Data = undefined,
+
+    const Data = struct {
+        job: *Job,
+        message: anytype,
+    };
+
+    pub fn add(self: *JobQueue, job: *Job, message: anytype) void {
+        self.pending[self.len] = .{.job = job, .message = message};
+        self.len += 1;
+    }
+};
+{% endhighlight %}
+
+<p>But this gives us a compile time error: <em>error: expected type expression, found 'anytype'</em>. Zig doesn't let us declare a field as <code>anytype</code>. To solve this we need to create a struct specific to the type of <code>message</code> being passed to <code>add</code>, which can then hold a <code>message</code>. Even to someone with reasonable experience in Zig, the following can be a little confusion:</p>
+
+{% highlight zig %}
+pub fn add(self: *JobQueue, job: *Job, message: anytype) void {
+    _ = self; // we'll use this later
+
+    const Closure = struct {
+        job: *Job,
+        message: @TypeOf(message),
+    };
+    const closure = Closure{.job = job, .message = message};
+    std.debug.print("{any}\n", .{closure.message});
+}
+{% endhighlight %}
+
+<p>This is a small but important step. Whenever a function has an <code>anytype</code> parameter, Zig creates a distinct implementation for every type used. It acts as a template. So if we call <code>add</code> with a <code>[]const u8</code> message, as before, we should really imagine the code expanding to:</p>
+
+{% highlight zig %}
+pub fn add(self: *JobQueue, job: *Job, message: []const u8) void {
+    _ = self; // we'll use this later
+
+    const Closure = struct {
+        job: *Job,
+        message: []const u8,
+    };
+    const closure = Closure{.job = job, .message = message};
+    std.debug.print("{any}\n", .{closure.message});
+}
+{% endhighlight %}
+
+<p>And if we were to call <code>add</code> with a <code>u32</code> or a <code>User</code> we should imagine two additional methods being created, replacing the above <code>[]const u8</code> with a <code>u32</code> and <code>User</code> respectively.</p>
+
+<p>To me, it's strange to declare a struct within a function. When we see a function, we typically think of our running program executing the code within. But part of <code>add</code> is executed at runtime and part of it is executed at compile time (comptime). In Zig, types <strong>always</strong> have to be known at comptime, so we know that the creation of the <code>Closure</code> is happening at comptime. If you were to print it's name, via <code>@typeName(Closure)</code>, you'd get something like <code>sample.JobQueue.add__anon_1600.Closure</code>. If we call <code>add</code> with three different <code>message</code> types, we'd get three different struct with three different names.</p>
+
+<p>While the struct declaration happens at comptime, the rest of the code is just normal runtime code. We create an instance of a struct, assigning it a field, and [as a placeholder] print the field. Even if we created multiple versions of <code>Closure</code> (by calling <code>add</code> with different <code>message</code> types), when our code run, there's no ambiguity about which "Closure" we want, because normal name resolution takes place. In other words, we can further expand the above code, like Zig's compiler does, to:</p>
+
+{% highlight zig %}
+    const closure = sample.JobQueue.add__anon_1600.Closure{.job = job, .message = message};
+    std.debug.print("{any}\n", .{closure.message});
+}
+{% endhighlight %}
+
+<p>We now have a variable <code>closure</code> which captures the data we need. But it might not be clear how that's useful. Our issue was that we didn't know what type <code>pending</code> should be:</p>
+
+{% highlight zig %}
+const JobQueue = struct {
+    len: usize = 0,
+    pending: [5]??? = undefined;
+    // ...
+};
+{% endhighlight %}
+
+<p>And that still isn't clear. It can't be <code>Closure</code>, because there isn't a single <code>Closure</code> type - there's a <code>Closure</code> for each type of <code>message</code>. To solve this, we need to introduce another type, an interface:</p>
+
+{% highlight zig %}
+const Runnable = struct {
+    ptr: *anyopaque;
+    runFn: *const fn(ptr: *anyopaque) void,
+};
+{% endhighlight %}
+
+<aside><p>If you aren't comfortable with <code>*anyopaque</code>, I suggest you read <a href="/Zig-Interfaces/">Zig Interfaces</a>.</aside>
+
+<p>An interface works by storing a typeless pointer (an <code>*anyopque</code>) along with the function(s) to execute. When the interface function is executed, the type is re-established allowing the real function to be called. In short, by erasing the type, we can store anything. Importantly, our interface <strong>has</strong> to store a pointer, i.e. it has to store an <code>*anyopaque</code> not an <code>anyopaque</code> (which you'll rarely, if ever, see). Why? because the size of everything has to be known at compile time, and the size of a pointer, no mater what it points to, is always <code>usize</code>. Thus, on a 64 bit platform, the size of <code>Runnable</code> is 16 bytes (two 64-bit pointers).</p>
+
+<p>I say this is important because, at the top of this blog, I mentioned that our closure would require an allocation. We're ready to see that in action:</p>
+
+{% highlight zig %}
+const JobQueue = struct {
+    len: usize = 0,
+    pending: [5]Runnable = undefined;
+
+    pub fn add(self: *JobQueue, allocator: Allocator, job: *Job, message: anytype) !void {
+        const Closure = struct {
+            job: *Job,
+            message: @TypeOf(message),
+        };
+
+        const closure = try allocator.create(Closure);
+        closure.* = Closure{.job = job, .message = message};
+
+        self.pending[self.len] = .{
+            .ptr = closure,
+            .runFn = undefined, //TODO
+        };
+        self.len += 1;
+    }
+};
+
+const Runnable = struct {
+    ptr: *anyopaque;
+    runFn: *const fn(ptr: *anyopaque) void,
+};
+{% endhighlight %}
+
+<p>Our <code>Closure</code> instance, <code>closure</code>, automatically coerces to an <code>*anyopaque</code>, but only because we've turned into into a pointer by allocating memory on the heap for it. In other words, our <code>Closure</code> captures the values, but to be useful we need it to live somewhere beyond <code>add</code>'s stack.</p>
+
+<p>To complete our interface, we need to add a <code>run</code> method which will re-establish the type of the <code>*anyopaque</code> pointer. This isn't difficult, since the type of <code>ptr</code> is <code>*Closure</code>:</p>
+
+{% highlight zig %}
+pub fn add(self: *JobQueue, allocator: Allocator, job: *Job, message: anytype) !void {
+    const Closure = struct {
+        job: *Job,
+        message: @TypeOf(message),
+
+        fn run(ptr: *anyopaque) void {
+            var c: *@This() = @ptrCast(@alignCast(ptr));
+            c.job.run(c.message);
+        }
+    };
+
+    // ...
+}
+{% endhighlight %}
+
+<p><code>@This()</code> returns the innermost struct (or union or enum) which, in this case, is our <code>Closure</code>. <code>*@This()</code> is a little weird, but it translate to <code>*Closure</code>, which is exactly what <code>ptr</code> is. We can't use <code>Closure</code> here because ...well, I'm not sure, but I guess the name resolution fails or is ambiguous due to how the structure is declared.</p>
+
+<p>With our <code>run</code> method, we can almost finish our code. Previously, we had left the <code>runFn</code> of our <code>Runnable</code> as <code>undefined</code>. We now have something to set it to:</p>
+
+{% highlight zig %}
+pub fn add(self: *JobQueue, allocator: Allocator, job: *Job, message: anytype) !void {
+
+    // ...
+
+    const closure = try allocator.create(Closure);
+    closure.* = Closure{.job = job, .message = message};
+
+    self.pending[self.len] = .{
+        .ptr = closure,
+        .runFn = Closure.run
+    };
+    self.len += 1;
+}
+{% endhighlight %}
+
+<p>The last thing that needs to be done is to free the memory we've allocated. Just like our closure captured (or closed oves) our <code>job</code> and <code>message</code>, we also have to capture the <code>allocator</code>. Here's a complete runnable example:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _  = gpa.detectLeaks();
+
+    var queue = JobQueue{};
+
+    var job = Job{.id = 1};
+    try queue.add(allocator, &job, "hello");
+
+    // without the @as, 123 is a comptime_int, which will not work
+    try queue.add(allocator, &job, @as(u32, 123));
+
+    queue.runOne();
+    queue.runOne();
+}
+
+const Job = struct {
+    id: usize,
+
+    pub fn run(self: *Job, message: anytype) void {
+        std.debug.print("job {d} says: {any}\n", .{self.id, message});
+    }
+};
+
+const JobQueue = struct {
+    len: usize = 0,
+    pending: [5]Runnable = undefined,
+
+    pub fn add(self: *JobQueue, allocator: Allocator, job: *Job, message: anytype) !void {
+        const Closure = struct {
+            job: *Job,
+            allocator: Allocator,
+            message: @TypeOf(message),
+
+            fn run(ptr: *anyopaque) void {
+                var c: *@This() = @ptrCast(@alignCast(ptr));
+                defer c.allocator.destroy(c);
+                c.job.run(c.message);
+            }
+        };
+
+        const closure = try allocator.create(Closure);
+        closure.* = Closure{.job = job, .allocator = allocator, .message = message};
+
+        self.pending[self.len] = .{
+            .ptr = closure,
+            .runFn = Closure.run,
+        };
+        self.len += 1;
+    }
+
+    pub fn runOne(self: *JobQueue) void {
+        const last = self.len - 1;
+        const runnable = self.pending[last];
+        runnable.runFn(runnable.ptr);
+        self.len = last;
+    }
+};
+
+const Runnable = struct {
+    ptr: *anyopaque,
+    runFn: *const fn(ptr: *anyopaque) void,
+};
+{% endhighlight %}
+
+<h3>Conclusion</h3>
+<p>If you want to see a real example of this, checkout the <code>spawn</code> method of <code>std.Thread.Pool</code>. That implementation uses the <code>@fieldParentPtr</code> builtin, which makes it harder to follow, but which is also worth understanding. If you don't know what <code>@fieldParentPtr</code> does, you might want to first read <a href="https://www.ryanliptak.com/blog/zig-fieldparentptr-for-dumbos/">Zig's @fieldParentPtr for dumbos like me</a>.</p>
+
+<p>Next time you're using a language with syntactical sugar for closures, you can visualize the auto-generated structure that the compiler creates and fields of an instance are set to the values you're capturing.</p>
