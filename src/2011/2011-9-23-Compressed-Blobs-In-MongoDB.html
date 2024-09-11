@@ -6,10 +6,10 @@ title: "MongoSpy, MongoWatch and Compressed Blobs"
 tags: [mongodb]
 ---
 <h3>MongoSpy</h3>
-<p>Yesterday I wrote MongoSpy, a simple <a href="http://nodejs.org/">node.js</a> application which monitors the system.profile collection of a MongoDB database and, using <a href="http://socket.io">socket.io</a>, streams the info to your browser's console. The result is insight into the MongoDB activity each action of your site performs. Hopefully it'll prove useful to some of you building mongo-backed sites. This is purely a development tool. You can learn more at <a href="http://spy.mongly.com/">http://spy.mongly.com/</a> and get the source on <a href="https://github.com/karlseguin/mongospy/">github</a>.</p>
+<p>This project is no longer maintained. Source code: <a href="https://github.com/karlseguin/mongospy/">github</a>.</p>
 
 <h3>MongoWatch</h3>
-<p>Today I'm releasing MongoWatch. MongoWatch captures some high-level statistics on one or more MongoDB instance and keeps a historical record. The information is useful for looking a high-level trends - like is your working set no longer fitting into memory. This isn't an active monitoring tool. Honestly, I wrote this more to better familiarize myself with node.js programming (god I suck at it) and experiment with compressing blobs (binary large object) of data within MongoDB than anything else. You can see a demo at <a href="http://watch.demo.mongly.com/">watch.demo.mongly.com</a>, learn more about the project at <a href="http://watch.mongly.com/">http://watch.mongly.com</a> and get the source on <a href="https://github.com/karlseguin/mongowatch/">github</a>.</p>
+<p>This project is no longer maintained. Source code: <a href="https://github.com/karlseguin/mongowatch/">github</a>.</p>
 
 <h3>Compressed Blobs</h3>
 <p>One of the reasons I wrote MongoWatch was to experiment with using MongoDB as a, what I like to call, multi-key value store. Essentially, I wanted to see how natural it would be to store documents within mongodb like so: <code>{key1: 'first indexed key', key2: 'second indexed key', data: 'byte array of all the other fields'}</code>. The idea is that any field which you don't need for querying (or sorting) gets thrown into a single blob (which can then be compressed). The benefits, I hoped, would be smaller storage size and faster processing (find/inserts).</p>
