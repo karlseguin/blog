@@ -9,8 +9,6 @@ tags: [modeling, mongodb, performance, redis]
 
 <p>This weekend I spent time solving a problem using both a new tool and a new modeling approach. It's an experience I'd like to share. As I start to rewrite and open source mogade (<a href="http://github.com/mogade/mogade-server">on github</a>), one of the things I'm most anxious to fix is how we return a player's rank for a given leaderboard. I also took the opportunity to change how we retrieve actual leaderboard pages (since the two are related). Both of these changes required significant reworking of how we save scores. First I'd like to explain the version 1 approach, then look at how I approached it in version 2.</p>
 
-<p>All you really need to know about <a href="http://mogade.com">mogade</a> is that it provides leaderboards for game developers (also free!)</p>
-
 <h2>The Original Design</h2>
 <h3>Saving a score</h3>
 <p>Data in version 1 of mogade is modeled much like you'd expect to see using a traditional approach. Essentially, a player's score is stored in a <code>scores</code> collection. The collection contains the leaderboard's id, player's name, a unique identifier for the player (think device id + name), the date the score was achieved, and how many points the player got:</p>

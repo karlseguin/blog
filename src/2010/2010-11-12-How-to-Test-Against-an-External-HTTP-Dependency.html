@@ -5,7 +5,7 @@ date: 2010-11-12
 title: "How to Test Against an External HTTP Dependency"
 tags: [c#, testing]
 ---
-<p>In previous posts I've been advocating the benefits of testing against real implementations (as opposed to mocks) whenever possible. However, I was quick to concede that this isn't always possible. While writing the open sourced <a href="https://github.com/mogade/mogade-csharp/">.NET driver</a> for mogade.com (a free service for game developers <a href="http://www.mogade.com">to add leaderboard/achievements to their games</a>), I ran into such a situation.</p>
+<p>In previous posts I've been advocating the benefits of testing against real implementations (as opposed to mocks) whenever possible. However, I was quick to concede that this isn't always possible. While writing a .NET driver, I ran into such a situation.</p>
 
 <p>I thought about a few possible solutions, but quickly settled on <a href="https://github.com/mogade/mogade-csharp/blob/master/Mogade.Tests.Core/FakeServer.cs">this FakeServer class</a>. I think some examples on how we use it might be the best place to start:</p>
 
