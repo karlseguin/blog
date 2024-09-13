@@ -26,8 +26,8 @@ const size_t alignof_regex_t = alignof(regex_t);
 
 {% highlight zig %}
 const re = @cImport(@cInclude("regez.h"));
-const REGEX_T_ALIGNOF = re.sizeof_regex_t;
-const REGEX_T_SIZEOF = re.alignof_regex_t;
+const REGEX_T_SIZEOF = re.sizeof_regex_t;
+const REGEX_T_ALIGNOF = re.alignof_regex_t;
 
 pub fn main() !void {
   var gpa = std.heap.GeneralPurposeAllocator(.{}){};
