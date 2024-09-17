@@ -33,9 +33,10 @@ pub fn main() !void {
   var gpa = std.heap.GeneralPurposeAllocator(.{}){};
   const allocator = gpa.allocator();
 
-  var slice = try allocator.alignedAlloc(u8, REGEX_T_ALIGNOF, REGEX_T_SIZEOF);
-  const regex = @ptrCast(*re.regex_t, slice.ptr);
-  defer allocator.free(@ptrCast([*]u8, regex)[0..REGEX_T_SIZEOF]);
+  const slice = try allocator.alignedAlloc(u8, REGEX_T_ALIGNOF, REGEX_T_SIZEOF);
+  defer allocator.free(slice);
+  const regext: [*]re.regex_t = @ptrCast(slice.ptr);
+
   ...
 }
 {% endhighlight %}
