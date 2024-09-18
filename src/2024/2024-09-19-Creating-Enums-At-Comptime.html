@@ -1,0 +1,233 @@
+---
+layout: post
+date: 2024-09-19
+title: "Creating enums at comptime"
+description: "Using zig's @Type to dynamically create enums at comptime"
+tags: [zig]
+---
+
+<p>In <a href="/Basic-MetaProgramming-in-Zig/">Basic MetaProgramming in Zig</a> we saw how <code>std.meta.hasFn</code> uses <code>@typeInfo</code> to determine if the type is a struct, union or enum. In this post, we'll take expand that introduction and use <code>std.builtin.Type</code> to create our own type.</p>
+
+<aside><p><strong>Spoiler:</strong> as far as I know, you cannot (yet) define methods on comptime-generated structs, unions or enums. Only fields.</p></aside>
+
+<p>Pretend you're building a validation library which has a number of validation errors. You decide to define all of these in an enum:</p>
+
+{% highlight zig %}
+// We use explicit ordinal values because the error code that we
+// return will be based on this, and we want it to be stable.
+pub const ValidationError = enum(i16) {
+    required = 1,
+    int_range = 2,
+    string_length = 2,
+};
+{% endhighlight %}
+
+<p>You'd like users of your library to be able to define their own validation behavior including their own enum values. Ideally, you'd like to present your library enum and the app-specific enum as one cohesive type. To achieve this, we'll begin with a skeleton of our library's <code>Validator</code>:</p>
+
+{% highlight zig %}
+// our library Validator
+pub fn Validator(comptime V: type) type {
+    return struct {
+        const Self = @This();
+        pub fn init() Self {
+            return .{};
+        }
+    };
+}
+{% endhighlight %}
+
+<p>The reason this is a generic is to support app-specific validators. The user's app will define their own <code>Validator</code> where they can add custom behavior:</p>
+
+{% highlight zig %}
+const ValidatorExtension = struct {
+   pub const ValidationError = enum(i16) {
+        name_reserved = 1000,
+        category_limit = 1001,
+   };
+};
+{% endhighlight %}
+
+<p>To create a validator, the user would do:</p>
+
+{% highlight zig %}
+var validator = validation.Validator(ValidatorExtension);
+{% endhighlight %}
+
+<p>The goal is to create a new type which merges the library's <code>validation.Validator</code> with the application's <code>ValidatorExtension</code>.</p>
+
+<h3>@Type</h3>
+<p>To create a type at comptime the <code>@Type</code> builtin is used. It takes a <code>std.builtin.Type</code> and creates a type (this process is called reify). It's the opposite of <code>@typeInfo</code>. We already know that <code>std.builtin.Type</code> is a union and, in this case, we're interested in the <code>enum</code> tag. That's a <code>std.builtin.Type.Enum</code>, which looks like:</p>
+
+{% highlight zig %}
+pub const EnumField = struct {
+    name: [:0]const u8,
+    value: comptime_int,
+};
+
+pub const Enum = struct {
+    tag_type: type,
+    fields: []const EnumField,
+    decls: []const Declaration,
+    is_exhaustive: bool,
+};
+{% endhighlight %}
+
+<p>Creating a new enum requires that we create a new <code>std.builtin.Type.Enum</code> with the desired fields - in our case taking the fields from both types and merging them. We'll do this in two steps. First, we'll create an enum based solely on our library's own <code>ValidationError</code>. This code isn't actually useful, since it just creates a copy of <code>ValidationError</code>, but it keeps things simple:</p>
+
+{% highlight zig %}
+fn BuildValidationError() type {
+    // "enum" is a reserved keyword, so we need to escape it
+    // with @"enum". Yes, it's annoying.
+
+    // Get the fields of our ValidationError
+    const lib_fields = @typeInfo(ValidationError).@"enum".fields;
+
+    // Create a new array to hold the fields for the enum that we'll create
+    var fields: [lib_fields.len]std.builtin.Type.EnumField = undefined;
+
+    // Copy the fields over
+    for (lib_fields, 0..) |f, i| {
+        fields[i] = f;
+    }
+
+    // the type of the @"enum" tag is std.builtin.Type.Enum
+    // we use the type inference syntax, i.e. .{...}
+    return @Type(.{.@"enum" = .{
+        .decls = &.{},
+        .tag_type = i16,
+        .fields = &fields,
+        .is_exhaustive = true,
+    }});
+}
+{% endhighlight %}
+
+<p>When creating a type like this, we can't define declarations (like methods), so we set <code>decls</code> to an empty slice. We'll come back to the <code>tag_type</code> in a bit. We set <code>fields</code> to the fields we just created (copied) from the original enum. Finally, Zig has <a href="https://ziglang.org/documentation/master/#toc-Non-exhaustive-enum">non-exhaustive enums</a>; they aren't germane to this topic, so we just set it to <code>true</code> since normal enums are exhaustive.</p>
+
+<p>Instead of duplicating an enum, we actually want to merge two enums. But, with the above in place, this just comes down to merging two arrays:</p>
+
+{% highlight zig %}
+fn BuildValidationError(comptime App: type) type {
+    // Get the fields of our ValidationError
+    const lib_fields = @typeInfo(ValidationError).@"enum".fields;
+
+    // Get the fields of the App's ValidationError, if there is one
+    const app_fields = blk: {
+        if (@hasDecl(App, "ValidationError") == false) {
+            break :blk &.{};
+        }
+        switch (@typeInfo(App.ValidationError)) {
+            .@"enum" => |e| break :blk e.fields,
+            else => @compileError(@typeName(App.ValidationError) ++ " must be an enum"),
+        }
+    };
+
+    // Create an array that is big enough for all fields
+    var fields: [lib_fields.len + app_fields.len]std.builtin.Type.EnumField = undefined;
+
+    // Copy the library fields
+    for (lib_fields, 0..) |f, i| {
+        fields[i] = f;
+    }
+
+    // Copy the app fields
+    // (we start our counter iterator, i, at lib_fields.len)
+    for (app_fields, lib_fields.len..) |f, i| {
+        fields[i] = f;
+    }
+
+    // Same as before
+    return @Type(.{.@"enum" = .{
+        .decls = &.{},
+        .tag_type = i16,
+        .fields = &fields,
+        .is_exhaustive = true,
+    }});
+}
+{% endhighlight %}
+
+<p>You'll notice that we're being defensive. Having an application-specific <code>ValidationError</code> is optional, so we can't assume <code>App.ValidationError</code> exists. Also, while we could leave out the enum type check, having an explicit check with our own error message results in a more user-friendly error should <code>App.ValidationError</code> be a different type.</p>
+
+<p>Finally, we go back to our <code>Validator</code> skeleton and use the above function:</p>
+
+{% highlight zig %}
+pub fn Validator(comptime V: type) type {
+    return struct {
+        pub const ValidationError = BuildValidationError(V);
+
+        const Self = @This();
+        pub fn init() Self {
+            return .{};
+        }
+    };
+}
+{% endhighlight %}
+
+<p>Which means that: <code>validation.Validator(ValidationExt).ValidationError</code> is our merged enum.</p>
+
+<p>In this example we gave our enums an explicit tag type of <code>i16</code>. We also gave every value an explicit value. Normally, you let Zig infer these. This made <code>BuildValidationError</code> a little easier to implement. If we hadn't given each tag an explicit value, the code would have failed to compile: <em>error: enum tag value 0 already taken</em>. That's because we would have tried to add 2 fields with the same value (both <code>ValidationError.required</code> and <code>ValidatorExtension.ValidationError.name_reserved</code> would have a value of <code>0</code>.</p>
+
+<p>For our use case, this is actually an advantage: if the application accidentally uses the same enum value, we get a compiler error. But, if we didn't have / want explicit values, we'd have to change our two <code>for</code> loop:</p>
+
+{% highlight zig %}
+for (lib_fields, 0..) |f, i| {
+    fields[i] = .{.name = f.name, .value = i};
+}
+
+for (app_fields, lib_fields.len..) |f, i| {
+    // remember, i starts off at lib_fields.len
+    fields[i] = .{.name = f.name, .value = i};
+}
+{% endhighlight %}
+
+<p>As for the <code>tag_type</code>, we could do exactly what Zig does and assign it to: <code>std.math.IntFittingRange(0, fields.len - 1)</code>.</p>
+
+<h3>Conclusion</h3>
+<p>You might never need to create a type like this. But chances are that, on occasion, you will use <code>@typeInfo</code> along with <code>std.builtin.Type</code> and its child types. And, as you gain familiarity with these, it's useful to remember that the <code>@Type</code> builtin can be used to turn those into a concrete type.</p>
+
+<p>As an aside, the best way to get comfortable with <code>std.builtin.Type</code> is to look at the output of <code>@typeInfo</code>:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    const User = struct {
+        id: i32,
+        name: []const u8,
+    };
+    std.debug.print("{any}\n", .{@typeInfo(User)});
+}
+{% endhighlight %}
+
+<p>Unfortunately, this doesn't work; you'll get an error complaining about some values being comptime-known while others are runtime-known. If you dig into the type and use an <code>inline for</code> to unwrap the for loop <code>std.debug.print</code> was trying to do (and failed to do) over the <code>fields</code> array, you can get meaningful output:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    const User = struct {
+        id: i32,
+        name: []const u8,
+    };
+    const info = @typeInfo(User).@"struct";
+    inline for (info.fields) |f| {
+        std.debug.print("{any}\n", .{f});
+    }
+}
+{% endhighlight %}
+
+<p>Which outputs:</p>
+
+{% highlight zig %}
+builtin.Type.StructField{
+    .name = { 105, 100 },
+    .type = i32,
+    .default_value = null,
+    .is_comptime = false,
+    .alignment = 4
+}
+
+builtin.Type.StructField{
+    .name = { 110, 97, 109, 101 },
+    .type = []const u8,
+    .default_value = null,
+    .is_comptime = false, .alignment = 8
+}
+{% endhighlight %}
+
+<p>This helps give us an idea of how we could use <code>@Type</code> to create a struct.</p>
