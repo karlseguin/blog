@@ -23,6 +23,10 @@ h1, h2, h3 {outline: 0;margin: 30px 0 5px;}
 h1 {font-size: 28px;}
 h2 {font-size: 24px;}
 h3 {font-size: 20px;}
+h1 a, h2 a, h3 a, h4 a, h5 a { color: #000; text-decoration: none }
+h1 a:before, h2 a:before, h3 a:before {width: 1em;content: "§";color: #999;display: none;text-decoration: none;margin-left: -1em;}
+h1 a:hover:before, h2 a:hover:before, h3 a:hover:before {display: inline-block;}
+
 
 p code, li code {padding: 0px 3px;border-radius: 5px;background: #fffce3;border: 1px solid #e9e9e5;}
 code br {border: 1px solid red}
@@ -38,14 +42,8 @@ code br {border: 1px solid red}
 .pager .next:not(:empty):after{content: ' »'}
 .pager .next {text-align: right;margin-left: 10px}
 
-/**
- * Dracula Theme originally by Zeno Rocha [@zenorocha]
- * https://draculatheme.com/
- *
- * Ported for PrismJS by Albert Vallverdu [@byverdu]
- */
-code[class*=language-],pre[class*=language-]{color:#f8f8f2;background:0 0;text-shadow:0 1px rgba(0,0,0,.3);font-family:Consolas,Monaco,"Andale Mono","Ubuntu Mono",monospace;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;word-wrap:normal;line-height:1.5;-moz-tab-size:4;-o-tab-size:4;tab-size:4;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none}pre[class*=language-]{padding:1em;margin:.5em 0;overflow:auto;border-radius:.3em}:not(pre)>code[class*=language-],pre[class*=language-]{background:#282a36}:not(pre)>code[class*=language-]{padding:.1em;border-radius:.3em;white-space:normal}.token.cdata,.token.comment,.token.doctype,.token.prolog{color:#b3c2f0}.language-css .token.string,.style .token.string,.token.entity,.token.operator,.token.punctuation,.token.url,.token.variable{color:#f8f8f2}.namespace{opacity:.7}.token.constant,.token.deleted,.token.property,.token.symbol,.token.tag{color:#ff79c6}.token.boolean,.token.number{color:#bd93f9}.token.attr-name,.token.builtin,.token.char,.token.inserted,.token.selector,.token.string{color:#a8ff60}.token.atrule,.token.attr-value,.token.class-name,.token.function{color:#f1fa8c}.token.keyword{color:#8be9fd}.token.important,.token.regex{color:#ffb86c}.token.bold,.token.important{font-weight:700}.token.italic{font-style:italic}.token.entity{cursor:help}
-pre[class*=language-] {font-size: 16px;margin-bottom: 30px;}
+/* https://raw.githubusercontent.com/PrismJS/prism-themes/refs/heads/master/themes/prism-one-light.css */
+code[class*=language-],pre[class*=language-]{font-size: 16px;background:#f9f9f9;color:#383942;font-family:"Fira Code","Fira Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;direction:ltr;text-align:left;white-space:pre;word-spacing:normal;word-break:normal;line-height:1.5;-moz-tab-size:2;-o-tab-size:2;tab-size:2;-webkit-hyphens:none;-moz-hyphens:none;-ms-hyphens:none;hyphens:none}code[class*=language-] ::-moz-selection,code[class*=language-]::-moz-selection,pre[class*=language-] ::-moz-selection{background:#e5e5e5;color:inherit}code[class*=language-] ::selection,code[class*=language-]::selection,pre[class*=language-] ::selection{background:#e5e5e5;color:inherit}pre[class*=language-]{padding:1em;margin:.5em 0;overflow:auto;border-radius:.3em}:not(pre)>code[class*=language-]{padding:.2em .3em;border-radius:.3em;white-space:normal}.token.cdata,.token.comment,.token.prolog{color:#9fa0a6}.language-css .token.property,.language-json .token.operator,.language-markdown .token.url,.language-markdown .token.url-reference.url>.token.string,.language-markdown .token.url>.token.operator,.token.attr-value>.token.punctuation.attr-equals,.token.doctype,.token.entity,.token.punctuation,.token.special-attr>.token.attr-value>.token.value.css{color:#383942}.language-json .token.null.keyword,.language-markdown .token.bold .token.content,.token.atrule,.token.attr-name,.token.boolean,.token.class-name,.token.constant,.token.number{color:#b66a00}.language-css .token.atrule .token.rule,.language-css .token.important,.language-javascript .token.operator,.language-markdown .token.italic .token.content,.token.keyword{color:#a625a4}.language-css .token.selector,.language-markdown .token.list.punctuation,.language-markdown .token.strike .token.content,.language-markdown .token.strike .token.punctuation,.language-markdown .token.title.important>.token.punctuation,.token.deleted,.token.important,.token.property,.token.symbol,.token.tag{color:#e35549}.language-css .token.url>.token.string.url,.language-markdown .token.code-snippet,.token.attr-value,.token.attr-value>.token.punctuation,.token.builtin,.token.char,.token.inserted,.token.regex,.token.selector,.token.string{color:#50a04f}.language-markdown .token.url>.token.content,.token.function,.token.operator,.token.variable{color:#4078f1}.language-css .token.function,.language-css .token.url>.token.function,.language-markdown .token.url-reference.url,.language-markdown .token.url>.token.url,.token.url{color:#0083bb}.language-javascript .token.template-string>.token.interpolation>.token.interpolation-punctuation.punctuation{color:#c91142}.language-markdown .token.blockquote.punctuation,.language-markdown .token.hr.punctuation{color:#9fa0a6;font-style:italic}.token.bold{font-weight:700}.token.comment,.token.italic{font-style:italic}.token.entity{cursor:help}.token.namespace{opacity:.8}
 
 @media screen and (max-width: 1000px) {
   .pager{flex-direction: column;}

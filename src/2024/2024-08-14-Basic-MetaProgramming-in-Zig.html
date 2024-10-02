@@ -86,7 +86,7 @@ inline for (std.meta.fields(T),) |field| {
 }
 {% endhighlight %}
 
-<p>This example begins to demonstrate some of the larger comptime world. We see <code>std.meta.fields</code> which returns a list of fields for a type. We also <code>inline for</code> which unrolls the loop. Given a struct with two fields, "id" and "name", we could imagine the above comptime code resulting in:</p>
+<p>This example begins to demonstrate some of the larger comptime world. We see <code>std.meta.fields</code> which returns a list of fields for a type. We also see <code>inline for</code> which unrolls the loop. Given a struct with two fields, "id" and "name", we could imagine the above comptime code resulting in:</p>
 
 {% highlight zig %}
 var value: T = undefined;

@@ -1,0 +1,319 @@
+---
+layout: post
+date: 2024-10-02
+title: "TCP Server in Zig - Part 1 - Single Threaded"
+description: "An Introduction to building TCP Servers in Zig"
+tags: [zig]
+---
+
+<p>In this series we're going to look at building a TCP server in Zig. We're going to start with a simple single-threaded server so that we can focus on basics. In following parts, we'll make our server multi-threaded and then introduce polling (poll, epoll and kqueue).</p>
+
+<p>We begin with a little program that compiles and runs but doesn't do much:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const net = std.net;
+const posix = std.posix;
+
+pub fn main() !void {
+    const address = try std.net.Address.parseIp("127.0.0.1", 5882);
+
+    const tpe: u32 = posix.SOCK.STREAM;
+    const protocol = posix.IPPROTO.TCP;
+    const listener = try posix.socket(address.any.family, tpe, protocol);
+    defer posix.close(listener);
+}
+{% endhighlight %}
+
+<p>The first thing we do is define the address we'll eventually want to listen on. In our example we're going to be listening on 127.0.0.1 (localhost) port 5882. If you wanted to make your server publicly accessible, with all the risk that might entail, you would need to use your computer's public interface, or use "0.0.0.0" to bind to all interfaces. With <code>parseIp</code> we could also specify an IPv6 address, e.g. we could pass "::1" as the IPv6 equivalent to 127.0.01.</p>
+
+<p>This first parameter is called the <code>domain</code> and it'll usually be <code>INET</code> or <code>INET6</code>. We make our life a bit easier by using our <code>address</code>'s family for that parameter. The next parameter servers two purposes. First  it sets the type of socket we're creating. For TCP this will be <code>SOCK.STREAM</code>. For UDP we'd use <code>SOCK.DGRAM</code>. The second purpose is as a bitwise OR flag for different behavior. For now we don't set any flag, but we will use <code>posix.SOCK.STREAM | posix.SOCK.NONBLOCK</code> in a later part. Finally, we specify <code>TCP</code> as the protocol that we'll be using.</p>
+
+<p>At this point, we could make use our newly created socket in one of two ways. We could use <code>posix.connect</code> to create a client to connect to a server over TCP. Alternatively, and what we want, is to use <code>posix.listen</code> to flag our socket as a listening socket, a server, that can accept connections:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    const address = try std.net.Address.parseIp("127.0.0.1", 5882);
+
+    const tpe: u32 = posix.SOCK.STREAM;
+    const protocol = posix.IPPROTO.TCP;
+    const listener = try posix.socket(address.any.family, tpe, protocol);
+    defer posix.close(listener);
+
+    // we added these three lines
+    try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+    try posix.bind(listener, &address.any, address.getOsSockLen());
+    try posix.listen(listener, 128);
+}
+{% endhighlight %}
+
+<p>The first new line allows the address to be reused. We'll go over this in more detail a bit later, but include it here so that you can start and stop the program repeatedly without getting an error. The next line binds our socket to our address. It's <code>bind</code> that links our process to a specific address, allowing the operating system to route incoming traffic to our process using the specified port (<code>5882</code>). We pass the socket, address and address length (we'll see why the length is needed when we look at <code>accept</code>, next). Finally we call <code>listen</code> which is what turns our code into a "server", able to handle incoming requests. The parameters we pass to <code>listen</code> is the socket and a backlog. The backlog is a hint for the number of connections we want the OS to queue while it waits for us to accept connections. Because it's just a hint, it's hard to play with to see what impact it can have. In following parts, as we improve our server, we'll get a chance to discuss this in a bit more depth.</p>
+
+<p>Finally, we're able to accept and service requests. This is our first complete working example. It's a lot of code, but we'll go over it in detail:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const net = std.net;
+const posix = std.posix;
+
+pub fn main() !void {
+    const address = try std.net.Address.parseIp("127.0.0.1", 5882);
+
+    const tpe: u32 = posix.SOCK.STREAM;
+    const protocol = posix.IPPROTO.TCP;
+    const listener = try posix.socket(address.any.family, tpe, protocol);
+    defer posix.close(listener);
+
+    try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+    try posix.bind(listener, &address.any, address.getOsSockLen());
+    try posix.listen(listener, 128);
+
+    while (true) {
+        var client_address: net.Address = undefined;
+        var client_address_len: posix.socklen_t = @sizeOf(net.Address);
+
+        const socket = posix.accept(listener, &client_address.any, &client_address_len, 0) catch |err| {
+            // Rare that this happens, but in later parts we'll
+            // see examples where it does.
+            std.debug.print("error accept: {}\n", .{err});
+            continue;
+        };
+        defer posix.close(socket);
+
+        std.debug.print("{} connected\n", .{client_address});
+
+        write(socket, "Hello (and goodbye)") catch |err| {
+            // This can easily happen, say if the client disconnects.
+            std.debug.print("error writing: {}\n", .{err});
+        };
+    }
+}
+
+fn write(socket: posix.fd_t, msg: []const u8) !void {
+    var pos: usize = 0;
+    while (pos < msg.len) {
+        const written = try posix.write(socket, msg[pos..]);
+        if (written == 0) {
+            return error.Closed;
+        }
+        pos += written;
+    }
+}
+{% endhighlight %}
+
+<p>If you run this code, you should be able to connect and get the greeting:</p>
+
+{% highlight text %}
+$ socat - TCP:127.0.0.1:5882
+Hello (and goodbye)
+{% endhighlight %}
+
+<p>We've added the <code>while</code> block as well as the <code>write</code> function. This new code accepts a connection, writes a message to the new connection, closes the connection and repeats.</p>
+
+<p><code>accept</code> will block until there's an incoming connection. It takes 4 parameters: the listening socket that we're accepting on, a pointer to the address where <code>accept</code> will write the remote address to, the length of that address, and bitwise OR flags. For now, we don't pass any flags. You can pass <code>null</code> for the 2nd and 3rd parameters (the address and address length). If you do this, you'll need to call <code>posix.getpeername</code> to get the remote address.</p>
+
+<p>Hopefully it makes sense why the address has to be passed by reference: we need the system call to populate the value for us. But why do we need to pass the length and why by reference? Keep in mind that there are different kinds of addresses, the two you're probably most familiar with are IPv4 and IPv6. These have different lengths. C doesn't have tagged unions, so it needs a bit more information to properly handle the <code>address</code> parameter. By taking a mutable length, <code>accept</code> is able to tell us the actual length of the address it wrote into the 2nd parameter. Because Zig supports tagged union, this isn't really something we need to worry about, but we still need to pass in the data.</p>
+
+<p>Once we have a connection, we send it a message. Why is our call to <code>write</code> done in a loop? Because when we write to a socket, it's possible that only part of the bytes are written. We need to loop until all the bytes are written. <code>write</code> returns the number of bytes written. In this case, since we're writing a short 19-byte message, you could try this a million times and only ever need a single write. But the reality is that a 19-byte message could take anywhere from 1 to 19 calls to <code>write</code> to fully write. Throughout this series, we're going to talk a lot more about writing and reading messages. So this is something we'll revisit in greater detail.</p>
+
+<p>Finally, we close the connection and start a new iteration of our loop, blocking on <code>accept</code> until a new client connects.</p>
+
+<h3 id=reuseaddr tabindex-1><a href="#reuseaddr" aria-hidden=true>REUSEADDR / Address in Use</a></h3>
+<p>In the above code, we briefly jumped over our call to <code>setsockopt</code> prior to calling <code>bind</code>. We needed to add this code because after you close a socket, the operating system puts the socket in a <code>TIME_WAIT</code> state to deal with any additional packets that might still be on their way. The length of time is configurable, but as a general rule, you want to leave it as-is. The consequence of that is that, despite our program exiting, the address-port pair <code>127.0.0.1:5882</code> remains in-use and thus cannot be re-used for a short time. If you take that line out and start and stop the program, you should get <code>error.AddressInUse</code></p>
+
+<p>Setting the <code>REUSEADDR</code> option on the listening socket, as we did, using <code>setsockopt</code> is the simplest option. With this option, as long as there isn't an active socket bound and listening to the address, your bind should succeed.</p>
+
+<p>Another option is to let the operating system pick the port. This has the obvious downside that clients won't be able to use a hard-coded port. Still, it's a useful trick to know:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const net = std.net;
+const posix = std.posix;
+
+pub fn main() !void {
+    // The port has been changed to 0
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+
+    const tpe: u32 = posix.SOCK.STREAM;
+    const protocol = posix.IPPROTO.TCP;
+    const listener = try posix.socket(address.any.family, tpe, protocol);
+    defer posix.close(listener);
+
+    try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+
+    try posix.bind(listener, &address.any, address.getOsSockLen());
+
+    // After binding, we can get the address that the OS used
+    try printAddress(listener);
+}
+
+fn printAddress(socket: posix.socket_t) !void {
+    var address: std.net.Address = undefined;
+    var len: posix.socklen_t = @sizeOf(net.Address);
+
+    try posix.getsockname(socket, &address.any, &len);
+    std.debug.print("{}\n", .{address});
+}
+{% endhighlight %}
+
+<p>Notice that we set our port to <code>0</code>. This is what tells the OS to pick a port for us. Once we've called <code>bind</code>, we can use <code>getsockname</code> to get the address, including the port, that the OS picked.</p>
+
+<h3 id=reading tabindex-1><a href="#reading" aria-hidden=true>Reading</a></h3>
+<p>The next logical step is to read data from the client. Maybe we can get a little fancy and have our server echo back any message it receives. Here's our improved while block:</p>
+
+{% highlight zig %}
+var buf: [128]u8 = undefined;
+while (true) {
+    var client_address: net.Address = undefined;
+    var client_address_len: posix.socklen_t = @sizeOf(net.Address);
+    const socket = posix.accept(listener, &client_address.any, &client_address_len, 0) catch |err| {
+        // Rare that this happens, but in later parts we'll
+        // see examples where it does.
+        std.debug.print("error accept: {}\n", .{err});
+        continue;
+    };
+    defer posix.close(socket);
+
+    std.debug.print("{} connected\n", .{client_address});
+
+    const read = posix.read(socket, &buf) catch |err| {
+        std.debug.print("error writing: {}\n", .{err});
+        continue;
+    };
+
+    if (read == 0) {
+        continue;
+    }
+
+    write(socket, buf[0..read]) catch |err| {
+        // This can easily happen, say if the client disconnects.
+        std.debug.print("error writing: {}\n", .{err});
+    };
+}
+{% endhighlight %}
+
+<p>Which we can test via:</p>
+
+{% highlight text %}
+$ echo 'hello?' | socat - TCP:127.0.0.1:5882
+hello?
+{% endhighlight %}
+
+<p>We declare a buffer, <code>buf</code> which we're going to read into. Since this initial version is single-threaded, we can create and re-use a single buffer, but you can probably guess that, as our implementation gets more complex, buffer management is going to be something we have to think more about.</p>
+
+<p>Like <code>write</code>, <code>read</code> returns the number of bytes read into our buffer. This can be anywhere from <code>0</code> to <code>buf.len</code>, with 0 meaning the connection is closed. Like <code>accept</code>, our <code>read</code> is blocking. The code will just wait on that call to <code>posix.read</code> until the client sends something. Even if the client disconnects, <code>read</code> will probably not return/error immediately like you might expect. This is a fairly complicated topic. Next we'll look at implementing a timeout, which is a good start. In subsequent parts we'll look at polling and putting our socket in a nonblocking mode. And beyond this, there are numerous OS settings (like TCP keepalive) that can impact exactly how this behaves. Still, as a general rule, the best way to know if the other side is still there is to try to write to it.</p>
+
+<h3 id=read_timeouts tabindex-1><a href="#read_timeouts" aria-hidden=true>Read Timeouts</a></h3>
+<p>TCP can be used for a wide range of applications, and for some of those, having a client and server connected with very little or no traffic for an extended period of time is normal. But in our little sample, it's a bit silly that a client can connect and block our server indefinitely. What we need is a way to timeout the read, which brings us back to <code>setsockopt</code>. We saw this function briefly already, when setting the <code>REUSEADDR</code> option on our listening socket. This function takes 4 arguments: the socket that we're setting an option on, the level where the option is defined, the actual option that we're setting, and the value that we're setting the option to. Socket options can be defined at multiple levels, but you'll almost always be using the <code>SOL.SOCKET</code> level. With that in mind, let's look at how we can set a read timeout on the client socket:</p>
+
+{% highlight zig %}
+// ...
+
+const socket = posix.accept(listener, &client_address.any, &client_address_len, 0) catch |err| {
+    std.debug.print("error accept: {}\n", .{err});
+    continue;
+};
+defer posix.close(socket);
+
+std.debug.print("{} connected\n", .{client_address});
+
+// Added these two lines
+const timeout = posix.timeval{.sec = 2, .usec = 500_000};
+try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(timeout));
+
+const read = posix.read(socket, &buf) catch |err| {
+    std.debug.print("error writing: {}\n", .{err});
+    continue;
+};
+
+// ...
+{% endhighlight %}
+
+<p>We've added two lines of code to give a 2.5 second timeout to all subsequent reads on the socket. If you were to run this modified version and connect without sending any data, the call to <code>posix.read</code> should return a <code>error.WouldBlock</code> error after 2.5 seconds of waiting.</p>
+
+<p>That <code>&std.mem.toBytes(timeout)</code> is a little strange. Different options take different types of values, from booleans (identified as 0 or non-zero), to integers to more complex structures as above. C doesn't have tagged unions so the underlying <code>setsockopt</code> essentially takes an arbitrary byte array along with a length. Rather than taking both the data and the length, Zig's <code>posix.setsockopt</code> takes a <code>[]const u8</code> slice and passes the <code>ptr</code> and <code>len</code> values to the underlying implementation. <code>std.mem.toBytes</code> doesn't return a slice though, it returns an array sized to the parameter type. For a <code>posix.timeval</code>, <code>toBytes</code> returns a  <code>[16]u8</code>, so we need the address-of operator (<code>&</code>) to coerce it a slice.</p>
+
+<p>It's worth mentioning that, once set, the timeout applies to any subsequent reads. If we want to change the timeout, we have to call <code>setsockopt</code> again. We can remove the timeout by setting the <code>sec</code> and <code>usec</code> fields to zero.</p>
+
+<p>We're going to revisit read timeouts throughout this series. The next part will focus on message boundaries, which has a direct impact on trying to enforce an accurate timeout. Later, when we move to nonblocking sockets, we'll have to use a different way to implement timeouts. But, for now, setting <code>RCVTIMEO</code> and getting familiar with <code>setsockopt</code>, which is used for a number of other options, is a good start.</p>
+
+<h3 id=write_timeouts tabindex-1><a href="#write_timeouts" aria-hidden=true>Write Timeouts</a></h3>
+<p>We didn't mention it before, but <code>posix.write</code> is also blocking (at least until we move to nonblocking sockets in later parts). While we can, and probably should, set write timeout, it's important to understand the differences between reading from a socket and writing to a socket.</p>
+
+<p>Specifically, when <code>write</code> returns, it does not mean that the other end, the client, has received the data. In fact, it doesn't even mean that the bytes passed to <code>write</code> have even begun their journey beyond our computer. It's a lot like writing to a file. When you write to a file, you're really writing to layers of buffers (owned by the operating system, and then by the device being written to). Writing to a socket is the same; a successful call to <code>write</code> should be interpreted as: the OS has made a copy of the data and is aware that it needs to send it to the socket. Also, in case you're wondering, there is no mechanism to <code>flush</code> a socket. The OS and network device are all fairly free to manage bytes as they see fit.</p>
+
+<p>This has a couple of implications. First, with respect to timeouts, it means that write timeouts are generally less common than read timeouts. Our <code>write</code> is only really writing to a buffer owned by our operating system, so in normal cases, it isn't likely to stall. That said, there's obviously a limit to how much data the OS can buffer. If you're writing data faster than the other end can process, <code>write</code> <strong>will</strong> block. In fact, we can use <code>setsockopt</code> with the <code>SNDBUF</code> option to alter the size of that buffer. If you're sending infrequent and small messages, as we are, a <code>write</code> is unlikely to ever block. But even in these simple cases, it's a good idea to set a write timeout:</p>
+
+{% highlight zig %}
+// our existing read timeout
+const timeout = posix.timeval{.sec = 2, .usec = 500_000};
+try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(timeout));
+
+// add the write timeout
+try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.SNDTIMEO, &std.mem.toBytes(timeout));
+{% endhighlight %}
+
+<p>Now we're using <code>setsockopt</code> to set the <code>SO.SNDTIMEO</code> option and, for simplicity, we've used the same 2.5 second timeout as our read.</p>
+
+<p>The other important implication of <code>write</code>'s behavior is that the operating system makes a copy of the bytes to write. This obvious incurs a cost, possibly a significant cost if you're streaming gigabytes of data. And it isn't an easy problem to solve. In non-trivial cases, we would expect the message to be dynamically allocated or to be part of a re-usable buffer. If the OS didn't make a copy, how would we know when it was safe to free the message or re-use the buffer? So we can think of this as a cost of network programming. However, recent patterns have aimed to solve this. We'll only briefly explore this at the end of this series (hint: iouring). For the most part, this is just a reality of network programming, but something worth being aware of.</p>
+
+<h3 id=std_net tabindex-1><a href="#std_net" aria-hidden=true>std.net</a></h3>
+<p>Zig's standard library has an <code>std.net.listen</code> function which returned an <code>std.net.Server</code>. The <code>Server</code> has an <code>accept</code> method which returns a <code>std.net.Server.Connection</code> which exposes a <code>std.net.Stream</code> which is a thin wrapper around a socket.</p>
+
+<p>We could have used all of these and saved ourselves some coding. For example the <code>Stream</code> has a <code>writeAll</code> function that behaves like the <code>write</code> function above. Using the underlying functions directly provides greater flexibility and helps us better understand the fundamentals. Furthermore, many of the <code>std.net</code> APIs feel incomplete. For example, there's no way to set a timeout on a <code>std.net.Stream</code>, so we still need to use <code>posix.setsockopt</code> directly. As our examples leverage more advanced features, these thin wrappers are going to be less and less useful.</p>
+
+<p>That said, if you're building a library, you can have your cake and eat it too. Your code can leverage the underlying functions and structures directly, but you can always expose an <code>std.net.Stream</code> to your users. As an example of what I mean, consider this example and pay attention to the last 5 lines of code:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const net = std.net;
+const posix = std.posix;
+
+pub fn main() !void {
+    const address = try std.net.Address.parseIp("127.0.0.1", 5882);
+
+    const tpe: u32 = posix.SOCK.STREAM;
+    const protocol = posix.IPPROTO.TCP;
+    const listener = try posix.socket(address.any.family, tpe, protocol);
+    defer posix.close(listener);
+
+    try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
+    try posix.bind(listener, &address.any, address.getOsSockLen());
+    try posix.listen(listener, 128);
+
+    var buf: [128]u8 = undefined;
+    while (true) {
+        var client_address: net.Address = undefined;
+        var client_address_len: posix.socklen_t = @sizeOf(net.Address);
+        const socket = posix.accept(listener, &client_address.any, &client_address_len, 0) catch |err| {
+            // Rare that this happens, but in later parts we'll
+            // see examples where it does.
+            std.debug.print("error accept: {}\n", .{err});
+            continue;
+        };
+        defer posix.close(socket);
+
+        std.debug.print("{} connected\n", .{client_address});
+
+        const timeout = posix.timeval{.sec = 2, .usec = 500_000};
+        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(timeout));
+        try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.SNDTIMEO, &std.mem.toBytes(timeout));
+
+        // we've changed everything from this point on
+        const stream = std.net.Stream{.handle = socket};
+
+        const read = try stream.read(&buf);
+        if (read == 0) {
+            continue;
+        }
+        try stream.writeAll(buf[0..read]);
+    }
+}
+{% endhighlight %}
+
+<p>Instead of using <code>posix.read</code> and <code>posix.write</code>, we've created a <code>std.net.Stream</code> (which just wraps our socket) and used its <code>read</code> and <code>writeAll</code> functions. Again, I think it's best to use the socket directly in your own code, but if it is a library, you can see from the above how easy it would be to expose the higher level <code>Stream</code>.</p>
+
+<h3 id=conclusion tabindex-1><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<p>We've taken the first step in building a server and, hopefully, you have enough code to play and experiment with. Except for the <code>write</code> function which iterated through the unsent bytes, we've completed ignored the fact that TCP deals exclusively in a stream of bytes. While you and I think of  sending and receiving distinct messages, that isn't how TCP works and it isn't how we can structure our reads and writes. The next part will focus on adding message boundaries to the TCP stream of bytes. Once we have that out of the way, we'll be able to focus on taking our above example and scaling it.</p>
+
+<aside><p>The <code>std.posix</code> functions we've used are typically wrapper around system calls of the same name. Zig's wrappers sometimes offer small improvements (e.g. they might use an enum instead of constant integers), but for the most part, they're close to the underlying system call. As such, the <a href="https://man7.org/linux/man-pages/">Linux</a> and <a href="https://man.freebsd.org/cgi/man.cgi">BSD</a> man [manual] pages are essential. Because these are system calls, they're in section 2 of the man pages (which is why you'll find them named like <code>socket(2)</code> and <code>close(2)</code>).</p></aside>
