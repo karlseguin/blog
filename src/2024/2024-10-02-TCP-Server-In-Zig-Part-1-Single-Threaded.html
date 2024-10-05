@@ -317,3 +317,8 @@ pub fn main() !void {
 <p>We've taken the first step in building a server and, hopefully, you have enough code to play and experiment with. Except for the <code>write</code> function which iterated through the unsent bytes, we've completed ignored the fact that TCP deals exclusively in a stream of bytes. While you and I think of  sending and receiving distinct messages, that isn't how TCP works and it isn't how we can structure our reads and writes. The next part will focus on adding message boundaries to the TCP stream of bytes. Once we have that out of the way, we'll be able to focus on taking our above example and scaling it.</p>
 
 <aside><p>The <code>std.posix</code> functions we've used are typically wrapper around system calls of the same name. Zig's wrappers sometimes offer small improvements (e.g. they might use an enum instead of constant integers), but for the most part, they're close to the underlying system call. As such, the <a href="https://man7.org/linux/man-pages/">Linux</a> and <a href="https://man.freebsd.org/cgi/man.cgi">BSD</a> man [manual] pages are essential. Because these are system calls, they're in section 2 of the man pages (which is why you'll find them named like <code>socket(2)</code> and <code>close(2)</code>).</p></aside>
+
+<div class=pager>
+  <span></span>
+  <a class=next href=/TCP-Server-In-Zig-Part-2-Message-Boundaries/>Message Boundaries</a>
+</div>

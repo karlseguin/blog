@@ -34,12 +34,12 @@ code br {border: 1px solid red}
 .pager {display: flex;}
 .pager:last-of-type {margin-top: 50px;}
 
-.pager span {flex: 50%}
-.pager a {flex: 50%; color: #fd25a0; padding: 0 10px; line-height: 50px; border-radius: 4px; border: 1px solid #ccc; text-decoration: none; }
+.pager span, .pager   a {flex: 50%;line-height:50px;}
+.pager a {color: #fd25a0; padding: 0 10px; border-radius: 4px; border: 1px solid #ccc; text-decoration: none; }
 .pager a:hover{background: #eee; border-color: #bbb;}
 .pager .prev {margin-right: 10px;}
-.pager .prev:not(:empty):before{content: '« '}
-.pager .next:not(:empty):after{content: ' »'}
+.pager a.prev:not(:empty):before{content: '« '}
+.pager a.next:not(:empty):after{content: ' »'}
 .pager .next {text-align: right;margin-left: 10px}
 
 /* https://raw.githubusercontent.com/PrismJS/prism-themes/refs/heads/master/themes/prism-one-light.css */

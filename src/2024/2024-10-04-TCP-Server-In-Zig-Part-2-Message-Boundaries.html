@@ -1,0 +1,249 @@
+---
+layout: post
+date: 2024-10-04
+title: "TCP Server in Zig - Part 2 - Message Boundaries"
+description: "Adding data to the TCP byte stream to create discrete messages."
+tags: [zig]
+---
+
+<aside><p>This part isn't Zig-specific. If you're familiar with length-prefixed messages and binary encoding vs text encoding, you can probably skip it.</p></aside>
+
+<p>When thinking about communication between systems using TCP, we generally think about it in terms of messages: an HTTP response, a database record, etc. The implementation though comes down to writing and reading bytes. We need a way to serialize our messages to bytes and parse bytes back into our messages. To this end, you might decide to use JSON. For example, to send a <code>User</code> over TCP, we might try to do something like:</p>
+
+{% highlight zig %}
+// we're using braces because our serialized message doesn't have to live any
+// longer than this scope, and, in Zig, defer is tied to the scope.
+{
+    var message = try std.json.stringifyAlloc(allocator, user, .{});
+    defer allocator.free(message);
+    _ = try posix.write(socket, message);
+}
+{% endhighlight %}
+
+<p>And, to read this, we'd try:</p>
+
+{% highlight zig %}
+var buf: [4096]u8 = undefined;
+const n = try posix.read(socket, &buf)
+
+// note: parseFromSlice returns a wrapper that contains our parsed value and
+// an arena which contains all the allocations made during parsing.
+var parsed = try std.json.parseFromSlice(User, allocator, buf[0..n], .{})
+defer parsed.deinit()
+
+const user = parsed.value;
+// use user...
+{% endhighlight %}
+
+<p>The problem is that this isn't going to work. Actually, the real problem is that something like this might work fairly reliably if you're testing locally, making you think that it's working, but it will definitely not work reliably in a production environment.</p>
+
+<p>It's tempting to think that if the sender does 1 write the receiver has to do 1 read. But TCP is just a continuous stream of bytes, it has no concept of message boundaries. It's possible, and quite common, that a single write will require multiple reads. In fact, if you write a 100 byte message, the receiver might need to do anywhere from 1 to 100 reads. Conversely, if you issue 2 or more writes, the other side might get all that data in a single read.</p>
+
+<p>There's no getting around this, so when we write a message, we need to add our own message boundaries which allows the receiving end to piece the parts together whether it takes 1, 2 or 100 reads.</p>
+
+<h3 id=delimiter tabindex-1><a href="#delimiter" aria-hidden=true>Message Delimiter</a></h3>
+<p>One way to do this is to delimit each message with one or more special character. This has a number of benefits. First of all, it's simple. Second, a lot of libraries, including Zig's standard library, have facilities for reading from a source until a delimiter is reached. Finally, it's almost perfect for streaming: the sender doesn't need to have the full message ahead of time and can just send data as it becomes available, sending a final delimiter at the end. A major downside is that that delimiter can't be part of the data being sent - making this approach impractical if you're sending binary data. Also, while it might have efficiency advantages for the sender in some cases, it might remove some optimization opportunities from the receiver since the size of the message isn't known until the full message is received.</p>
+
+<p>On the write side, adding a delimiter is easy. For this example, we'll use 0 as our delimiter:</p>
+
+{% highlight zig %}
+fn writeMessage(socket: posix.fd_t, message: []const u8) !void {
+    try writeAll(socket, message);
+
+    // Write our delimiter
+
+    // The array length can be inferred, so we could have done: &[_]u8{0}.
+    // Better yet, we could have used this shorthand: &.{0}
+
+    if (try posix.write(socket, &[1]u8{0}) != 1) {
+        return error.Closed;
+    }
+}
+
+fn writeAll(socket: posix.fd_t, msg: []const u8) !void {
+    var pos: usize = 0;
+    while (pos < msg.len) {
+        const written = try posix.write(socket, msg[pos..]);
+        if (written == 0) {
+            return error.Closed;
+        }
+        pos += written;
+    }
+}
+{% endhighlight %}
+
+<aside><p>In the next part, we'll reduce the number of writes for cases like this using something called Scatter/Gather IO (or, more simply, <code>writev</code>).</p></aside>
+
+<p>On the read side, things are a bit more complicated. Here's an implementation that isn't quite right:</p>
+
+{% highlight zig %}
+fn readMessage(socket: posix.fd_t, buf: []u8) ![]u8 {
+    var pos: usize = 0;
+    while (true) {
+        const n = try posix.read(socket, buf[pos..]);
+        if (n == 0) {
+            return error.Closed;
+        }
+        const end = pos + n;
+        const index = std.mem.indexOfScalar(u8, buf[pos..end], 0) orelse {
+            pos = end;
+            continue;
+        };
+        return buf[0..pos + index];
+    }
+}
+{% endhighlight %}
+
+<p>There are two issues with this code, can you spot them? The first is that <code>error.Closed</code> will be returned if the message is larger than our buffer (<code>pos</code> will become equal to <code>buf.len</code> and the slice passed into <code>read</code> will have a length of zero). The second issue is relevant to the discussion of message boundaries: we might read more than a single message. In the next part, we'll see how that can be a good thing, but with the above implementation, the extra data is lost (corrupting the next message).</p>
+
+<p>If you're not quite sure how we might read and then throwaway data from subsequent messages, consider the case where the sender write "hello\0" followed by "world\0". As we've said before, it doesn't matter how many calls to <code>write</code> it takes to send the data. On the receiving side, using our <code>readMessage</code> function and a <code>buf</code> with a length of 128, a single call to <code>read</code> could populate <code>buf</code> with any of the following:</p>
+
+{% highlight text %}
+h
+he
+hel
+hell
+hello
+hello\0
+hello\0w
+hello\0wo
+hello\0wor
+hello\0worl
+hello\0world
+hello\0world\0
+{% endhighlight %}
+
+<p>And, let's say that a read got 2 bytes, "he", the subsequent read might, for example, get "llo\0wor". Unless we get lucky and happen to read "hello\0" in a 1 or more calls to <code>read</code>, any extra data we read is lost.</p>
+
+<p>Again, this is something that we'll explore more in the next part. Reading more than 1 message at a time is actually something we want, but we'll need to add state to handle these situations. Having said that, <code>std.net.Stream</code> does expose an <code>std.io.Reader</code> interface which could be wrapped in a <code>std.io.BufferedReader</code> to make all of this easier, but besides doing it ourselves for greater control and for learning, <a href="https://github.com/ziglang/zig/issues/17985">Zig's implementation is far from ideal</a>.</p>
+
+<aside><p>A lot of this can be difficult to reproduce since <code>write</code> and <code>read</code> can seem to behave on "messages" rather than a stream of bytes when testing locally or even on a local network. But this particular case can be simulated by writing multiple "messages" and waiting a bit (a few milliseconds) before trying to read. Assuming your read-buffer is larger enough, a single read will almost certainly get all written messages. The other case, 1 write requiring multiple reads, is harder to trigger; but I promise you it will happen <em>a lot</em> in a real world setting.</p></aside>
+
+<h3 id=binary_encoding tabindex-1><a href="#binary_encoding" aria-hidden=true>Binary Encoding</a></h3>
+<p>Before we can look at the second way to add message boundaries, we need to look at how integers can be encoded as bytes. One option is to encode numbers as text, using a text-encoding format like UTF8. If you run:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+    std.debug.print("{any}\n", .{"123"});
+}
+{% endhighlight %}
+
+<p>you'll get: {49, 50, 51}. This is because our Zig source code is encoded in UTF8 and the UTF8-encoded values for 1, 2 and 3 are: 49, 50 and 51. (</p>
+
+<aside><p>UTF8 has some backwards compatibility with ASCII: the first 128 characters share the same encoding. So the ASCII-encoded values for 1, 2 and 3 are also: 49, 50 and 51.</p></aside>
+
+<p>While text-encoding integers are human-readable, the conversion of an integer to its text representation and back again isn't the most efficient. As we'll see in the next part though, the real issue is that the length of the resulting text depends on the number of digits: a 1 digit number takes 1 byte, a 2 digit number takes 2 bytes, etc. Instead of text encoding we can use binary encoding, which allows us to encode a large range of integers with a fixed number of bytes. For example, using only 4 bytes (which is 32 bits) we can store integers up to any integer from 0 - 4,294,967,29.</p>
+
+<p>Binary encoding is pretty easy. Using 4 bytes, 0 is {0, 0, 0, 0}, 1 is {0, 0, 0, 1}, 2 is {0, 0, 0, 2}, and so on. Eventually we reach 255 which is {0, 0, 0, 255}. But what's 256 - a byte (a <code>u8</code>) is limited 256 values (0-255). All we need to do is increment the next byte by 1 and start over so that 256 is {0, 0, 1, 0} and 257 is {0, 0, 1, 1}. Can you tell how the largest number, 4,294,967,295, is stored? It's {255, 255, 255, 255}.</p>
+
+<p>There is a variation of this format where 1 is {1, 0, 0, 0} and 2 is {2, 0, 0, 0} and 256 is {0, 1, 0, 0} and 257 is {1, 1, 0, 0}. The first way that we looked at, with the least significant bits on the right, is called big-endian. The second way, with the least significant bits on the left, is called little-endian. Both of these are commonly used and there might be very slight performance differences between them in some cases. The important thing, when we're talking about communication, is that both sides agree of which encoding is being used.</p>
+
+<p>Chances are that, internally, you computer uses little-endian encoding to store numbers. You can figure it out by running:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+    const x : u32 = 257;
+    std.debug.print("{any}\n", .{std.mem.asBytes(&x)});
+}
+{% endhighlight %}
+
+<p>You'll almost certainly see: { 1, 1, 0, 0 }. Alternatively, you could print out the value of <code>@import("builtin").cpu.arch.endian()</code>. In Zig, you use the <code>std.mem.writeInt</code> function to turn an integer into a little or big-endian encoded array:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+    var buf: [4]u8 = undefined;
+    std.mem.writeInt(u32, &buf, 257, .big);
+    std.debug.print("big-endian:    {any}\n", .{&buf});
+
+    std.mem.writeInt(u32, &buf, 257, .little);
+    std.debug.print("little-endian {any}\n", .{&buf});
+}
+{% endhighlight %}
+
+<p>Will give you:</p>
+
+{% highlight text %}
+big-endian:    { 0, 0, 1, 1 }
+little-endian: { 1, 1, 0, 0 }
+{% endhighlight %}
+
+<p>As we'll see next, having a way to encode integers using a fixed number of bytes allows us to prefix each message with its length, which is an easy and efficient way to add boundaries to messages.</p>
+
+<aside><p>The UT8 or ASCII encoding of 4,294,967,295 takes 10 bytes - 1 byte per digit. The binary encoding takes 4 bytes; quite the space saving! Conversely, the UTF8 or ASCII encoding of "63" uses just 2 bytes, versus the 4 byte if we're using a 4-byte fixed length. There <em>are</em> variable-length binary encoding scheme, such as the varint used by Google's Protocol Buffer. I hate them and question if the few bytes saved in transmission outweighs the CPU cycles spent encoding and decoding them.</p></aside>
+
+<h3 id=header_prefix tabindex-1><a href="#header_prefix" aria-hidden=true>Header Prefix</a></h3>
+<p>The other way we can add boundaries is to prefix each message with a header. The simplest header would be the length of the message. For example, using what we learnt above, if we wanted to send "hello!" using a 4 byte little-endian encoded length-prefix, we'd send: {6, 0, 0, 0, 'h', 'e', 'l', 'l', 'o', '!'}.</p>
+
+<p>Writing and reading these types of messages is straightforward. For now, we'll stick with an explicit implementation, but in the next part, we'll optimize both the write and the read.</p>
+
+{% highlight zig %}
+fn writeMessage(socket: posix.fd_t, msg: []const u8) !void {
+    var buf: [4]u8 = undefined;
+    std.mem.writeInt(u32, &buf, @intCast(msg.len), .little);
+    try writeAll(socket, &buf);
+    try writeAll(socket, msg);
+}
+
+fn writeAll(socket: posix.fd_t, msg: []const u8) !void {
+    var pos: usize = 0;
+    while (pos < msg.len) {
+        const written = try posix.write(socket, msg[pos..]);
+        if (written == 0) {
+            return error.Closed;
+        }
+        pos += written;
+    }
+}
+{% endhighlight %}
+
+
+<p>We need to <code>@intCast</code> the <code>msg.len</code> from a <code>usize</code> to the <code>u32</code> which we've told <code>std.mem.writeInt</code> to expect. But besides that, when adding a delimiter, we wrote the message and then the delimiter. Here, with a header prefix, we write the header and then the message.</p>
+
+<p>The simplest, but not most efficient, way to read this type of message is to fill a 4-byte buffer with the header prefix, decode the length, and then read exactly <code>len</code> bytes:</p>
+
+{% highlight zig %}
+fn readMessage(socket: posix.fd_t, buf: []u8) ![]u8 {
+    var header: [4]u8 = undefined;
+    try readAll(socket, &header);
+
+    const len = std.mem.readInt(u32, &header, .little);
+    if (len > buf.len) {
+        return error.BufferTooSmall;
+    }
+
+    const msg = buf[0..len];
+    try readAll(socket, msg);
+    return msg;
+}
+
+fn readAll(socket: posix.fd_t, buf: []u8) !void {
+    var into = buf;
+    while (into.len > 0) {
+        const n = try posix.read(socket, into);
+        if (n == 0) {
+            return error.Closed;
+        }
+        into = into[n..];
+    }
+}
+{% endhighlight %}
+
+<p>The new <code>readAll</code> function reads from the socket until the provided buffer is full - no more or less. This means we can read our 4 byte header, decode it and, knowing the length of the message, read exactly the right number of bytes.</p>
+
+<p>If you don't need to support messages larger than 16K (2^16), you can use a 2 byte-length prefix instead. Also, many binary protocols tend to have a header which is more than just the length. You commonly see headers that contain both a length and a type. PostgreSQL's binary protocol is comprised of a 1 byte message type followed by a 4 byte big-endian encoded length followed by the actual message. WebSocket, on the other hand, has a variable length header. An entire WebSocket message can be as short as 2 bytes, but the longest message will have a header that's 14 bytes - it angers me.</p>
+
+
+<h3 id=conclusion tabindex-1><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<p>You might be surprised to know that some protocols use both delimiters and some type of prefix. HTTP, for example, uses delimiters for its headers, but the body's length is typically defined by the text-encoded Content-Length header. Redis also stands out as having a mix of both delimiters (for ease of human-readability) and text-encoded length prefix.</p>
+
+<p>Personally, if you are making up your own protocol, I'd recommend going with a binary-encoded fixed-length header which includes both a message type and a payload length (like PostgreSQL). It's simple to implement and can be efficient to read and write.</p>
+
+<p>The rest of this series is not going to focus on message boundaries. The point of the series is to look at the mechanics of writing a TCP server - threads and sockets and such. Still, I've often seen newcomers to network programming struggle with this this topic. Hopefully, this overview was worth the distraction from our core focus.</p>
+
+<div class=pager>
+  <a class=prev href=/TCP-Server-In-Zig-Part-1-Single-Threaded>Single Threaded</a>
+  <span class=next>Part 3 - Coming Soon</span>
+</div>
