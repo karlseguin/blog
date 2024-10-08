@@ -30,7 +30,7 @@ module.exports = function(config) {
 		});
 
 		local = local.filter((p) => p.data.title).reverse().map((p) => {
-			let content = p.template.frontMatter.content;
+			let content = p.rawInput;
 			content = content.replace(/\s*{%\s*endhighlight\s*%}/g, '</code></pre>').replace(/\s*{%\s*highlight\s*.*?%}/g, '<pre><code>');
 			return {
 				url: p.url,
