@@ -146,7 +146,7 @@ pub fn main() !void {
 
 <p>We also need to make a slight change to our <code>Client.handle</code>, but let's review the above first. For the first time in this series, we need an allocator. You might find it odd that we define <code>pool</code> and then pass its address into <code>ThreadPool.init</code>. This is because <code>init</code> needs a stable pointer to the <code>ThreadPool</code> instance, and this provides the caller with the flexibility to decide how that should be achieved (the standard library doesn't like calling <code>allocator.create(Self)</code> within <code>init</code> functions).</p>
 
-<p>Previously, our <code>Client.handle</code> returned <code>!void</code>, which <code>Thread.spawn</code> handled. But our <code>Thread.Pool</code> doesn't. We need to change <code>handle</code> to not return <code>void</code> instead of <code>!void</code>. Since I like the ergonomics of <code>try</code>, I think the best option is to make <code>handle</code> a wrapper around a function that returns an error:</p>
+<p>Previously, our <code>Client.handle</code> returned <code>!void</code>, which <code>Thread.spawn</code> handled. But our <code>Thread.Pool</code> doesn't. We need to change <code>handle</code> to return <code>void</code> instead of <code>!void</code>. Since I like the ergonomics of <code>try</code>, I think the best option is to make <code>handle</code> a wrapper around a function that returns an error:</p>
 
 {% highlight zig %}
 const Client = struct {
