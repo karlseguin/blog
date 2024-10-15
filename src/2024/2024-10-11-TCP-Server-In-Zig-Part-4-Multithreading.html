@@ -169,7 +169,17 @@ const Client = struct {
 
 <p>Finally, in the above code, we initialized our <code>Thread.Pool</code> with <code>n_jobs</code> set to 64. This is the number of workers our pool will have and represents the maximum number of concurrent jobs it will be able to run. This limits the number of concurrent connections our system can support to 64. One some hardware, for some workloads, you could set this number much higher.</p>
 
-<h3 id=code tabindex-1><a href="#code" aria-hidden=true>Code</a></h3>
+<h3 id=conclusion tabindex-1><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<p>Our 64-worker ThreadPool is considerably better than our single-threaded implementation without adding much complexity. The most significant change we made, introducing the <code>Client</code>, was housecleaning unrelated to our multithreaded initiative. You can forgo the ThreadPool and call <code>Thread.spawn</code> directly, but you should only do this in more controlled environments - where the number of clients is known (and relatively small) and you aren't exposing your service to the public internet.</p>
+
+<p>In the next part, we'll take our first look at a nonblocking implementation, which is how we'll be able to support a much larger number of connections. However, and as we'll see, the nonblocking implementation doesn't have to be an alternative to using a ThreadPool. The two can compliment each other, so everything we've learnt here will continue to be useful.</p>
+
+<div class=pager>
+  <a class=prev href=/TCP-Server-In-Zig-Part-3-Minimizing-Writes-and-Reads/>Minimizing Writes & Reads</a>
+  <a class=next href=/TCP-Server-In-Zig-Part-5a-Poll/>Poll (Part 1)</a>
+</div>
+
+<h3 id=appendix-a tabindex-1><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
 <p>Here's a complete working server implementation:</p>
 
 {% highlight zig %}
@@ -355,13 +365,7 @@ fn writeAllVectored(socket: posix.fd_t, vec: []posix.iovec_const) !void {
 }
 {% endhighlight %}
 
-
-<h3 id=conclusion tabindex-1><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
-<p>Our 64-worker ThreadPool is considerably better than our single-threaded implementation without adding much complexity. The most significant change we made, introducing the <code>Client</code>, was housecleaning unrelated to our multithreaded initiative. You can forgo the ThreadPool and call <code>Thread.spawn</code> directly, but you should only do this in more controlled environments - where the number of clients is known (and relatively small) and you aren't exposing your service to the public internet.</p>
-
-<p>In the next part, we'll take our first look at a nonblocking implementation, which is how we'll be able to support a much larger number of connections. However, and as we'll see, the nonblocking implementation doesn't have to be an alternative to using a ThreadPool. The two can compliment each other, so everything we've learnt here will continue to be useful.</p>
-
 <div class=pager>
   <a class=prev href=/TCP-Server-In-Zig-Part-3-Minimizing-Writes-and-Reads/>Minimizing Writes & Reads</a>
-  <span class=next>Part 5 - Coming Soon</span>
+  <a class=next href=/TCP-Server-In-Zig-Part-5a-Poll/>Poll (Part 1)</a>
 </div>
