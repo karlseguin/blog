@@ -337,7 +337,7 @@ if (active[0].revents != 0) {
 }
 {% endhighlight %}
 
-<p><code>poll</code> tells us the listening socket can accept without blocking (i.e. that it's ready). But it doesn't tell us how many pending connections there are waiting to be accepted. Both approaches, looping and not looping, work because poll is always level-trigger. This means that <code>poll</code> continues to notify us so long as the socket is ready. This is different than edge-triggered which only notifies us when the state changes (we'll learn more about this in future parts).</p>
+<p><code>poll</code> tells us the listening socket can accept without blocking (i.e. that it's ready). But it doesn't tell us how many pending connections there are waiting to be accepted. Both approaches, looping and not looping, work because poll is always level-triggered. This means that <code>poll</code> continues to notify us so long as the socket is ready. This is different than edge-triggered which only notifies us when the state changes (we'll learn more about this in future parts).</p>
 
 <p>Put differently, if there are four connections waiting to be accepted when <code>poll</code> returns, but we only accept one, the next call to <code>poll</code> will re-notify us that our listening socket is ready because of the still-pending three connections.</p>
 
@@ -647,7 +647,6 @@ const Server = struct {
                 }
 
                 var client = &self.clients[i];
-                std.debug.print("{d} {d}\n", .{client.socket, revents});
                 if (revents & posix.POLL.IN == posix.POLL.IN) {
                     // this socket is ready to be read
                     while (true) {
@@ -690,7 +689,7 @@ const Server = struct {
             self.client_polls[connected] = .{
                 .fd = socket,
                 .revents = 0,
-                .events = posix.POLL.IN | posix.POLL.OUT,
+                .events = posix.POLL.IN,
             };
             self.connected = connected + 1;
         }
@@ -720,7 +719,7 @@ const Client = struct {
     address: std.net.Address,
 
     fn init(allocator: Allocator, socket: posix.fd_t, address: std.net.Address) !Client {
-        const reader = try Reader.init(allocator, 4096)
+        const reader = try Reader.init(allocator, 4096);x
         errdefer reader.deinit(allocator);
 
         return .{
@@ -824,5 +823,5 @@ const Reader = struct {
 
 <div class=pager>
   <a class=prev href="/TCP-Server-In-Zig-Part-4-Multithreading/">Multithreading</a>
-  <span class=next>Poll (Part 2) - Coming Soon</span>
+  <a class=next href=/TCP-Server-In-Zig-Part-5b-Poll/>Poll (Part 2)</a>
 </div>
