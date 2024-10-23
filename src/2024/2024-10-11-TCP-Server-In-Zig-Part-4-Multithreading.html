@@ -44,7 +44,7 @@ pub fn main() !void {
     }
 }
 
-fn run(socket: posix.fd_t, address: std.net.Address) !void {
+fn run(socket: posix.socket_t, address: std.net.Address) !void {
     defer posix.close(socket);
 
     const timeout = posix.timeval{ .sec = 2, .usec = 500_000 };
@@ -65,7 +65,7 @@ fn run(socket: posix.fd_t, address: std.net.Address) !void {
 
 {% highlight zig %}
 const Client = struct {
-    socket: posix.fd_t,
+    socket: posix.socket_t,
     address: std.net.Address,
 
     fn handle(self: Client) !void {
@@ -220,7 +220,7 @@ pub fn main() !void {
 }
 
 const Client = struct {
-    socket: posix.fd_t,
+    socket: posix.socket_t,
     address: std.net.Address,
 
     fn handle(self: Client) void {
@@ -254,7 +254,7 @@ const Reader = struct {
     buf: []u8,
     pos: usize = 0,
     start: usize = 0,
-    socket: posix.fd_t,
+    socket: posix.socket_t,
 
     fn readMessage(self: *Reader) ![]u8 {
         var buf = self.buf;
@@ -318,7 +318,6 @@ const Reader = struct {
 };
 {% endhighlight %}
 
-
 <p>Which you can test with this dummy client:</p>
 
 {% highlight zig %}
@@ -339,7 +338,7 @@ pub fn main() !void {
     try writeMessage(socket, "It's Over 9000!!");
 }
 
-fn writeMessage(socket: posix.fd_t, msg: []const u8) !void {
+fn writeMessage(socket: posix.socket_t, msg: []const u8) !void {
     var buf: [4]u8 = undefined;
     std.mem.writeInt(u32, &buf, @intCast(msg.len), .little);
 
@@ -350,7 +349,7 @@ fn writeMessage(socket: posix.fd_t, msg: []const u8) !void {
     try writeAllVectored(socket, &vec);
 }
 
-fn writeAllVectored(socket: posix.fd_t, vec: []posix.iovec_const) !void {
+fn writeAllVectored(socket: posix.socket_t, vec: []posix.iovec_const) !void {
     var i: usize = 0;
     while (true) {
         var n = try posix.writev(socket, vec[i..]);

@@ -14,7 +14,7 @@ tags: [zig]
 <p>In Part 2, when we added a header to our messages, we made two calls <code>writeAll</code>, one to write the header and the other to write the message:</p>
 
 {% highlight zig %}
-fn writeMessage(socket: posix.fd_t, msg: []const u8) !void {
+fn writeMessage(socket: posix.socket_t, msg: []const u8) !void {
     var buf: [4]u8 = undefined;
     std.mem.writeInt(u32, &buf, @intCast(msg.len), .little);
     try writeAll(socket, &buf);
@@ -25,7 +25,7 @@ fn writeMessage(socket: posix.fd_t, msg: []const u8) !void {
 <p>Our <code>writeAll</code> function calls <code>posix.write</code> until the buffer is empty:</p>
 
 {% highlight zig %}
-fn writeAll(socket: posix.fd_t, msg: []const u8) !void {
+fn writeAll(socket: posix.socket_t, msg: []const u8) !void {
     var pos: usize = 0;
     while (pos < msg.len) {
         const written = try posix.write(socket, msg[pos..]);
@@ -42,7 +42,7 @@ fn writeAll(socket: posix.fd_t, msg: []const u8) !void {
 <p>There's one obvious way to reduce our two calls to <code>writeAll</code>, which would hopefully reduce the number of calls to <code>write</code>: we can concatenate our prefix and message:</p>
 
 {% highlight zig %}
-fn writeMessage(allocator: Allocator, socket: posix.fd_t, msg: []const u8) !void {
+fn writeMessage(allocator: Allocator, socket: posix.socket_t, msg: []const u8) !void {
     var buf = try allocator.alloc(u8, 4 + msg.len);
     defer allocator.free(buf);
 
@@ -57,7 +57,7 @@ fn writeMessage(allocator: Allocator, socket: posix.fd_t, msg: []const u8) !void
 <p>Ideally, we'd like to make a single system call with our two distinct buffers (the header prefix and the message). This is exactly what <code>writev</code> does - the "v" stands for vector. It's part of a family of operation known as vectored I/O or scatter/gather I/O (because we're gathering data from multiple buffers). To leverage <code>writev</code>, we can rewrite our <code>writeMessage</code> and <code>writeAll</code> functions like so:</p>
 
 {% highlight zig %}
-fn writeMessage(socket: posix.fd_t, msg: []const u8) !void {
+fn writeMessage(socket: posix.socket_t, msg: []const u8) !void {
     var buf: [4]u8 = undefined;
     std.mem.writeInt(u32, &buf, @intCast(msg.len), .little);
 
@@ -69,7 +69,7 @@ fn writeMessage(socket: posix.fd_t, msg: []const u8) !void {
     try writeAllVectored(socket, &vec);
 }
 
-fn writeAllVectored(socket: posix.fd_t, vec: []posix.iovec_const) !void {
+fn writeAllVectored(socket: posix.socket_t, vec: []posix.iovec_const) !void {
     var i: usize = 0;
     while (true) {
         var n = try posix.writev(socket, vec[i..]);
@@ -112,7 +112,7 @@ const Reader = struct {
     start: usize = 0,
 
     // The socket to read from
-    socket: posix.fd_t,
+    socket: posix.socket_t,
 
     fn readMessage(self: *Reader) ![]u8 {
         var buf = self.buf;

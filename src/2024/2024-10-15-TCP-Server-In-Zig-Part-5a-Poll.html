@@ -218,8 +218,8 @@ pub fn main() !void {
         while (i < active.len) {
             const polled = active[i];
 
-            const revent = polled.revents;
-            if (revent == 0) {
+            const revents = polled.revents;
+            if (revents == 0) {
                 // This socket isn't ready, go to the next one
                 i += 1;
                 continue;
@@ -230,19 +230,19 @@ pub fn main() !void {
             // the socket is ready to be read
             if (revents & posix.POLL.IN == posix.POLL.IN) {
                 var buf: [4096]u8 = undefined;
-                const read = posix.read(client.fd, &buf) catch 0;
+                const read = posix.read(polled.fd, &buf) catch 0;
                 if (read == 0) {
                     // probably closed on the other side
                     closed = true;
                 } else {
-                    std.debug.print("[{d}] got: {any}\n", .{client.fd, buf[0..read]});
+                    std.debug.print("[{d}] got: {any}\n", .{polled.fd, buf[0..read]});
                 }
             }
 
             // either the read failed, or we're being notified through poll
             // that the socket is closed
             if (closed or (revents & posix.POLL.HUP == posix.POLL.HUP)) {
-                posix.close(client.fd);
+                posix.close(polled.fd);
 
                 // We use a simple trick to remove it: we swap it with the last
                 // item in our array, then "shrink" our array by 1
@@ -469,7 +469,7 @@ fn run(self: *Server, address: std.net.Address) !void {
 <p>I'm not sure I love the idea of extracting <code>accept</code> and <code>removeClient</code> into their own function. After all, they're only called from a single place and I like being able to read code without having to chase after it. But, ask me another day and I'll give you another answer:</p>
 
 {% highlight zig %}
-fn accept(self: *Server, listener: posix.fd_t) !void {
+fn accept(self: *Server, listener: posix.socket_t) !void {
     while (true) {
         // we'll continue to accept until we get error.WouldBlock
         // or until our program crashes because we overflow self.clients and self.polls
@@ -516,7 +516,7 @@ fn removeClient(self: *Server, at: usize) void {
 }
 {% endhighlight %}
 
-<p>It seems like a lot more code, but the approach is the same as our initial example that used <code>poll</code>. Rather than having two slices, <code>clients</code> and <code>client_polls</code> which are linked by index, we could have use a <code>std.AutoHashMap(posix.fd_t, Client)</code>. Then code would have looked something like:</p>
+<p>It seems like a lot more code, but the approach is the same as our initial example that used <code>poll</code>. Rather than having two slices, <code>clients</code> and <code>client_polls</code> which are linked by index, we could have use a <code>std.AutoHashMap(posix.socket_t, Client)</code>. Then code would have looked something like:</p>
 
 {% highlight zig %}
 for (self.polls[1..]) |p| {
@@ -669,7 +669,7 @@ const Server = struct {
         }
     }
 
-    fn accept(self: *Server, listener: posix.fd_t) !void {
+    fn accept(self: *Server, listener: posix.socket_t) !void {
         while (true) {
             var address: net.Address = undefined;
             var address_len: posix.socklen_t = @sizeOf(net.Address);
@@ -715,11 +715,11 @@ const Server = struct {
 
 const Client = struct {
     reader: Reader,
-    socket: posix.fd_t,
+    socket: posix.socket_t,
     address: std.net.Address,
 
-    fn init(allocator: Allocator, socket: posix.fd_t, address: std.net.Address) !Client {
-        const reader = try Reader.init(allocator, 4096);x
+    fn init(allocator: Allocator, socket: posix.socket_t, address: std.net.Address) !Client {
+        const reader = try Reader.init(allocator, 4096);
         errdefer reader.deinit(allocator);
 
         return .{
@@ -759,7 +759,7 @@ const Reader = struct {
         allocator.free(self.buf);
     }
 
-    fn readMessage(self: *Reader, socket: posix.fd_t) ![]u8 {
+    fn readMessage(self: *Reader, socket: posix.socket_t) ![]u8 {
         var buf = self.buf;
 
         while (true) {

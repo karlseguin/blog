@@ -47,7 +47,7 @@ const user = parsed.value;
 <p>On the write side, adding a delimiter is easy. For this example, we'll use 0 as our delimiter:</p>
 
 {% highlight zig %}
-fn writeMessage(socket: posix.fd_t, message: []const u8) !void {
+fn writeMessage(socket: posix.socket_t, message: []const u8) !void {
     try writeAll(socket, message);
 
     // Write our delimiter
@@ -60,7 +60,7 @@ fn writeMessage(socket: posix.fd_t, message: []const u8) !void {
     }
 }
 
-fn writeAll(socket: posix.fd_t, msg: []const u8) !void {
+fn writeAll(socket: posix.socket_t, msg: []const u8) !void {
     var pos: usize = 0;
     while (pos < msg.len) {
         const written = try posix.write(socket, msg[pos..]);
@@ -77,7 +77,7 @@ fn writeAll(socket: posix.fd_t, msg: []const u8) !void {
 <p>On the read side, things are a bit more complicated. Here's an implementation that isn't quite right:</p>
 
 {% highlight zig %}
-fn readMessage(socket: posix.fd_t, buf: []u8) ![]u8 {
+fn readMessage(socket: posix.socket_t, buf: []u8) ![]u8 {
     var pos: usize = 0;
     while (true) {
         const n = try posix.read(socket, buf[pos..]);
@@ -180,14 +180,14 @@ little-endian: { 1, 1, 0, 0 }
 <p>Writing and reading these types of messages is straightforward. For now, we'll stick with an explicit implementation, but in the next part, we'll optimize both the write and the read.</p>
 
 {% highlight zig %}
-fn writeMessage(socket: posix.fd_t, msg: []const u8) !void {
+fn writeMessage(socket: posix.socket_t, msg: []const u8) !void {
     var buf: [4]u8 = undefined;
     std.mem.writeInt(u32, &buf, @intCast(msg.len), .little);
     try writeAll(socket, &buf);
     try writeAll(socket, msg);
 }
 
-fn writeAll(socket: posix.fd_t, msg: []const u8) !void {
+fn writeAll(socket: posix.socket_t, msg: []const u8) !void {
     var pos: usize = 0;
     while (pos < msg.len) {
         const written = try posix.write(socket, msg[pos..]);
@@ -205,7 +205,7 @@ fn writeAll(socket: posix.fd_t, msg: []const u8) !void {
 <p>The simplest, but not most efficient, way to read this type of message is to fill a 4-byte buffer with the header prefix, decode the length, and then read exactly <code>len</code> bytes:</p>
 
 {% highlight zig %}
-fn readMessage(socket: posix.fd_t, buf: []u8) ![]u8 {
+fn readMessage(socket: posix.socket_t, buf: []u8) ![]u8 {
     var header: [4]u8 = undefined;
     try readAll(socket, &header);
 
@@ -219,7 +219,7 @@ fn readMessage(socket: posix.fd_t, buf: []u8) ![]u8 {
     return msg;
 }
 
-fn readAll(socket: posix.fd_t, buf: []u8) !void {
+fn readAll(socket: posix.socket_t, buf: []u8) !void {
     var into = buf;
     while (into.len > 0) {
         const n = try posix.read(socket, into);

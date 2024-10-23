@@ -18,7 +18,7 @@ tags: [zig]
 <p>One way to stop accepting connections is to remove the listener's <code>pollfd</code> from our <code>polls</code> slice. But since we'll want to re-enable this notification once free slots become available, a better way is to modify the existing entry:</p>
 
 {% highlight zig %}
-fn accept(self: *Server, listener: posix.fd_t) !void {
+fn accept(self: *Server, listener: posix.socket_t) !void {
     const available = self.client_polls.len - self.connected;
     for (0..available) |_| {
         // ...
@@ -73,14 +73,14 @@ self.client_polls[connected] = .{
 {% highlight zig %}
 const Client = struct {
     reader: Reader,
-    socket: posix.fd_t,
+    socket: posix.socket_t,
     address: std.net.Address,
 
     // added these two fields
     to_write: []u8,
     write_buf: []u8,
 
-    fn init(allocator: Allocator, socket: posix.fd_t, address: std.net.Address) !Client {
+    fn init(allocator: Allocator, socket: posix.socket_t, address: std.net.Address) !Client {
         const reader = try Reader.init(allocator, 4096);
         errdefer reader.deinit(allocator);
 
@@ -389,7 +389,7 @@ fn enforceTimeout(self: *Server) i32 {
 
 <div class=pager>
   <a class=prev href=/TCP-Server-In-Zig-Part-5a-Poll/>Poll (Part 1)</a>
-  <span class=next>Part 6 - Coming Soon</span>
+  <a class=next href=/TCP-Server-In-Zig-Part-6-Epoll/>Epoll</a>
 </div>
 
 <h3 id=appendix-a tabindex-1><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
@@ -584,7 +584,7 @@ const Server = struct {
         }
     }
 
-    fn accept(self: *Server, listener: posix.fd_t) !void {
+    fn accept(self: *Server, listener: posix.socket_t) !void {
         const space = self.client_polls.len - self.connected;
         for (0..space) |_| {
             var address: net.Address = undefined;
@@ -593,10 +593,6 @@ const Server = struct {
                 error.WouldBlock => return,
                 else => return err,
             };
-
-            const timeout = posix.timeval{.sec = 2, .usec = 500_000};
-            try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(timeout));
-
 
             const client = try self.client_pool.create();
             errdefer self.client_pool.destroy(client);
@@ -657,7 +653,7 @@ const Server = struct {
 
 
 const Client = struct {
-    socket: posix.fd_t,
+    socket: posix.socket_t,
     address: std.net.Address,
 
     // Used to read length-prefixed messages
@@ -678,7 +674,7 @@ const Client = struct {
     // Node containing this client in the server's read_timeout_list
     read_timeout_node: *ClientNode,
 
-    fn init(allocator: Allocator, socket: posix.fd_t, address: std.net.Address) !Client {
+    fn init(allocator: Allocator, socket: posix.socket_t, address: std.net.Address) !Client {
         const reader = try Reader.init(allocator, 4096);
         errdefer reader.deinit(allocator);
 
@@ -774,7 +770,7 @@ const Reader = struct {
         allocator.free(self.buf);
     }
 
-    fn readMessage(self: *Reader, socket: posix.fd_t) ![]u8 {
+    fn readMessage(self: *Reader, socket: posix.socket_t) ![]u8 {
         var buf = self.buf;
 
         while (true) {
@@ -837,5 +833,5 @@ const Reader = struct {
 {% endhighlight %}
 <div class=pager>
   <a class=prev href=/TCP-Server-In-Zig-Part-5a-Poll/>Poll (Part 1)</a>
-  <span class=next>Part 6 - Coming Soon</span>
+  <a class=next href=/TCP-Server-In-Zig-Part-6-Epoll/>Epoll</a>
 </div>
