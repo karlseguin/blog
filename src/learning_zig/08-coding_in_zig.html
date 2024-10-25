@@ -362,7 +362,7 @@ pub const Logger = struct {
 
 {% highlight zig %}
 var l = Logger{.level = .info};
-try l.info("sever started", true);
+try l.info("server started", true);
 {% endhighlight %}
 
 		<p>Giving us: <em>no field or member function named 'writeAll' in 'bool'</em>. Using the <code>writer</code> of an <code>ArrayList(u8)</code> works:</p>
