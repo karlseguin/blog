@@ -73,7 +73,6 @@ pub fn main() !void {
         }
     }
 }
-
 {% endhighlight %}
 
 <aside><p>If you're going to run this in Docker, you might need to change the address the listener is bound to from <code>127.0.0.1</code> to <code>0.0.0.0</code>.</p></aside>
@@ -233,7 +232,6 @@ fn write(self: *Client) !void {
 
 <p>That might seem like a minor change, but it enables something you'll almost certainly need: the ability to initiate a write from the application. There is one inefficiency in the above code: on a complete write, we revert to read-mode. However, most of the time, we'll probably never have gone into write-mode to begin with. As we've said before, unless your server is very busy, your client is lagging, or you're sending very large messages, there's a reasonable chance that <code>posix.write</code> will succeed in a single call. In such cases, reverting to read-mode is an unnecessary and wasteful system call. I'll leave this up to you to fix, but one solution would be to add an <code>IOMode</code> enum with two values: <code>read</code> and <code>write</code> and track which the client is currently in. Then we can check <code>if self.mode == .write</code> before switching to read-mode.</p>
 
-
 <h3 id=edge_triggered tabindex-1><a href="edge_triggered" aria-hidden=true>Edge-Triggered</a></h3>
 <p>We mentioned that <code>poll</code> is always level-triggered. That is, as long as a condition holds, we'll get a notification. For example, if one call to <code>poll</code> notifies us that a certain socket is ready and we then call<code>poll</code> again, without reading the socket, we'll get another notification. This is also how <code>epoll</code> works by default. But we can make <code>epoll</code> edge-triggered on a per-socket basis.</p>
 
@@ -308,11 +306,11 @@ try posix.epoll_ctl(efd, linux.EPOLL.CTL_ADD, client_socket, &event);
 <h3 id=conclusion tabindex-1><a href="conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>Besides the fact that <code>epoll</code> is Linux-specific, it's safe to think of it as a better version of <code>poll</code>. It's more efficient, easier to integrate and has more features. Except for the specifics of the API, everything about evented I/O is unchanged. Using <code>@intFromPtr</code> and <code>@ptrFromInt</code> can actually be useful now and again, but it's mostly used as above, when integrating with a C library that lets you associate arbitrary data (often a <code>usize</code>) with a C structure.</p>
 
-<p>Below, you'll find a full working (in Linux) example. It merges what we've learned about <code>epoll</code> with our <code>Server</code>, <code>Client</code> and <code>Reader</code> from previous parts. We've also introduced an <code>Epoll</code> structure. The goal is to start creating some abstraction to eventually deal with having platform-specific implementations (i.e. using epoll on Linux and kqueue on BSD/MacOS). This abstration is incomplete - we're still calling <code>epoll_wait</code> directly in our <code>run</code> function, but it's a start.</p>
+<p>Below, you'll find a full working (in Linux) example. It merges what we've learned about <code>epoll</code> with our <code>Server</code>, <code>Client</code> and <code>Reader</code> from previous parts. We've also introduced an <code>Epoll</code> structure. The goal is to start creating some abstraction to eventually deal with having platform-specific implementations (i.e. using epoll on Linux and kqueue on BSD/MacOS). This abstration is incomplet, but it's a start and something we'll dedicate a whole part to.</p>
 
 <div class=pager>
   <a class=prev href=/TCP-Server-In-Zig-Part-5b-Poll/>Poll (Part 2)</a>
-  <span class=next>Part 7 - Coming Soon</span>
+  <a class=next href=/TCP-Server-In-Zig-Part-7-Kqueue/>Kqueue</a>
 </div>
 
 <h3 id=appendix-a tabindex-1><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
@@ -398,18 +396,14 @@ const Server = struct {
         try posix.setsockopt(listener, posix.SOL.SOCKET, posix.SO.REUSEADDR, &std.mem.toBytes(@as(c_int, 1)));
         try posix.bind(listener, &address.any, address.getOsSockLen());
         try posix.listen(listener, 128);
-
-        var ready_list: [128]linux.epoll_event = undefined;
         var read_timeout_list = &self.read_timeout_list;
 
         try self.loop.addListener(listener);
 
         while (true) {
             const next_timeout = self.enforceTimeout();
-            // TODO: we'll wait to abstract away this epoll_wait into our Epoll
-            // instance, but we're going to wait until we learn about kqueue
-            const ready_count = posix.epoll_wait(self.loop.efd, &ready_list, next_timeout);
-            for (ready_list[0..ready_count]) |ready| {
+            const ready_events = self.loop.wait(next_timeout);
+            for (ready_events) |ready| {
                 switch (ready.data.ptr) {
                     0 => self.accept(listener) catch |err| log.err("failed to accept: {}", .{err}),
                     else => |nptr| {
@@ -706,6 +700,7 @@ const Reader = struct {
 // kqueue. This is a rough start.
 const Epoll = struct {
     efd: posix.fd_t,
+    ready_list: [128]linux.epoll_event = undefined,
 
     fn init() !Epoll {
         const efd = try posix.epoll_create1(0);
@@ -714,6 +709,11 @@ const Epoll = struct {
 
     fn deinit(self: Epoll) void {
         posix.close(self.efd);
+    }
+
+    fn wait(self: *Epoll, timeout: i32) []linux.epoll_event {
+        const count = posix.epoll_wait(self.efd, &self.ready_list, timeout);
+        return self.ready_list[0..count];
     }
 
     fn addListener(self: Epoll, listener: posix.socket_t) !void {
@@ -755,5 +755,5 @@ const Epoll = struct {
 {% endhighlight %}
 <div class=pager>
   <a class=prev href=/TCP-Server-In-Zig-Part-5b-Poll/>Poll (Part 2)</a>
-  <span class=next>Part 7 - Coming Soon</span>
+  <a class=next href=/TCP-Server-In-Zig-Part-7-Kqueue/>Kqueue</a>
 </div>
