@@ -177,7 +177,7 @@ while (true) {
     std.debug.print("{} connected\n", .{client_address});
 
     const read = posix.read(socket, &buf) catch |err| {
-        std.debug.print("error writing: {}\n", .{err});
+        std.debug.print("error reading: {}\n", .{err});
         continue;
     };
 
@@ -222,7 +222,7 @@ const timeout = posix.timeval{.sec = 2, .usec = 500_000};
 try posix.setsockopt(socket, posix.SOL.SOCKET, posix.SO.RCVTIMEO, &std.mem.toBytes(timeout));
 
 const read = posix.read(socket, &buf) catch |err| {
-    std.debug.print("error writing: {}\n", .{err});
+    std.debug.print("error reading: {}\n", .{err});
     continue;
 };
 
