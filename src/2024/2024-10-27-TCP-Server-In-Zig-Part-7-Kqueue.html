@@ -10,8 +10,8 @@ tags: [zig]
 
 <p>Because <code>kqueue</code> is rather similar to <code>epoll</code>, this part is shorter as it assumes that you're familiar with topics discussed in <a href=/TCP-Server-In-Zig-Part-6-Epoll>part 6</a>, such as edge-triggering and <code>@intToPtr</code>.</p>
 
-<h3 id=kevent tabindex-1><a href="kevent" aria-hidden=true>kevent</a></h3>
-<p>Where <code>epoll</code> has one function to modify the epoll file descriptor (<code>epoll_ctl</code>) and one to wait for notification (<code>epoll_wait</code>), <code>kqueue</code> uses a single function for both purposes: <code>kevent</code>. However, depending on the values passed to <code>kevent</code>, it can either modify the kqueue instance or wait for notifications or both. Thus, the single function can act like either of the <code>epoll</code> functions or combine both in a single call. The <code>kevent</code> function takes 4 parameters:</p>
+<h3 id=kevent><a href="#kevent" aria-hidden=true>kevent</a></h3>
+<p>Where <code>epoll</code> has one function to modify the epoll file descriptor (<code>epoll_ctl</code>) and one to wait for notifications (<code>epoll_wait</code>), <code>kqueue</code> uses a single function for both purposes: <code>kevent</code>. However, depending on the values passed to <code>kevent</code>, it can either modify the kqueue instance or wait for notifications or both. Thus, the single function can act like either of the <code>epoll</code> functions or combine both in a single call. The <code>kevent</code> function takes 4 parameters:</p>
 
 <ol>
     <li>The kqueue file descriptor which is the kqueue instance that we're modifying and/or waiting on. Created using <code>posix.kqueue</code>.
@@ -44,13 +44,14 @@ pub fn main() !void {
     try posix.listen(listener, 128);
 
     const kfd = try posix.kqueue();
+    defer posix.close(kfd);
 
     {
         // monitor our listening socket
         _ = try posix.kevent(kfd, &.{.{
             .ident = @intCast(listener),
-            .flags = posix.system.EV.ADD,
             .filter = posix.system.EVFILT.READ,
+            .flags = posix.system.EV.ADD,
             .fflags = 0,
             .data = 0,
             .udata = @intCast(listener),
@@ -83,7 +84,7 @@ pub fn main() !void {
                     std.debug.print("[{d}] got: {any}\n", .{ready_socket, buf[0..read]});
                 }
 
-                if (closed or ready.flags & posix.system.EV.EOF == posix.system.EV.EOF) {
+                if (closed) {
                     posix.close(ready_socket);
                 }
             }
@@ -94,7 +95,21 @@ pub fn main() !void {
 
 <p>Like with <code>epoll</code>, we can attach arbitrary information via the <code>udata</code> field. Above we're using the file descriptor, but in a more complete example we'd likely use <code>@intFromPtr</code> to get a <code>usize</code> representation of an application-specific "Client" struct. The <code>Kevent</code> struct has two additional fields: <code>fflags</code> and <code>data</code>. These hold flags and data to use for different filters. With sockets, where we're only interested in the <code>READ</code> and <code>WRITE</code> filters, these should be set to zero. In a future part, we'll see a brief example of a different filter which does leverage the <code>fflags</code> field.</li>
 
-<h3 id=edge_triggered tabindex-1><a href="edge_triggered" aria-hidden=true>Edge-Triggered</a></h3>
+<p>With <code>epoll</code> the monitors we add, modify are identified by the 3rd parameter we pass to <code>epoll_ctl</code>. In all the code we've seen so far, that was either the listening socket or the client socket, but more generally, it's the file descriptor to monitor. With <code>kqueue</code> the identifier is the combination of the <code>ident</code> and <code>filter</code> fields. With <code>epoll</code> we toggled a client from read-mode to write-mode by modifying the existing notifier (identified by the socket) with the <code>CTL_MOD</code> operation. In <code>kqueue</code> we'd need delete the read monitor and then add a write monitor. Or, and this is what we do in the full example given at the end, we add both a read and write monitor, but disable the write monitor. We can toggle the mode by disabling the active one and enabling the disabled one:</p>
+
+{% highlight text %}
+Read Mode:
+key=(ident: socket1, filter: read), enabled=true
+key=(ident: socket1, filter: write), enabled=false
+
+Write Mode:
+key=(ident: socket1, filter: read), enabled=false
+key=(ident: socket1, filter: write), enabled=true
+{% endhighlight %}
+
+<p>This also means that <code>filter</code> isn't a bitwise flag. To check if the socket is ready for reading, we just have to compare <code>ready.filter == posix.system.EVFILT.READ</code>.</p>
+
+<h3 id=edge_triggered><a href="#edge_triggered" aria-hidden=true>Edge-Triggered</a></h3>
 <p>In addition to using the <code>EV.READ</code> and <code>EV.WRITE</code> flags, we can also set <code>EV.ONESHOT</code>, <code>EV.DISPATCH</code> and <code>EV.CLEAR</code>.</p>
 
 <p><code>EV.ONESHOT</code> removes the notification after readiness has been reported, making it one-time-only. The notification has to be re-added using the <code>EV.ADD</code> flag.</p>
@@ -172,7 +187,7 @@ pub fn main() !void {
 
 <p>will show how each behaves. For the first two, <code>ONESHOT</code> and <code>DISPATCH</code> no matter how much data we send, we'll only ever get a single notification. We'd need to re-add or re-enable (aka, re-arm) the notification. For <code>CLEAR</code> we'll get a single notification each time new data becomes ready.</p>
 
-<h3 id=conclusion tabindex-1><a href="conclusion" aria-hidden=true>Conclusion</a></h3>
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>Although <code>kqueue</code> and <code>epoll</code> are platform-specific, they're quite similar, allowing us to create a simple abstraction to target either platform - the topic of our next part. Furthermore, their similarity has the benefit of resulting in a rather short post!</p>
 
 <p>A more complete example is included below, including our <code>Server</code>, <code>Client</code> and writes. Here you'll see the <code>udata</code> field used to a<code>Client</code> (via <code>@intFromPtr</code> and <code>@ptrFromInt</code>).</p>
@@ -181,10 +196,10 @@ pub fn main() !void {
 
 <div class=pager>
   <a class=prev href=/TCP-Server-In-Zig-Part-6-Epoll/>Epoll</a>
-  <span class=next>Part 8 - Coming Soon</span>
+  <a class=next href=/TCP-Server-In-Zig-Part-8-Epoll-and-Kqueue/>Epoll & Klueue</a>
 </div>
 
-<h3 id=appendix-a tabindex-1><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
+<h3 id=appendix-a><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
 <aside><p>This example will only run on BSD / MacOS. If you try to run it in docker, you might need to change the listening address from <code>127.0.0.1</code> to <code>0.0.0.0</code>.</p></aside>
 
 {% highlight zig %}
@@ -281,7 +296,7 @@ const Server = struct {
                         const filter = ready.filter;
                         const client: *Client = @ptrFromInt(nptr);
 
-                        if (filter & system.EVFILT.READ == system.EVFILT.READ) {
+                        if (filter == system.EVFILT.READ) {
                             // this socket is ready to be read
                             while (true) {
                                 const msg = client.readMessage() catch {
@@ -298,7 +313,7 @@ const Server = struct {
                                     break;
                                 };
                             }
-                        } else if (filter & system.EVFILT.WRITE == system.EVFILT.WRITE) {
+                        } else if (filter == system.EVFILT.WRITE) {
                             client.write() catch self.closeClient(client);
                         }
                     }
@@ -596,8 +611,8 @@ const KQueue = struct {
         // disabled via removeListener
         try self.queueChange(.{
             .ident = @intCast(listener),
-            .flags = posix.system.EV.ADD,
             .filter = posix.system.EVFILT.READ,
+            .flags = posix.system.EV.ADD,
             .fflags = 0,
             .data = 0,
             .udata = 0,
@@ -607,8 +622,8 @@ const KQueue = struct {
     fn removeListener(self: *KQueue, listener: posix.socket_t) !void {
         try self.queueChange(.{
             .ident = @intCast(listener),
+            .filter = posix.system.EVFILT.READ,
             .flags = posix.system.EV.DISABLE,
-            .filter = 0,
             .fflags = 0,
             .data = 0,
             .udata = 0,
@@ -618,8 +633,17 @@ const KQueue = struct {
     fn newClient(self: *KQueue, client: *Client) !void {
         try self.queueChange(.{
             .ident = @intCast(client.socket),
-            .flags = posix.system.EV.ADD,
             .filter = posix.system.EVFILT.READ,
+            .flags = posix.system.EV.ADD,
+            .fflags = 0,
+            .data = 0,
+            .udata = @intFromPtr(client),
+        });
+
+        try self.queueChange(.{
+            .ident = @intCast(client.socket),
+            .filter = posix.system.EVFILT.WRITE,
+            .flags = posix.system.EV.ADD | posix.system.EV.DISABLE,
             .fflags = 0,
             .data = 0,
             .udata = @intFromPtr(client),
@@ -629,18 +653,37 @@ const KQueue = struct {
     fn readMode(self: *KQueue, client: *Client) !void {
         try self.queueChange(.{
             .ident = @intCast(client.socket),
-            .flags = posix.system.EV.ADD,
+            .filter = posix.system.EVFILT.WRITE,
+            .flags = posix.system.EV.DISABLE,
+            .fflags = 0,
+            .data = 0,
+            .udata = 0,
+        });
+
+        try self.queueChange(.{
+            .ident = @intCast(client.socket),
             .filter = posix.system.EVFILT.READ,
+            .flags = posix.system.EV.ENABLE,
             .fflags = 0,
             .data = 0,
             .udata = @intFromPtr(client),
         });
+
     }
 
     fn writeMode(self: *KQueue, client: *Client) !void {
         try self.queueChange(.{
             .ident = @intCast(client.socket),
-            .flags = posix.system.EV.ADD,
+            .filter = posix.system.EVFILT.READ,
+            .flags = posix.system.EV.DISABLE,
+            .fflags = 0,
+            .data = 0,
+            .udata = 0,
+        });
+
+        try self.queueChange(.{
+            .ident = @intCast(client.socket),
+            .flags = posix.system.EV.ENABLE,
             .filter = posix.system.EVFILT.WRITE,
             .fflags = 0,
             .data = 0,
@@ -659,9 +702,9 @@ const KQueue = struct {
         self.change_count = count + 1;
     }
 };
-
 {% endhighlight %}
+
 <div class=pager>
   <a class=prev href=/TCP-Server-In-Zig-Part-6-Epoll/>Epoll</a>
-  <span class=next>Part 8 - Coming Soon</span>
+  <a class=next href=/TCP-Server-In-Zig-Part-8-Epoll-and-Kqueue/>Epoll & Kqueue</a>
 </div>

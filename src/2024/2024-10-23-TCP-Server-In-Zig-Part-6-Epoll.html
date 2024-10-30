@@ -12,7 +12,7 @@ tags: [zig]
 
 <p>The first alternative API that we'll look at is <code>epoll</code>. The bulk of what we've learnt about evented I/O is still applicable as-is. However, <code>epoll</code> is a Linux-specific system call. In order to support it as well as other platforms, we'll need to leverage Zig's comptime as well as some layer of abstraction. This is something we'll look at after exploring <code>kqueue</code>, a BSD/MacOS-specific system call.</p>
 
-<h3 id=epoll tabindex-1><a href="#epoll" aria-hidden=true>epoll</a></h3>
+<h3 id=epoll><a href="#epoll" aria-hidden=true>epoll</a></h3>
 <p>The <code>epoll</code> API is three separate system calls. <code>epoll_create1</code> is used to create an epoll file descriptor. You can think of this as our epoll instance. <code>epoll_ctl</code> is used to modify our instance. With it, we can add, modify and remove sockets that we want our instance to monitor. Finally, we have <code>epoll_wait</code> which block until one of the monitored sockets is ready or until the configured timeout is reached.</p>
 
 <p>With <code>poll</code> we specify the sockets to monitor on the blocking call to <code>poll</code> itself. This means we need to maintain our own array of <code>pollfd</code>. With <code>epoll</code>, because we have distinct functions to modify and wait, this ugliness is gone.</p>
@@ -39,6 +39,7 @@ pub fn main() !void {
 
     // epoll_create1 takes flags. We aren't using any in these examples
     const efd = try posix.epoll_create1(0);
+    defer posix.close(efd);
 
     {
         // monitor our listening socket
@@ -83,7 +84,7 @@ pub fn main() !void {
 
 <p>From the above, we can tell that <code>epoll_ctl</code> takes the <code>epoll</code> file descriptor created via <code>epoll_create1</code>, the operation (<code>CTL_ADD</code>, <code>CTL_DEL</code> or <code>CTL_MOD</code>), the file descriptor to monitor (sockets in our case) and an <code>epoll_event</code>. The <code>epoll_event</code> structure has two fields, the <code>events</code> which is like a <code>pollfd.events</code> and <code>data</code>. The <code>data</code> field is a untagged union and allows us to associate arbitrary information with an <code>epoll_event</code>. The value we store in <code>data</code> can be retrieved when iterating through the ready list. Above, we store the socket and retrieve the socket from <code>data.fd</code>. Storing the socket directly in <code>data</code> is a good start, but we can do more with this field.</p>
 
-<h3 id=epoll.data.ptr tabindex-1><a href="#epoll.data.ptr" aria-hidden=true>epoll.data.ptr</a></h3>
+<h3 id=epoll.data.ptr><a href="#epoll.data.ptr" aria-hidden=true>epoll.data.ptr</a></h3>
 <p>One of the challenge we faced with <code>poll</code> was to associate an <code>pollfd</code> with its corresponding client. We managed to get this working by keeping two slices in sync, but never bothered figuring out how to get a pollfd from a client. With <code>epoll</code> this is much simpler. Specifically, the <code>epoll_event.data</code> field lets us store the numeric representation of a pointer. Or, put differently, we can associate anything we want with an <code>epoll_event</code>.</p>
 
 <p>The benefit of this might not be immediately obvious, but let's add a simple <code>Client</code> and use <code>data</code> to associate our <code>epoll_event</code> directly with a client:</p>
@@ -193,7 +194,7 @@ const client: Client = @ptrFromInt(nptr);
 
 <p>It might be obvious to some, but for this to work, a <code>client</code> <strong>has</strong> to be allocated on the heap. While we can call <code>@intToPtr</code> on a stack-allocated value, that value won't magically remain valid beyond its scope.</p>
 
-<h3 id=client-to-epoll tabindex-1><a href="client-to-epoll" aria-hidden=true>Client to epoll_event</a></h3>
+<h3 id=client-to-epoll><a href="#client-to-epoll" aria-hidden=true>Client to epoll_event</a></h3>
 <p>Being able to associate arbitrary data with an <code>epoll_event</code> tightens up our code, but the real benefit is the ease with which we can modify the epoll instance from a client. The way we previously structured our <code>poll</code>-based server, it wasn't possible for <code>writeMessage</code> to be called externally (i.e. from application code) because the <code>Client</code> had no way to alter the server's <code>polls</code> list. We <em>could</em> have had each <code>Client</code> reference a <code>*Server</code>, but it would have been tricky to deal with the moving indexes.</p>
 
 <p>With <code>epoll</code> we still need each <code>Client</code> to have the epoll instance (either directly, or via a reference to the <code>*Server</code>), but can use <code>epoll_ctl</code> to modify the monitor for the client. You'll recall that previously our <code>write</code> function would return a <code>false</code> to signal an incomplete write and <code>true</code> to signal a completed write. This value was used by our <code>run</code> function to switch to and from write-mode and read-mode. We can now bake this into <code>write</code>:</p>
@@ -232,7 +233,7 @@ fn write(self: *Client) !void {
 
 <p>That might seem like a minor change, but it enables something you'll almost certainly need: the ability to initiate a write from the application. There is one inefficiency in the above code: on a complete write, we revert to read-mode. However, most of the time, we'll probably never have gone into write-mode to begin with. As we've said before, unless your server is very busy, your client is lagging, or you're sending very large messages, there's a reasonable chance that <code>posix.write</code> will succeed in a single call. In such cases, reverting to read-mode is an unnecessary and wasteful system call. I'll leave this up to you to fix, but one solution would be to add an <code>IOMode</code> enum with two values: <code>read</code> and <code>write</code> and track which the client is currently in. Then we can check <code>if self.mode == .write</code> before switching to read-mode.</p>
 
-<h3 id=edge_triggered tabindex-1><a href="edge_triggered" aria-hidden=true>Edge-Triggered</a></h3>
+<h3 id=edge_triggered><a href="#edge_triggered" aria-hidden=true>Edge-Triggered</a></h3>
 <p>We mentioned that <code>poll</code> is always level-triggered. That is, as long as a condition holds, we'll get a notification. For example, if one call to <code>poll</code> notifies us that a certain socket is ready and we then call<code>poll</code> again, without reading the socket, we'll get another notification. This is also how <code>epoll</code> works by default. But we can make <code>epoll</code> edge-triggered on a per-socket basis.</p>
 
 <p>Let's go back to our first <code>epoll</code> program, and change the code that handles a client's readiness:</p>
@@ -303,7 +304,7 @@ try posix.epoll_ctl(efd, linux.EPOLL.CTL_ADD, client_socket, &event);
 
 <p>We can also use <code>linux.EPOLL.ONESHOT</code> which disables the notification for the socket after readiness has been signaled once, including for any new messages. <code>epoll_ctl</code> with the <code>linux.EPOLL.CTL_MOD</code> operation needs to be called to re-enable the monitor. This is obviously different than using edge-triggered since notifications are disabled even for new events. While <code>ONESHOT</code> might be useful to make sure that a single message per client is processed, it does have the disadvantage of requiring many more system calls - one every time we want to re-enable to monitor.</p>
 
-<h3 id=conclusion tabindex-1><a href="conclusion" aria-hidden=true>Conclusion</a></h3>
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>Besides the fact that <code>epoll</code> is Linux-specific, it's safe to think of it as a better version of <code>poll</code>. It's more efficient, easier to integrate and has more features. Except for the specifics of the API, everything about evented I/O is unchanged. Using <code>@intFromPtr</code> and <code>@ptrFromInt</code> can actually be useful now and again, but it's mostly used as above, when integrating with a C library that lets you associate arbitrary data (often a <code>usize</code>) with a C structure.</p>
 
 <p>Below, you'll find a full working (in Linux) example. It merges what we've learned about <code>epoll</code> with our <code>Server</code>, <code>Client</code> and <code>Reader</code> from previous parts. We've also introduced an <code>Epoll</code> structure. The goal is to start creating some abstraction to eventually deal with having platform-specific implementations (i.e. using epoll on Linux and kqueue on BSD/MacOS). This abstration is incomplet, but it's a start and something we'll dedicate a whole part to.</p>
@@ -313,7 +314,7 @@ try posix.epoll_ctl(efd, linux.EPOLL.CTL_ADD, client_socket, &event);
   <a class=next href=/TCP-Server-In-Zig-Part-7-Kqueue/>Kqueue</a>
 </div>
 
-<h3 id=appendix-a tabindex-1><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
+<h3 id=appendix-a><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
 <aside><p>This example will only run on Linux. If you try to run it in docker, you might need to change the listening address from <code>127.0.0.1</code> to <code>0.0.0.0</code>.</p></aside>
 
 {% highlight zig %}

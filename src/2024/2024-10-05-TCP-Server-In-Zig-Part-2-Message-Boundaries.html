@@ -41,7 +41,7 @@ const user = parsed.value;
 
 <p>There's no getting around this, so when we write a message, we need to add our own message boundaries which allows the receiving end to piece the parts together whether it takes 1, 2 or 100 reads.</p>
 
-<h3 id=delimiter tabindex-1><a href="#delimiter" aria-hidden=true>Message Delimiter</a></h3>
+<h3 id=delimiter><a href="#delimiter" aria-hidden=true>Message Delimiter</a></h3>
 <p>One way to do this is to delimit each message with one or more special character. This has a number of benefits. First of all, it's simple. Second, a lot of libraries, including Zig's standard library, have facilities for reading from a source until a delimiter is reached. Finally, it's almost perfect for streaming: the sender doesn't need to have the full message ahead of time and can just send data as it becomes available, sending a final delimiter at the end. A major downside is that that delimiter can't be part of the data being sent - making this approach impractical if you're sending binary data. Also, while it might have efficiency advantages for the sender in some cases, it might remove some optimization opportunities from the receiver since the size of the message isn't known until the full message is received.</p>
 
 <p>On the write side, adding a delimiter is easy. For this example, we'll use 0 as our delimiter:</p>
@@ -119,7 +119,7 @@ hello\0world\0
 
 <aside><p>A lot of this can be difficult to reproduce since <code>write</code> and <code>read</code> can seem to behave on "messages" rather than a stream of bytes when testing locally or even on a local network. But this particular case can be simulated by writing multiple "messages" and waiting a bit (a few milliseconds) before trying to read. Assuming your read-buffer is larger enough, a single read will almost certainly get all written messages. The other case, 1 write requiring multiple reads, is harder to trigger; but I promise you it will happen <em>a lot</em> in a real world setting.</p></aside>
 
-<h3 id=binary_encoding tabindex-1><a href="#binary_encoding" aria-hidden=true>Binary Encoding</a></h3>
+<h3 id=binary_encoding><a href="#binary_encoding" aria-hidden=true>Binary Encoding</a></h3>
 <p>Before we can look at the second way to add message boundaries, we need to look at how integers can be encoded as bytes. One option is to encode numbers as text, using a text-encoding format like UTF8. If you run:</p>
 
 {% highlight zig %}
@@ -174,7 +174,7 @@ little-endian: { 1, 1, 0, 0 }
 
 <aside><p>The UT8 or ASCII encoding of 4,294,967,295 takes 10 bytes - 1 byte per digit. The binary encoding takes 4 bytes; quite the space saving! Conversely, the UTF8 or ASCII encoding of "63" uses just 2 bytes, versus the 4 byte if we're using a 4-byte fixed length. There <em>are</em> variable-length binary encoding scheme, such as the varint used by Google's Protocol Buffer. I hate them and question if the few bytes saved in transmission outweighs the CPU cycles spent encoding and decoding them.</p></aside>
 
-<h3 id=header_prefix tabindex-1><a href="#header_prefix" aria-hidden=true>Header Prefix</a></h3>
+<h3 id=header_prefix><a href="#header_prefix" aria-hidden=true>Header Prefix</a></h3>
 <p>The other way we can add boundaries is to prefix each message with a header. The simplest header would be the length of the message. For example, using what we learnt above, if we wanted to send "hello!" using a 4 byte little-endian encoded length-prefix, we'd send: {6, 0, 0, 0, 'h', 'e', 'l', 'l', 'o', '!'}.</p>
 
 <p>Writing and reading these types of messages is straightforward. For now, we'll stick with an explicit implementation, but in the next part, we'll optimize both the write and the read.</p>
@@ -236,7 +236,7 @@ fn readAll(socket: posix.socket_t, buf: []u8) !void {
 <p>If you don't need to support messages larger than 16K (2^16), you can use a 2 byte-length prefix instead. Also, many binary protocols tend to have a header which is more than just the length. You commonly see headers that contain both a length and a type. PostgreSQL's binary protocol is comprised of a 1 byte message type followed by a 4 byte big-endian encoded length followed by the actual message. WebSocket, on the other hand, has a variable length header. An entire WebSocket message can be as short as 2 bytes, but the longest message will have a header that's 14 bytes - it angers me.</p>
 
 
-<h3 id=conclusion tabindex-1><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>You might be surprised to know that some protocols use both delimiters and some type of prefix. HTTP, for example, uses delimiters for its headers, but the body's length is typically defined by the text-encoded Content-Length header. Redis also stands out as having a mix of both delimiters (for ease of human-readability) and text-encoded length prefix.</p>
 
 <p>Personally, if you are making up your own protocol, I'd recommend going with a binary-encoded fixed-length header which includes both a message type and a payload length (like PostgreSQL). It's simple to implement and can be efficient to read and write.</p>

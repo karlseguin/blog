@@ -12,7 +12,7 @@ tags: [zig]
 
 <aside><p>As our code gets more complicated, we'll something look at only part of the implementation, such as an individual function. If you want additional context, you can find a <a href=#appendix-a>complete runnable example</a> at the end.</p></aside>
 
-<h3 id=nonblocking tabindex-1><a href="#nonblocking" aria-hidden=true>Non-Blocking I/O</a></h3>
+<h3 id=nonblocking><a href="#nonblocking" aria-hidden=true>Non-Blocking I/O</a></h3>
 <p>It's possible to put a socket in non-blocking mode. When enabled, functions which normally block, such as <code>accept</code>, <code>read</code> or <code>write</code>, will return <code>error.WouldBlock</code> (or <code>EAGAIN</code> in C) rather than blocking. As we're about to see, it's hard to take advantage of this on its own, but we're looking at it first, to get a feel for it. Consider what happens if we go to one of our earlier single-threaded implementations and enable non-blocking sockets (two lines have been changed, both commented):</p>
 
 {% highlight zig %}
@@ -82,7 +82,7 @@ while (true) {
 
 <p>If we keep our listening socket in blocking mode, but put connected sockets in non-blocking mode, we'll face the same problems. When our <code>read</code> returns <code>error.WouldBlock</code> what can we realistically do? All of our implementations so far depend on one thread processing one connection. We need to fundamentally rethink our approach.</p>
 
-<h3 id=polling tabindex-1><a href="#polling" aria-hidden=true>Polling</a></h3>
+<h3 id=polling><a href="#polling" aria-hidden=true>Polling</a></h3>
 <p>We need to break out of the one-thread-per-connection pattern, which is something we can only do now that we've discovered non-blocking I/O. We probably need to start organizing our code a little better, but you can start thinking about having an array of sockets that we can loop through and try to read from. As an incomplete prototype, something like:</p>
 
 {% highlight zig %}
@@ -144,7 +144,7 @@ fn readMessage(self: *Client) !?[]byte {
 
 <p>While this seems promising, constantly looping through our clients, hoping that one or more has data, isn't going to be efficient.</p>
 
-<h3 id=poll tabindex-1><a href="#poll" aria-hidden=true>poll</a></h3>
+<h3 id=poll><a href="#poll" aria-hidden=true>poll</a></h3>
 <p>The <code>poll</code> system call lets us register file descriptors (like sockets) with the operating system and be notified when certain events, like reading or writing, can be done without blocking. For example, we can give <code>poll</code> an array of sockets and it'll block until one is ready to be read. It's a simple API, a single function, but it's a change in how we think about serving clients. We're going to start by looking at a basic implementation which is unconcerned with things like message boundaries. Our goal, for now, is to get familiar with <code>poll</code>'s API and this new way of working with sockets.</p>
 
 {% highlight zig %}
@@ -276,7 +276,7 @@ pub fn main() !void {
 
 <p>You might be wondering why we check if <code>revents</code> has the <code>POLL.HUP</code> flag, even though we didn't register our interest in <code>POLL.HUP</code>. <code>POLL.HUP</code> is always monitored even if we don't explicitly ask for it. We check <code>POLL.IN</code> first, but we could check <code>POLL.HUP</code> first instead. For example, an HTTP server might prefer checking <code>POLL.HUP</code> and remove disconnected clients, ignoring any pending data they've sent. When <code>POLL.IN</code> <em>is</em> set, you might be wondering if <code>read</code> can fail and/or return zero bytes. The simple answer is: I'm not sure. I would certainly be possible for <code>read</code> to return <code>error.WouldBlock</code> if another thread called <code>read</code> on the same socket, draining it. And, we could get zero bytes if the supplied buffer passed into <code>read</code> was zero-length. In this single-threaded example, with a fixed-length buffer, neither of those cases is possible. But I think it's better to be safe than sorry, and we should always assume <code>read</code> can return zero bytes or an error.</p>
 
-<h3 id=O-N tabindex-1><a href="#O-N" aria-hidden=true>O(N)</a></h3>
+<h3 id=O-N><a href="#O-N" aria-hidden=true>O(N)</a></h3>
 <p>The <code>poll</code> call unblocks when at least one of the monitored file descriptor is ready. But the only way to know which are ready is to iterate through all of them, checking if <code>revents != 0</code>. Even with a modest upper limit of 4K clients, this isn't ideal. There isn't much we can do about. However, <code>poll</code> <em>does</em> return the number of entries that have a non-zero <code>revents</code>. So while our code will still be O(N), we can at least stop iterating once we've processed the number of ready sockets</p>
 
 {% highlight zig %}
@@ -317,7 +317,7 @@ while (true) {
 
 <p>Both epoll and kqueue, platform-specific alternatives to poll, elegantly solve this problem. We'll cover both those APIs in following parts.</p>
 
-<h3 id=level_triggered tabindex-1><a href="level_triggered" aria-hidden=true>Level Triggered</a></h3>
+<h3 id=level_triggered><a href="#level_triggered" aria-hidden=true>Level Triggered</a></h3>
 <p>When the listening socket is ready to accept a new connection, that is when <code>polls[0].revents != 0</code>, we call <code>accept</code> once. But because our socket is in non-blocking mode, we could call it until we receive an <code>error.WouldBlock</code> error:</p>
 
 {% highlight zig %}
@@ -341,7 +341,7 @@ if (active[0].revents != 0) {
 
 <p>Put differently, if there are four connections waiting to be accepted when <code>poll</code> returns, but we only accept one, the next call to <code>poll</code> will re-notify us that our listening socket is ready because of the still-pending three connections.</p>
 
-<h3 id=stateful_reads tabindex-1><a href="stateful_reads" aria-hidden=true>Stateful Reads</a></h3>
+<h3 id=stateful_reads><a href="#stateful_reads" aria-hidden=true>Stateful Reads</a></h3>
 <p>In the above code, when a socket is ready, we simply print whatever bytes we were able to read. But as we've discussed a few times, TCP deals with streams of bytes and isn't "message"-aware. We need to add more state so that we can handle a <code>read</code> returning only part of a message or more than a single message. We already saw a pseudo-implementation of this above, when we looked at non-blocking I/O. To use that same approach, we have a minor problem: <code>poll</code> doesn't allow us to associate arbitrary data with the <code>pollfd</code>, so we need to create and manage this association ourselves.</p>
 
 <p>I think it's time that we introduced a <code>Server</code> struct to help us keep our code tidy. First its fields, <code>init</code> and <code>deinit</code> functions. We'll see a full <code>Client</code> implementation shortly, but for now, it's just a thin wrapper around <code>Reader</code> from previous parts.</p>
@@ -532,7 +532,7 @@ for (self.polls[1..]) |p| {
 
 <p>Other parts of the code would also have been simplified - hashmaps have a way of doing that. But it isn't how I'd do it - because it would probably be less efficient - and this series isn't about taking the easy path.</p>
 
-<h3 id=conclusion tabindex-1><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>Although the <code>poll</code> system call is simple we had to make substantial changes to our code, and our mindset, to accommodate this different way of interacting with sockets. State becomes both more critical and challenging to maintain compared to previous approaches where we had a thread-per-connection.</p>
 
 <p>The next part will continue to expand on the above, adding writes, timeouts, connection limits and looking at how we can combine what we've learnt here with our previous experience with multi-threading. Future parts will then look at platform-specific alternatives to <code>poll</code>: <code>epoll</code> for Linux and <code>kqueue</code> for BSD/MacOS. These are not only faster and more scalable than <code>poll</code> but also offer additional features. However, fundamentally, most of what we're learning here will translate directly to those APIs. Although it's relatively simple to build a system that supports both platform-specific APIs, <code>poll</code> has the significant benefit of being cross-platform. If you don't need the extra performance/scale or features of the platform-specific APIs, I suggest you stick with <code>poll</code>.</p>
@@ -545,7 +545,7 @@ for (self.polls[1..]) |p| {
 </div>
 
 
-<h3 id=appendix-a tabindex-1><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
+<h3 id=appendix-a><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
 {% highlight zig %}
 const std = @import("std");
 const net = std.net;

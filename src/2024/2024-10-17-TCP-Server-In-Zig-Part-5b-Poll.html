@@ -12,7 +12,7 @@ tags: [zig]
 
 <p>Of course, we're also missing a number of important features. Our last working example crashes if too many clients try to connect, it doesn't write to the client and it doesn't implement any timeouts. We still have a lot of work to do if we want something approaching production-ready.</p>
 
-<h3 id=connection_limit tabindex-1><a href="connection_limit" aria-hidden=true>Connection Limit</a></h3>
+<h3 id=connection_limit><a href="#connection_limit" aria-hidden=true>Connection Limit</a></h3>
 <p>The most glaring bug is our server crashes if too many simultaneous clients try to connect. This happens because, on a new connection, we don't do any bound-check on the <code>clients</code> and <code>client_polls</code> slices. Exactly how we fix this will be app-dependent. Maybe you want to allow new connections by disconnecting old ones. Maybe you want to disallow the connection but write an error message. We'll do something simpler: only accept a connection if we have an available slot.</p>
 
 <p>One way to stop accepting connections is to remove the listener's <code>pollfd</code> from our <code>polls</code> slice. But since we'll want to re-enable this notification once free slots become available, a better way is to modify the existing entry:</p>
@@ -50,7 +50,7 @@ fn removeClient(self: *Server, at: usize) void {
 
 <p>Just like that, we've fixed a bad bug. More importantly, we've seen how we can modify a <code>pollfd</code> value. As above, this can be used to disable and enable monitors, but it can also be used to alternate between monitoring for read-readiness and write-readiness.</p>
 
-<h3 id=writes tabindex-1><a href="writes" aria-hidden=true>Writes</a></h3>
+<h3 id=writes><a href="#writes" aria-hidden=true>Writes</a></h3>
 <p>When a client connects we monitor it by adding a new <code>pollfd</code> entry to <code>client_polls</code> and, through the <code>events</code> field, we register our interest in <code>posix.POLL.IN</code>. What would happen if we also registered our interest in <code>posix.POLL.OUT</code>:</p>
 
 {% highlight zig %}
@@ -230,7 +230,7 @@ while (i < self.connected) {
 
 <p>Finally, because <code>write</code> often succeeds in a singe call, there is an opportunity to optimize <code>writeMessage</code>. We could first try our vectored write first, avoiding having to copy bytes to our <code>write_buf</code>. However, <code>writev</code>, like <code>write</code>, might do a partial write and then return <code>error.WouldBlock</code>, in which case we'd need to only copy the unwritten bytes to <code>write_buf</code>. I'll leave this optimization to you.</p>
 
-<h3 id=referencing_clients tabindex-1><a href="tweaking_clients" aria-hidden=true>Referencing Clients</a></h3>
+<h3 id=referencing_clients><a href="#tweaking_clients" aria-hidden=true>Referencing Clients</a></h3>
 <p>We previously improved the organization of our code by introducing a <code>Server</code> structure and extracting various behavior into their own methods. We also introduced a <code>Client</code> to maintain state, such as our read and write buffers, associated with a socket. It isn't hard to imagine the <code>Client</code> becoming the main point of interaction with the rest of the application. As-is, that wouldn't be possible because the client doesn't have a fixed-location, i.e. it can't safely be referenced from outside the server. Because of the way we handle removal from the <code>clients</code> array, a <code>Client</code> instance doesn't have a stable address.</p>
 
 <p>We'll fix this by allocating clients on the heap. To accommodate this change, we'll add a <a href=/Zig-MemoryPool-Allocator/>MemoryPool</a> to our server and change the type of value our <code>clients</code> array holds from <code>Client</code> to <code>*Client</code>:</p>
@@ -304,7 +304,7 @@ fn removeClient(self: *Server, at: usize) void {
 
 <p>Allowing clients to be referenced is our first step in making <code>Client</code> a first-class citizen in our system. Next we'll look at  implementing a read timeout, and we'll now be able to safely reference a <code>Client</code>.</p>
 
-<h3 id=timeout tabindex-1><a href="timeout" aria-hidden=true>Timeouts</a></h3>
+<h3 id=timeout><a href="#timeout" aria-hidden=true>Timeouts</a></h3>
 <p>In Part 1 we called <code>setsocketopt</code> with the <code>SO.RCVTIMEO</code> and <code>SO.SNDTIMEO</code> options to set a timeout on subsequent <code>read</code> and <code>write</code> operations. I wish I could tell you that you can use the same mechanism and, on timeout, <code>poll</code> will notify you. Unfortunately, that isn't the case. As far as I know, there isn't a built-in way to hook read/write timeouts with evented I/O. What we do have, is the ability to pass a timeout to <code>poll</code> itself. So far we've been passing a timeout of -1, which means <code>poll</code> block until there's at least one event.</p>
 
 <p>When <code>poll</code> is given a timeout, as milliseconds, it'll return after the timeout expires even if no socket is ready. We need a way to find the client which is going to timeout next, and set <code>poll</code>'s timeout based on that. This is something that we'll need to do before every call to <code>poll</code>, so it seems like it'll be prohibitively expensive - looping through every client to find the one closest to timing out. But, there's a time and memory efficient data structure that's perfect for solving this problem: a doubly linked list.</p>
@@ -382,7 +382,7 @@ fn enforceTimeout(self: *Server) i32 {
 
 <p>The <code>read_timeout</code> field given to each client is the absolute time that the client will timeout. It is set on connection and updated after each message is received, extending the timeout. Because our list keeps clients ordered by timeout, we can iterate through the list and disconnect any client timed-out clients. As soon as we find a client with a future timeout, we can return and use the amount of time until this client times-out as the timeout to pass to <code>poll</code>.</p>
 
-<h3 id=conclusion tabindex-1><a href="conclusion" aria-hidden=true>Conclusion</a></h3>
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>The <code>poll</code> system call, while far from perfect, is a wonderful introduction to evented I/O. It teaches us the need to manage per-connection state (i.e. read and write buffers) so that we can respond to the OS' notification about the readiness of monitored sockets. With blocking I/O, the stream oriented nature of TCP is easy to gloss over - we can read in a loop until we have a message and write in a loop until we've written a message. With non-blocking sockets, it's something we have to put a lot more thought and care into. We still "loop" until our message is fully read or written, but that loop happens over a much wider expanse of code.</p>
 
 <p>In the next part we'll look at <code>epoll</code>, a more powerful and better performing Linux-specific version of <code>poll</code>. Almost everything that we've learnt so far will be directly applicable to <code>epoll</code> as well as <code>kqueue</code> (our subject after <code>epoll</code>). One of the most annoying part of our implementation so far has been the index-sharing sync between <code>polls</code> and <code>client_polls</code>. In fairness to <code>poll</code>, using an <code>AutoHashMap</code> might have made our life easier. Still, I'm glad to say that both <code>epoll</code> and <code>kqueue</code> will allow us to clean up that mess!</p>
@@ -392,7 +392,7 @@ fn enforceTimeout(self: *Server) i32 {
   <a class=next href=/TCP-Server-In-Zig-Part-6-Epoll/>Epoll</a>
 </div>
 
-<h3 id=appendix-a tabindex-1><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
+<h3 id=appendix-a><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
 {% highlight zig %}
 const std = @import("std");
 const net = std.net;

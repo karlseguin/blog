@@ -10,7 +10,7 @@ tags: [zig]
 
 <p>In the previous parts, we made use of numerous system calls to setup our server and then communicate with the client. System calls (aka, syscalls) is how our program asks the operating system to do something, like writing bytes to a socket. There's overhead to making syscalls, so it's something we want to keep an eye on and, if possible, minimize. This overhead is small (100-200ns plus some trashing of various caches, from what I could find), therefore it isn't a concern for infrequent calls like the ones we used to setup our server - <code>socket</code>, <code>setsockopt</code>, <code>bind</code> and <code>listen</code>. <code>read</code> and <code>write</code> are a different story though: they're often in a loop and, for a server, the number of calls to <code>read</code> and <code>write</code> will grow with the number of active connection.</p>
 
-<h3 id=writev tabindex-1><a href="#writev" aria-hidden=true>writev</a></h3>
+<h3 id=writev><a href="#writev" aria-hidden=true>writev</a></h3>
 <p>In Part 2, when we added a header to our messages, we made two calls <code>writeAll</code>, one to write the header and the other to write the message:</p>
 
 {% highlight zig %}
@@ -92,7 +92,7 @@ fn writeAllVectored(socket: posix.socket_t, vec: []posix.iovec_const) !void {
 
 <p>There's also a <code>readv</code> function which does the opposite: reading data into multiple buffers. I've personally never found a use for it. I suspect that it's a combination of being generally less useful than <code>writev</code>, lack of imagination on my part, and the type of systems I've worked on.</p>
 
-<h3 id=overread tabindex-1><a href="#overread" aria-hidden=true>Over-Reading</a></h3>
+<h3 id=overread><a href="#overread" aria-hidden=true>Over-Reading</a></h3>
 <p>At the other end of our communication, <code>readMessage</code> requires a minimum of two calls to <code>read</code>, at least one call to fill our 4 byte header buffer, and then at least one more to fill our message buffer. Reading from a socket is generally more chaotic than writing to it. Reading is the end of our data's journey and can be delayed because of network latency or dropped packet. Furthermore, clients can be buggy or even malicious. All this to say that there's no "best" way to handle incoming data.<p>
 
 <p>Despite this, one common approach is to have a buffer-per-connection and to read as much data as possible. This has the same worst case behavior as doing multiple explicit reads, but the best case behavior isn't just that we read both the prefix and the message in a single <code>read</code>, but that we also read all of, or at least part of, any subsequent messages.</p>
@@ -256,7 +256,7 @@ const Reader = struct {
 
 <p>As a final precaution, in an attempt to minimize the possibility of a Denial of Service attack, many services minimize the amount of resources they'll allocate until a client can be authenticated. When a new connection is established, you might want to allocate a much smaller buffer, or use a special buffer pool, to read an initial "authentication" message. Once the legitimacy of the client is verified, you can assign a full <code>Reaer</code> with a dedicated buffer. Of course, this approach isn't applicable to all cases. But the internet is a hostile place; you should always be mindful of the resources you're willing to commit just because someone has established a TCP connection to your server.</p>
 
-<h3 id=conclusion tabindex-1><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>System calls aren't evil and they aren't even particularly slow, rather they're a fundamental part of network programming. But we can still be mindful about their usage. In some cases, it's a matter of knowing and using the right system call for the job, as with <code>writev</code> vs <code>write</code>. In other cases, it's about organizing our code differently, as with our <code>Reader</code>.</p>
 
 <p>As our implementation progresses, we'll start to rely on more advanced operating system features, such as Linux's epoll and BSD's kqueue. To use these, we'll introduce new system calls, some of which could end up in your critical path. In fact, kqueue and epoll differ with respect to the number of system calls required - with kqueue allowing for designs that require fewer system calls. Hopefully, given what we've explored above, you'll be in a better position to notice and consider these types of differences.</p>
