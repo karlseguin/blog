@@ -25,7 +25,7 @@ pub fn main() !void {
 }
 {% endhighlight %}
 
-<p>The first thing we do is define the address we'll eventually want to listen on. In our example we're going to be listening on 127.0.0.1 (localhost) port 5882. If you wanted to make your server publicly accessible, with all the risk that might entail, you would need to use your computer's public interface, or use "0.0.0.0" to bind to all interfaces. With <code>parseIp</code> we could also specify an IPv6 address, e.g. we could pass "::1" as the IPv6 equivalent to 127.0.01.</p>
+<p>The first thing we do is define the address we'll eventually want to listen on. In our example we're going to be listening on 127.0.0.1 (localhost) port 5882. If you wanted to make your server publicly accessible, with all the risk that might entail, you would need to use your computer's public interface, or use "0.0.0.0" to bind to all interfaces. With <code>parseIp</code> we could also specify an IPv6 address, e.g. we could pass "::1" as the IPv6 equivalent to 127.0.0.1.</p>
 
 <p>This first parameter is called the <code>domain</code> and it'll usually be <code>INET</code> or <code>INET6</code>. We make our life a bit easier by using our <code>address</code>'s family for that parameter. The next parameter servers two purposes. First  it sets the type of socket we're creating. For TCP this will be <code>SOCK.STREAM</code>. For UDP we'd use <code>SOCK.DGRAM</code>. The second purpose is as a bitwise OR flag for different behavior. For now we don't set any flag, but we will use <code>posix.SOCK.STREAM | posix.SOCK.NONBLOCK</code> in a later part. Finally, we specify <code>TCP</code> as the protocol that we'll be using.</p>
 
