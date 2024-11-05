@@ -1,0 +1,193 @@
+---
+permalink: "/Zigs-weird-syntax/"
+layout: post
+date: 2024-11-05
+title: "Zig's (.{}){} syntax"
+description: "A look at some unfriendly Zig syntax "
+tags: [zig]
+---
+
+<p>One of the first pieces of Zig code that you're likely to see, and write, is this beginner-unfriendly line:</p>
+
+{% highlight zig %}
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+{% endhighlight %}
+
+<p>While we can reason that we're creating an allocator, the <code>(.{}){}</code> syntax can seem a bit much. This is a combination of three separate language features: generics, anonymous struct literals and default field values.</p>
+
+<h3 id=generics><a href="#generics" aria-hidden=true>Generics</a></h3>
+<p>One of Zig's more compelling feature is its advance compile-time (aka comptime) capabilities. This is the ability to have a subset of Zig run at compile-time. Comptime can be used for a number of different things, but the most immediately useful is to implement generic type. To create a generic type, we write a a function which returns a type. For example, if we wanted to create a linked list node, we'd do:</p>
+
+{% highlight zig %}
+fn Node(T: type) type {
+    return struct {
+        value: T,
+        next: ?*Node(T) = null,
+    };
+}
+{% endhighlight %}
+
+<p>You could optionally (and more explicitly) specify that <code>T</code> is a comptime parameter:</p>
+
+{% highlight zig %}
+fn Node(comptime T: type) type {
+    // ...
+}
+{% endhighlight %}
+
+<p>But this is redundant, because, in Zig, types <strong>always</strong> have to be known at compile time. Now consider these two equivalent ways to create a <code>Node(T)</code>:</p>
+
+{% highlight zig %}
+const IntNode = Node(i32);
+const n1 = IntNode{.value = 1};
+
+const n2 = Node(i32){.value = 2};
+{% endhighlight %}
+
+<p>Thinking of <code>Node(i32)</code> as a type can take a bit of getting used to, but once you accept that it's no different than any other struct, the 2nd initialization hopefully makes sense.</p>
+
+<p>While it's common, there's no rule that says that the parameters of a generic function have to be types. This is valid:</p>
+
+{% highlight zig %}
+fn Buffer(comptime size: usize) type {
+    return struct {
+        pos: usize,
+        buf: [size]u8,
+    };
+}
+{% endhighlight %}
+
+<p>You might do this type of thing for performance reasons - doing things at comptime rather than runtime, or, as we did above, to avoid dynamic allocation. This brings us to the 2nd part of the special syntax.</p>
+
+<h3 id=anonymous_struct_literals><a href="#anonymous_struct_literals" aria-hidden=true>Anonymous Struct Literals</a></h3>
+<p>Zig is good at inferring types. Given the following function:</p>
+
+{% highlight zig %}
+const Config = struct {
+    port: u16,
+    host: []const u8,
+};
+
+fn connect(config: Config) !void {
+    // ...
+}
+{% endhighlight %}
+
+<p>The following are all equivalent:</p>
+
+{% highlight zig %}
+const c1 = Config{
+    .port = 8000,
+    .host = "127.0.0.1",
+};
+try connect(c1);
+
+// OR
+
+try connect(Config{
+    .port = 8000,
+    .host = "127.0.0.1",
+});
+
+// OR
+
+try connect(.{
+    .port = 8000,
+    .host = "127.0.0.1",
+});
+{% endhighlight %}
+
+<p>Whenever you see this syntax <code>.{...}</code>, you should imagine the leading dot being replaced with the target type (which Zig will infer). But in the original <code>GeneralPurposeAllocator</code> line, that's not really what we were doing, is it? We had something more like:</p>
+
+{% highlight zig %}
+try connect(.{});
+{% endhighlight %}
+
+<p>It's the same, but relying on default field values, which is the last bit of magic.</p>
+
+<h3 id=default_field_values><a href="#default_field_values" aria-hidden=true>Default Field Values</a></h3>
+<p>In the above example, in order to create a <code>Config</code>, we <strong>must</strong> specify the <code>port</code> and <code>host</code> fields:</p>
+
+{% highlight zig %}
+const c1 = Config{.port = 8000, .host = "127.0.0.1"}
+
+// OR, from what we saw above, this is the same:
+const c1: Config = .{.port = 8000, .host = "127.0.0.1"}
+{% endhighlight %}
+
+<p>Failure to set either (or both) fields will result in a compile-time error. When we declare the structure, we can give fields a default value. For example, we could change our <code>Config</code> struct to:</p>
+
+{% highlight zig %}
+const Config = struct {
+    port: u16,
+    host: []const u8 = "127.0.0.1",
+};
+{% endhighlight %}
+
+<p>Now when we create a <code>Config</code>, we can optionally omit the <code>host</code>:
+
+{% highlight zig %}
+const c = Config{.port = 8000};
+{% endhighlight %}
+
+<p>Which would create a <code>Config</code> with a <code>port</code> equal to <code>8000</code> and a <code>host</code> equal to <code>"127.0.0.1"</code>. We can give every field a default value:</p>
+
+{% highlight zig %}
+const Config = struct {
+    port: u16 = 8000,
+    host: []const u8 = "127.0.0.1",
+};
+{% endhighlight %}
+
+<p>Which means that we can create a <code>Config</code> without specifying any field:</p>
+
+{% highlight zig %}
+const c = Config{};
+
+// OR
+const c: Config = .{};
+{% endhighlight %}
+
+<p>Those empty braces look a lot like the ones we used to create our GeneralPurposeAllocator!</p>
+
+<h3 id=together><a href="#together" aria-hidden=true>Bringing It Together</a></h3>
+<p>Given what we've learned, if we look at the original line of code again:</p>
+
+{% highlight zig %}
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+{% endhighlight %}
+
+<p>We know that <code>GeneralPurposeAllocator</code> is a function that returns a type: it's a generic. We don't know the type of parameter it takes, but we do know that we're using its default parameters. We're also using defaults to initialize an instance of the type.</p>
+
+<p>If <code>GeneralPurposeAllocator</code> wasn't a generic, we'd have this:</p>
+
+{% highlight zig %}
+var gpa = std.heap.GeneralPurposeAllocator{};
+{% endhighlight %}
+
+<p>And we could say that we're initializing a <code>GeneralPurposeAllocator</code> using its default values. Pretty straightforward. But because <code>GeneralPurposeAllocator</code> is a generic which takes a configuration struct, we end up with two sets of defaults - one which is passed to the generic function and creates the type, and the other that initializes the instance.</p>
+
+<p>Consider this more explicit version:</p>
+
+{% highlight zig %}
+const config = std.heap.GeneralPurposeAllocatorConfig{};
+
+// Make GPA an alias to std.heap.GeneralPurposeAllocator(config)
+const GPA = std.heap.GeneralPurposeAllocator(config);
+
+var gpa = GPA{};
+{% endhighlight %}
+
+<p>And now lets inline everything:</p>
+
+{% highlight zig %}
+var gpa = std.heap.GeneralPurposeAllocator(std.heap.GeneralPurposeAllocatorConfig{}){};
+{% endhighlight %}
+
+<p>Finally we can let Zig infer the type:</p>
+
+{% highlight zig %}
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+{% endhighlight %}
+
+<p>Hopefully, that helps. I've <a href=/learning_zig/generics/>written more about generics</a> before and, in the next post, we'll talk about a new Zig feature, declaration literals, which improve the readability of this type of code.</p>
