@@ -177,12 +177,12 @@ pub fn main() !void {
 }
 {% endhighlight %}
 
-<p>If you connect to the above and send a message, your screen will get flooded with dots (<code>.</code>) as <code>kevent</code> will continuously notify about the sockets readiness (since we never read from it). Changing the filter for the added client socket from: <code>posix.system.EVFILT.READ</code> to one of:</p>
+<p>If you connect to the above and send a message, your screen will get flooded with dots (<code>.</code>) as <code>kevent</code> will continuously notify about the sockets readiness (since we never read from it). Changing the filter for the added client socket from: <code>posix.system.EVFILT.ADD</code> to one of:</p>
 
 <ul>
-    <li><code>posix.system.EVFILT.READ | posix.system.EV.ONESHOT</code>,
-    <li><code>posix.system.EVFILT.READ | posix.system.EV.DISPATCH</code>, or
-    <li><code>posix.system.EVFILT.READ | posix.system.EV.CLEAR</code>.
+    <li><code>posix.system.EV.ADD | posix.system.EV.ONESHOT</code>,
+    <li><code>posix.system.EV.ADD | posix.system.EV.DISPATCH</code>, or
+    <li><code>posix.system.EV.ADD | posix.system.EV.CLEAR</code>.
 </ul>
 
 <p>will show how each behaves. For the first two, <code>ONESHOT</code> and <code>DISPATCH</code> no matter how much data we send, we'll only ever get a single notification. We'd need to re-add or re-enable (aka, re-arm) the notification. For <code>CLEAR</code> we'll get a single notification each time new data becomes ready.</p>
