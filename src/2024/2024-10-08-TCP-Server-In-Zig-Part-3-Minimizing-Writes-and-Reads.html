@@ -6,7 +6,7 @@ description: "Using writev to minimize writes, and using large buffers to minimi
 tags: [zig]
 ---
 
-<p>Before we look at making our server multi-threaded, and then move to polling, there are two optimization techniques worth exploring. You might think that we should finalize our code before applying optimizations, but I think optimizations in general can teach us things to look out for / consider, and it's particularly true in both these cases.</p>
+<p>Before we look at making our server multi-threaded, and then move to polling, there are two optimization techniques worth exploring. You might think that we should finalize our code before applying optimizations, but I think optimizations in general can teach us things to look out for / consider, and it's particularly true in both of these cases.</p>
 
 <p>In the previous parts, we made use of numerous system calls to setup our server and then communicate with the client. System calls (aka, syscalls) is how our program asks the operating system to do something, like writing bytes to a socket. There's overhead to making syscalls, so it's something we want to keep an eye on and, if possible, minimize. This overhead is small (100-200ns plus some trashing of various caches, from what I could find), therefore it isn't a concern for infrequent calls like the ones we used to setup our server - <code>socket</code>, <code>setsockopt</code>, <code>bind</code> and <code>listen</code>. <code>read</code> and <code>write</code> are a different story though: they're often in a loop and, for a server, the number of calls to <code>read</code> and <code>write</code> will grow with the number of active connection.</p>
 
