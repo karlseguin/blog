@@ -97,7 +97,7 @@ fn writeAllVectored(socket: posix.socket_t, vec: []posix.iovec_const) !void {
 
 <p>Despite this, one common approach is to have a buffer-per-connection and to read as much data as possible. This has the same worst case behavior as doing multiple explicit reads, but the best case behavior isn't just that we read both the prefix and the message in a single <code>read</code>, but that we also read all of, or at least part of, any subsequent messages.</p>
 
-<p>For this to work, we need to maintain state between calls in order to handle any extra bytes a previous read got. We need to know where in our buffer new data needs to be written to and where in our buffer the next message starts. To this end, I like to build a <code>Reader</code> to encapsulate this this:</p>
+<p>For this to work, we need to maintain state between calls in order to handle any extra bytes a previous read got. We need to know where in our buffer new data needs to be written to and where in our buffer the next message starts. To this end, I like to build a <code>Reader</code> to encapsulate this:</p>
 
 {% highlight zig %}
 const Reader = struct {
@@ -254,7 +254,7 @@ const Reader = struct {
 
 <p>Also, this stateful approach demands a reader per connection and is therefore more resource intensive. If you have many clients, but relatively little traffic, it might not be efficient to give each connection its own buffer - if you have a 100K clients each with a 4K buffer, that's 400MB of memory.</p>
 
-<p>As a final precaution, in an attempt to minimize the possibility of a Denial of Service attack, many services minimize the amount of resources they'll allocate until a client can be authenticated. When a new connection is established, you might want to allocate a much smaller buffer, or use a special buffer pool, to read an initial "authentication" message. Once the legitimacy of the client is verified, you can assign a full <code>Reaer</code> with a dedicated buffer. Of course, this approach isn't applicable to all cases. But the internet is a hostile place; you should always be mindful of the resources you're willing to commit just because someone has established a TCP connection to your server.</p>
+<p>As a final precaution, in an attempt to minimize the possibility of a Denial of Service attack, many services minimize the amount of resources they'll allocate until a client can be authenticated. When a new connection is established, you might want to allocate a much smaller buffer, or use a special buffer pool, to read an initial "authentication" message. Once the legitimacy of the client is verified, you can assign a full <code>Reader</code> with a dedicated buffer. Of course, this approach isn't applicable to all cases. But the internet is a hostile place; you should always be mindful of the resources you're willing to commit just because someone has established a TCP connection to your server.</p>
 
 <h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>System calls aren't evil and they aren't even particularly slow, rather they're a fundamental part of network programming. But we can still be mindful about their usage. In some cases, it's a matter of knowing and using the right system call for the job, as with <code>writev</code> vs <code>write</code>. In other cases, it's about organizing our code differently, as with our <code>Reader</code>.</p>
