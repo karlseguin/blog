@@ -177,7 +177,7 @@ pub fn main() !void {
 }
 {% endhighlight %}
 
-<p>If you connect to the above and send a message, your screen will get flooded with dots (<code>.</code>) as <code>kevent</code> will continuously notify about the sockets readiness (since we never read from it). Changing the filter for the added client socket from: <code>posix.system.EVFILT.ADD</code> to one of:</p>
+<p>If you connect to the above and send a message, your screen will get flooded with dots (<code>.</code>) as <code>kevent</code> will continuously notify about the sockets readiness (since we never read from it). Changing the filter for the added client socket from: <code>posix.system.EV.ADD</code> to one of:</p>
 
 <ul>
     <li><code>posix.system.EV.ADD | posix.system.EV.ONESHOT</code>,
