@@ -12,16 +12,16 @@ tags: [zig]
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 {% endhighlight %}
 
-<p>While you'll commonly run into the above when looking at Zig code or going through Zig learning resources, some people pointed out that the code could be improved by doing:</p>
+<p>Some people pointed out that the code could be improved by doing:</p>
 
 {% highlight zig %}
 var gpa: std.heap.GeneralPurposeAllocator(.{}) = .{};
 {% endhighlight %}
 
-<p>While this may be an improvement, i think it's rarely used. That is, until now. With the introduction of delaration literals, you can expect to see something <em>similar</em> to the above regularly.</p>
+<p>While this may be an improvement, i think it's rarely used. That is, until now. With the introduction of declaration literals, you can expect to see something <em>similar</em> to the above more often.</p>
 
 <h3 id=enum_literals><a href="#enum_literals" aria-hidden=true>Enum Literals</a></h3>
-<p>Zig has a feature called "enum literals", which allows you to use the enum value without specifying the enum type. The type is inferred based on the usage. Consider this code:</p>
+<p>Zig has a feature called "enum literals", which allows you to use the enum value without specifying the enum type. The type is inferred based on the context. Consider this code:</p>
 
 {% highlight zig %}
 const Operation = enum {
@@ -49,13 +49,13 @@ _ = calc(100, 20, .div);
 _ = calc(100, 20, Operation.div);
 {% endhighlight %}
 
-<p>The other place you'll commonly see this is when assigning an value.</p>
+<p>The other place you'll commonly see this is when assigning a value:</p>
 
 {% highlight zig %}
 user.state = .disabled;
 {% endhighlight %}
 
-<p>There's probably an argument to be made that enum literals hurt readability. In my experience, more often than not, it improves it. First of all, it's always optional. Secondly, if the meaning of the enum value (i.e. <code>disabled</code> above) isn't clear, it <em>could</em> be an indication that other parts (like variables, or function names) aren't well named.</p>
+<p>There's probably an argument to be made that enum literals hurt readability. In my experience it's generally an improvement. First of all, it's always optional. Secondly, if the meaning of the enum value (i.e. <code>disabled</code> above) isn't clear, it <em>could</em> be an indication that other parts of the statement aren't well named.</p>
 
 <h3 id=declarion_literals><a href="#declarion_literals" aria-hidden=true>Declaration Literals</a></h3>
 <p>A month or two ago, declaration literals were added to Zig. This is a generalization of what enum literals are. Using the new declaration literal syntax, our above <code>GeneralPurposeAllocator</code> initialization becomes:</p>
@@ -64,9 +64,7 @@ user.state = .disabled;
 var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
 {% endhighlight %}
 
-<p>Notice that instead of initializing the value to <code>.{}</code>, we're using <code>.init</code>. From the last blog post, the leading dot in <code>.{}</code> is telling Zig to infer the type, and the empty braces is relying on the default field values. This only works because <em>every</em> field of <code>GeneralPurposeAllocator(T)</code> has a default value - if some fields didn't, then we'd need to specify at least those.</p>
-
-<p>What's <code>.init</code>? It's a declaration defined within <code>GeneralPurposeAllocator(T)</code>. Let's build our own silly exmaple. Previously, we might have done something like:</p>
+<p>Notice that instead of initializing the value to <code>.{}</code>, we're using <code>.init</code>. What's <code>.init</code>? It's a declaration defined within <code>GeneralPurposeAllocator(T)</code>. Let's build our own trivial example. Previously, we might have done something like:</p>
 
 {% highlight zig %}
 const User = struct {
@@ -87,6 +85,7 @@ const user = User{};
 {% highlight zig %}
 const User = struct {
     id: u32,
+
     pub const init = User{
         .id = 0,
     };
@@ -122,8 +121,7 @@ const User = struct {
 const user: User = User.super;
 {% endhighlight %}
 
-<p>But that's a lot more messy with generics, which is where this really shines:</p>
-
+<p>But that's a lot more messy with generics, which is one area where declarations literals really shines:</p>
 
 {% highlight zig %}
 // this is good
@@ -151,3 +149,5 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){
 var gpa = std.heap.GeneralPurposeAllocator(.{}) = .init;
 gpa.requested_memory_limit = 1_048_576;
 {% endhighlight %}
+
+<p>I think it's still a nice addition to the language, but one of Zig's zen is "Only one obvious way to do things" and, at this point, for me, "obvious" this is not. It isn't obvious which approach I should use in my own structs and which is being used by other structs, including the standard library.</p>
