@@ -500,9 +500,8 @@ fn accept(self: *Server, listener: posix.socket_t) !void {
 }
 
 fn removeClient(self: *Server, at: usize) void {
-    posix.close(client.socket);
-
     var client = self.clients[at];
+    posix.close(client.socket);
     client.deinit(self.allocator);
 
     // Swap the client we're removing with the last one
