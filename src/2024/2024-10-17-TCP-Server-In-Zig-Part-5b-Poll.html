@@ -484,8 +484,8 @@ const Server = struct {
         try posix.bind(listener, &address.any, address.getOsSockLen());
         try posix.listen(listener, 128);
 
-        // Oops, still have a +1 here, since we want to poll all our connected
-        // clients, plus our listening socket
+        // One of the polling slots (the first one) is reserved for our listening
+        // socket.
         self.polls[0] = .{
             .fd = listener,
             .revents = 0,
