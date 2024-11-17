@@ -68,7 +68,7 @@ self.client_polls[connected] = .{
 
 <p>One challenge we have is that different application have different requirements. Are multiple threads allowed to write to a socket? Are we implementing a strict request -> response flow or can there be multiple incoming messages? Just like we potentially have to <code>poll</code> and <code>read</code> multiple times before getting a whole message, so too might we have to <code>poll</code> and <code>write</code> before sending a whole message - this means that the lifetime of those bytes might have to outlive an application's call to <code>writeMessage</code>.  Furthermore, in Part 3, we introduced <a href=/TCP-Server-In-Zig-Part-3-Minimizing-Writes-and-Reads/#writev>vectored I/O (writev)</a> as an optimization, but now that we have to make our write stateful, it's another small complexity to worry about.</p>
 
-<p>To make our life easier, we're going to assume we want to implement a request -> response flow and we'll revert to using <code>write</code> rather than <code>writev</code>. Because <code>write</code> might return <code>error.WouldBlock</code> before writing our whole message, we need to add more state our <code>Client</code>:</p>
+<p>To make our life easier, we're going to assume we want to implement a request -> response flow and we'll revert to using <code>write</code> rather than <code>writev</code>. Because <code>write</code> might return <code>error.WouldBlock</code> before writing our whole message, we need to add more state to our <code>Client</code>:</p>
 
 {% highlight zig %}
 const Client = struct {
@@ -116,7 +116,7 @@ fn writeMessage(self: *Client, msg: []const u8) !bool {
         // Depending on how you structure your code, this might not be possible
         // For example, in an HTTP server, the application might not control
         // the actual "writeMessage" call, and thus it would not be possible
-        // too have have more than one writeMessage per request
+        // to have more than one writeMessage per request
         return error.PendingMessage;
     }
 
@@ -169,7 +169,7 @@ fn write(self: *Client) !bool {
 }
 {% endhighlight %}
 
-<p><code>writeMessage</code> creates and stores the prefixed-length message in our new <code>write_buf</code>, and then calls <code>write</code> to write as much of the message as possible. For its part, <code>write</code> writes as much of our our unsent bytes, stored in <code>to_write</code>. Crucially, it returns <code>false</code> if the write is incomplete, and <code>true</code> otherwise. This is used by our <code>run</code> function to switch the socket between read and write mode. Here's the modified poll loop within our server's <code>run</code> method. Only a handful of lines, near the end, have changed:</p>
+<p><code>writeMessage</code> creates and stores the prefixed-length message in our new <code>write_buf</code>, and then calls <code>write</code> to write as much of the message as possible. For its part, <code>write</code> writes as much of our unsent bytes, stored in <code>to_write</code>. Crucially, it returns <code>false</code> if the write is incomplete, and <code>true</code> otherwise. This is used by our <code>run</code> function to switch the socket between read and write mode. Here's the modified poll loop within our server's <code>run</code> method. Only a handful of lines, near the end, have changed:</p>
 
 {% highlight zig %}
 while (i < self.connected) {
