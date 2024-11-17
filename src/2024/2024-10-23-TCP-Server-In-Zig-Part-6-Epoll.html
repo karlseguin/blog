@@ -13,7 +13,7 @@ tags: [zig]
 <p>The first alternative API that we'll look at is <code>epoll</code>. The bulk of what we've learnt about evented I/O is still applicable as-is. However, <code>epoll</code> is a Linux-specific system call. In order to support it as well as other platforms, we'll need to leverage Zig's comptime as well as some layer of abstraction. This is something we'll look at after exploring <code>kqueue</code>, a BSD/MacOS-specific system call.</p>
 
 <h3 id=epoll><a href="#epoll" aria-hidden=true>epoll</a></h3>
-<p>The <code>epoll</code> API is three separate system calls. <code>epoll_create1</code> is used to create an epoll file descriptor. You can think of this as our epoll instance. <code>epoll_ctl</code> is used to modify our instance. With it, we can add, modify and remove sockets that we want our instance to monitor. Finally, we have <code>epoll_wait</code> which block until one of the monitored sockets is ready or until the configured timeout is reached.</p>
+<p>The <code>epoll</code> API is three separate system calls. <code>epoll_create1</code> is used to create an epoll file descriptor. You can think of this as our epoll instance. <code>epoll_ctl</code> is used to modify our instance. With it, we can add, modify and remove sockets that we want our instance to monitor. Finally, we have <code>epoll_wait</code> which blocks until one of the monitored sockets is ready or until the configured timeout is reached.</p>
 
 <p>With <code>poll</code> we specify the sockets to monitor on the blocking call to <code>poll</code> itself. This means we need to maintain our own array of <code>pollfd</code>. With <code>epoll</code>, because we have distinct functions to modify and wait, this ugliness is gone.</p>
 
@@ -78,7 +78,7 @@ pub fn main() !void {
 
 <aside><p>If you're going to run this in Docker, you might need to change the address the listener is bound to from <code>127.0.0.1</code> to <code>0.0.0.0</code>.</p></aside>
 
-<p>There's a number of interesting things in the above code, especially compared to <a href="/TCP-Server-In-Zig-Part-5a-Poll/#poll">out first runnable code that used <code>poll</code></a>. The list of <code>epoll_event</code>'s that we pass into the function is going to be filled by <code>epoll_wait</code> itself. The return value tells us how many events were filled. So instead of having to loop through every monitored event, seeing which is ready, we're given a list of ready sockets, i.e. <code>ready_list[0..ready_count]</code>. It's significantly more efficient.</p>
+<p>There's a number of interesting things in the above code, especially compared to <a href="/TCP-Server-In-Zig-Part-5a-Poll/#poll">our first runnable code that used <code>poll</code></a>. The list of <code>epoll_event</code>'s that we pass into the function is going to be filled by <code>epoll_wait</code> itself. The return value tells us how many events were filled. So instead of having to loop through every monitored event, seeing which is ready, we're given a list of ready sockets, i.e. <code>ready_list[0..ready_count]</code>. It's significantly more efficient.</p>
 
 <p>Another change is how much simpler it is to remove a connection. We can explicitly remove a monitor via <code>epoll_ctl</code> and the <code>CTL_DEL</code> operation. But just closing the socket is enough to remove it.</p>
 
@@ -287,7 +287,7 @@ pub fn main() !void {
 }
 {% endhighlight %}
 
-<p>For now, only the end of the code has changed. Instead of trying to read the message and echo'ing it back, we write a dot <code>.</code>. If you run this code (again, Linux only), connect and send a message, your screen should get filled with dots. This is become <code>epoll</code> is, by default, in level-triggered mode and continues to notify us of the socket's readiness.</p>
+<p>For now, only the end of the code has changed. Instead of trying to read the message and echo'ing it back, we write a dot <code>.</code>. If you run this code (again, Linux only), connect and send a message, your screen should get filled with dots. This is because <code>epoll</code> is, by default, in level-triggered mode and continues to notify us of the socket's readiness.</p>
 
 <p>When adding the monitor for the client socket, if we change <code>events</code> from <code>linux.EPOLL.IN</code> to <code>linux.EPOLL.IN | linux.EPOLL.ET</code>, i.e.:</p>
 
@@ -307,7 +307,7 @@ try posix.epoll_ctl(efd, linux.EPOLL.CTL_ADD, client_socket, &event);
 <h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>Besides the fact that <code>epoll</code> is Linux-specific, it's safe to think of it as a better version of <code>poll</code>. It's more efficient, easier to integrate and has more features. Except for the specifics of the API, everything about evented I/O is unchanged. Using <code>@intFromPtr</code> and <code>@ptrFromInt</code> can actually be useful now and again, but it's mostly used as above, when integrating with a C library that lets you associate arbitrary data (often a <code>usize</code>) with a C structure.</p>
 
-<p>Below, you'll find a full working (in Linux) example. It merges what we've learned about <code>epoll</code> with our <code>Server</code>, <code>Client</code> and <code>Reader</code> from previous parts. We've also introduced an <code>Epoll</code> structure. The goal is to start creating some abstraction to eventually deal with having platform-specific implementations (i.e. using epoll on Linux and kqueue on BSD/MacOS). This abstration is incomplet, but it's a start and something we'll dedicate a whole part to.</p>
+<p>Below, you'll find a full working (in Linux) example. It merges what we've learned about <code>epoll</code> with our <code>Server</code>, <code>Client</code> and <code>Reader</code> from previous parts. We've also introduced an <code>Epoll</code> structure. The goal is to start creating some abstraction to eventually deal with having platform-specific implementations (i.e. using epoll on Linux and kqueue on BSD/MacOS). This abstration is incomplete, but it's a start and something we'll dedicate a whole part to.</p>
 
 <div class=pager>
   <a class=prev href=/TCP-Server-In-Zig-Part-5b-Poll/>Poll (Part 2)</a>
