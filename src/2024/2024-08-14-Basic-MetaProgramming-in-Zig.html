@@ -12,7 +12,7 @@ tags: [zig]
 
 <aside><p>Function that begin with <code>@</code> are builtin functions. They are provided by the compiler as opposed to the standard library.</p></aside>
 
-<h3>@hasField</h3>
+<h3 id=hasField><a href="#hasField" aria-hidden=true>@hasField</a></h3>
 <p>It might not be the most useful, but <code>@hasField</code> serves as a good introduction to Zig's meta programming capabilities. You give it a type and a field name, and it tells you whether or not the type has the field:</p>
 
 {% highlight zig %}
@@ -30,7 +30,7 @@ const User = struct {
 
 <p>The above will tell us that <code>User</code> has an <code>id</code> field, but doesn't have a <code>name</code> field. <code>@hasField</code> also works for enums and unions.</p>
 
-<h3>@hasDecl</h3>
+<h3 id=hasDecl><a href="#hasDecl" aria-hidden=true>@hasDecl</a></h3>
 <p><code>@hasDecl</code> is used to indicate if a struct, union or enum has a declaration. A declaration is essentially anything that isn't a field, most notably a function/method or a constant (including nested struct/unions/enums). <code>@hasDecl</code> respects visibility rules. If a declaration isn't marked <code>pub</code>, then <code>@hasDecl</code> will return <code>false</code> - unless <code>@hasDecl</code> is called from within the same file.</p>
 
 {% highlight zig %}
@@ -58,7 +58,7 @@ const User = struct {
 
 <p>Shortly, we'll see how to deal with this.</p>
 
-<h3>@field</h3>
+<h3 id=field><a href="#field" aria-hidden=true>@field</a></h3>
 <p>Unlike <code>@hasField</code> and <code>@hasDecl</code> which behave on a type, <code>@field</code> behaves on an instance. It is used to both get and set the value of the field of an instance.</p>
 
 {% highlight zig %}
@@ -106,7 +106,7 @@ value.name = row.get([]const, "name");
 
 <p>Interestingly (and maybe inconsistently) <code>@field</code> works on both fields and declaration.</p>
 
-<h3>std.meta.hasFn</h3>
+<h3 id=hasFn><a href="#hasFn" aria-hidden=true>std.meta.hasFn</a></h3>
 <p>The <code>std.meta</code> namespace is worth getting familiar with; it's small but useful. One of the functions that stands out is <code>std.meta.hasFn</code>. It builds on top of <code>@hasDecl</code> determining not only if the type has the specific declaration but whether or not that declaration is a function:</p>
 
 {% highlight zig %}
@@ -129,7 +129,7 @@ const User = struct {
 <p>This tells us that <code>User</code> does have a <code>over9000</code> function but does not have a <code>SAIYAN_LEVEL</code> function.</p>
 
 
-<h3>std.meta.hasMethod</h3>
+<h3 id=hasMethod><a href="#hasMethod" aria-hidden=true>std.meta.hasMethod</a></h3>
 <p>So far, when calling <code>@hasDecl</code> or <code>std.meta.hasFn</code>, we've always used a struct, <code>User</code>. Both of these also work with enums and unions. If we try to call <code>@hasDecl</code> with something else, we'll get a compile-time error:</p>
 
 {% highlight zig %}
@@ -204,6 +204,7 @@ fn freeSpace(self: *Cache(T)) void {
 <p>So while <code>std.meta.hasMethod</code> is useful, it doesn't completely solve our problem.</p>
 
 <h3>@typeInfo</h3>
+<h3 id=typeInfo><a href="#typeInfo" aria-hidden=true>@typeInfo</a></h3>
 <p> You can't talk about metaprogramming in Zig without talking about <code>@typeInfo</code>. It takes a type and returns a tagged union describing that type. Currently, <code>std.builtin.Type</code> returned by <code>@typeInfo</code> can represent one of 24 different types, some of those having sub-types and complex fields. It can be a lot to try to learn all at once. Instead, we can start to get a feel for <code>@typeInfo</code> by looking at how <code>hasFn</code> uses it. Here's the full implementation of <code>std.meta.hasFn</code>:</p>
 
 {% highlight zig %}
@@ -239,7 +240,7 @@ pub inline fn hasMethod(comptime T: type, comptime name: []const u8) bool {
 
 <p>This is a bit more complicated. We're not just using <code>@typeInfo</code> to check the type; in the case of a Pointer, we're going a bit deeper and checking / using some of the compile-time information we have about the type. Specifically we're checking if it's a single-item pointer and, if it is, we're calling <code>hasFn</code> on the "child" of the pointer. This essentially unwraps our <code>*User</code>, turning a call to <code>hasMethod(*User, "x")</code> into a call to <code>hasFn(User, "x")</code>.</p>
 
-<h3>Bringing it Together</h3>
+<h3 id=together><a href="#together" aria-hidden=true>Bringing it Together</a></h3>
 <p>We took a little detour to start learning about <code>@typeInfo</code>. The hope if that we can use what we've learned to fix our cache implementation. Remember, we had this code:</p>
 
 {% highlight zig %}
@@ -276,7 +277,7 @@ switch (@typeInfo(T)) {
 }
 {% endhighlight %}
 
-<h3>Conclusion</h3>
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
 <p>Newcomers to Zig often ask about behavior similar to <code>std.meta.hasFn</code> or <code>@field</code>, and probably come out of the exchange disappointed to learn about the comptime requirement. It's certainly different and in many cases limiting compared to the runtime reflection offered by many higher level languages. But I think it's logical and useful in a different way.</p>
 
 <p>Zig's comptime is approachable, but, for me, still complicated. I wish there was a way to get Zig code out of comptime (a bit like how you can see the full Erlang code generated by Elixir code, including its macros). Still, taking small steps and using the functions we explored above, plus seeing their implementation, has helped me get more comfortable with comptime in general, and the <code>std.builtin.Type</code> in particular. So if you're intimidated by comptime and struggling to learn it, know that you aren't the only one. Take it one step at a time.</p>

@@ -1,0 +1,101 @@
+---
+layout: post
+date: 2024-11-20
+title: "One method declaration; two Zig annoyances"
+description: "Zig's annoying naming policies and lack of interfaces"
+tags: [zig]
+---
+
+<p>In the following code, we create a <code>Post</code> structure with a skeleton <code>format</code> method. Despite being pretty comfortable with Zig, I could stare at this code for hours and not realize that it has two issues.</p>
+
+{% highlight zig %}
+pub fn main() !void {
+}
+
+const Post = struct {
+    raw: []const u8,
+
+    pub fn format(self: Post, format: Format) void {
+        _ = self;
+        _ = format;
+        // TODO;
+    }
+};
+
+const Format = enum {
+    html,
+};
+{% endhighlight %}
+
+<p>The first is relatively superficial. If we try to run the above, we'll get a compiler error:</p>
+
+{% highlight text %}
+blog.zig:7:31: error: function parameter shadows declaration of 'format'
+    pub fn format(self: Post, format: Format) void {
+                              ^~~~~~
+blog.zig:7:9: note: declared here
+    pub fn format(self: Post, format: Format) void {
+    ~~~~^~
+{% endhighlight %}
+
+<p>I've moaned about this before, but Zig is strict about disallowing shadow declaration. Here we're seeing the error because a function and one of its parameters have the same name. Because every Zig file is an implicit structure, you'll run into this error pretty often (at least I do). For example, if you <code>const socket = @import("socket.zig")</code>, you can forget about using the <code>socket</code> identifier throughout your file.</p>
+
+<p>Like most automatically enforced stylistic errors, we can solve this by making the code less readable</p>
+
+{% highlight zig %}
+// rename the format parameter to fmt
+pub fn format(self: Post, fmt: Format) void {
+    _ = self;
+    _ = fmt;
+    // TODO;
+}
+{% endhighlight %}
+
+<p>Our <code>Post</code> struct is now valid; our code compiles and runs. Of course, we're not doing anything yet, so let's make a small addition:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+    const post = Post{.raw = "## Hello"};
+    std.debug.print("{s}\n", .{post.raw});
+}
+{% endhighlight %}
+
+<p>This outputs "## Hello", but we're <em>really</em> close to a more subtle compiler error. If we change the last line to print our <coded>post</coded> (using the <code>{any}</code> format specifier):</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+    const post = Post{.raw = "## Hello"};
+    std.debug.print("{any}\n", .{post});
+}
+{% endhighlight %}
+
+<p>We get a compiler error:</p>
+
+{% highlight text %}
+/opt/zig/lib/std/fmt.zig:506:25: error: member function expected 1 argument(s), found 3
+        return try value.format(actual_fmt, options, writer);
+                   ~~~~~^~~~~~~
+blog.zig:10:9: note: function declared here
+    pub fn format(self: Post, fmt: Format) void {
+    ~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+referenced by:
+    format__anon_5125: /opt/zig/lib/std/fmt.zig:188:23
+    print__anon_2772: /opt/zig/lib/std/io/Writer.zig:24:26
+    6 reference(s) hidden; use '-freference-trace=8' to see all references
+{% endhighlight %}
+
+<p>In a previous blog post we <a href="/Custom-String-Formatting-And-JSON-in-Zig/">purposefully defined a <code>format</code></a> method to control how our structure is formatted. In another post, we learned about <a href="/Basic-MetaProgramming-in-Zig/#hasMethod">std.meta.hasMethod</a>, which is how Zig's <code>fmt</code> package detects the presence of the <code>format</code> method.</p>
+
+<p>The problem is that the check is dumb:</p>
+
+{% highlight zig %}
+if (std.meta.hasMethod(T, "format")) {
+    return try value.format(actual_fmt, options, writer);
+}
+{% endhighlight %}
+
+<p>It doesn't check the number or type of parameters. I particularly dislike this issue because it won't show up until someone tries to print the structure. When you're writing a library, you might never <code>std.debug.print</code> a <code>Post</code>, but a user of your library might - especially if it's just a nested field of some other structure they're trying to look at.</p>
+
+<p>The good news is that, as far as I can tell, Zig only "reserves" the <code>format</code>, <code>jsonStringify</code> and <code>jsonParse</code> method names. But it would be nice if it could be made more explicit.</p>
