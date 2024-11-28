@@ -13,8 +13,8 @@ body{font-family:sans-serif;font-size: 20px;}
 a{text-decoration:none;color:#3063df;}
 a:hover{text-decoration:underline;color:#000;}
 
-ul{font-size: 85%; list-style:none; display: flex; justify-content: right;}
-ul a{display: inline-block; padding: 10px 20px}
+header{font-size: 85%; list-style:none; display: flex; justify-content: right;}
+header a{display: inline-block; padding: 10px 20px}
 
 main{margin: 5px auto;padding: 10px 0 0 20px;max-width: 760px}
 main > a {display: flex; padding: 7px 10px; line-height: 28px;}
@@ -26,9 +26,9 @@ main > a > b {font-weight: normal;font-size: 18px;color: #666;margin-left: auto;
 	div.s{margin: 10px 0}
 }
 </style>
-<ul><li><a href=atom.xml>rss</a><li><a href=mailto:blog@karlseguin.com>contact</a><li><a href=https://www.github.com/karlseguin>github</a></ul>
+<header><a href=https://bsky.app/profile/karlseguin.com>bsky</a><a href=atom.xml>rss</a><a href=mailto:blog@karlseguin.com>contact</a><a href=https://www.github.com/karlseguin>github</a></header>
 <main>
-{%- set posts = all_posts(collections.all, aolium) -%}
+{%- set posts = all_posts(collections.all) -%}
 {%- for post in posts %}
 {%- if post.type == 'blog' or post.type == 'long' %}
 <a href={{ post.url }}>{{ post.title }}<b>{{ post.date | post_date }}</b></a>

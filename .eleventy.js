@@ -13,22 +13,8 @@ module.exports = function(config) {
 		}
 	});
 
-	config.addNunjucksGlobal('all_posts', function(local, remote) {
+	config.addNunjucksGlobal('all_posts', function(local) {
 		const md = new Markdown();
-		remote = remote.map((a) => {
-			let d = new Date(a.created * 1000);
-			d.setTime(d.getTime() + 28800000);
-			return {
-				type: a.type,
-				url: a.type == 'link' ? a.text : a.web_url,
-				content: md.render(a.text),
-				date: d,
-				title: a.title,
-				web_url: a.web_url,
-				root: 'https://www.aolium.com/karlseguin',
-			};
-		});
-
 		local = local.filter((p) => p.data.title).reverse().map((p) => {
 			let content = p.rawInput;
 			content = content.replace(/\s*{%\s*endhighlight\s*%}/g, '</code></pre>').replace(/\s*{%\s*highlight\s*.*?%}/g, '<pre><code>');
@@ -44,7 +30,7 @@ module.exports = function(config) {
 			};
 		});
 
-		return local.concat(remote).sort((a, b) => b.date - a.date);
+		return local.sort((a, b) => b.date - a.date);
 	});
 
 	config.addFilter('public', function(posts) {

@@ -1,0 +1,78 @@
+---
+layout: post
+date: 2024-11-28
+title: "Zig removes Anonymous Struct"
+description: "A recent commit removes anonymous structures, but it turns out I didn't know what an Anonymous Struct was"
+tags: [zig]
+---
+
+<p>A recently <a href="https://github.com/ziglang/zig/pull/21817">merged pull request</a> removed anonymous struct from Zig. I was surprised by this change - it seemed like a big deal. But it turns out that I didn't understand what an anonymous struct were, and this change isn't quite as big as I thought. Consider this code:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    const user = .{.id = 2, .name = "Leto"};
+    std.debug.print("{any}\n", .{user});
+}
+{% endhighlight %}
+
+<p>The above continues to works, so it seems like, despite the PR's title, anonymous structs still exits. But <code>user</code> <em>isn't</em> an anonymous struct. It's a normal struct that is named and defined by the compiler. If I print its type, by changing the above <code>.{user}</code> to <code>.{@TypeOf(user)}</code>, I get <code>blog.main__struct_2347</code>.</p>
+
+<p>So if this isn't an anonymous struct, what did the PR remove? Let's expand our code a little:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+const User = struct {
+    id: i64,
+    name: []const u8,
+};
+
+pub fn main() !void {
+    const user = .{.id = 2, .name = "Leto"};
+    printUser(user);
+}
+
+fn printUser(user: User) void {
+    std.debug.print("{d} {s}\n", .{user.id, user.name});
+}
+{% endhighlight %}
+
+<p>If you run the above using a version of Zig before this PR was merged (for example, using Zig 0.13), it'll work. But if you try to run the above using a new version of Zig, you'll get an error:</p>
+
+{% highlight text %}
+error: expected type 'blog.User', found 'blog.main__struct_2347'
+    printUser(user);
+{% endhighlight %}
+
+<p>Essentially, anonymous structs could be coerced to an inferred type. Obviously with the removal of anonymous struct, this behavior is no longer valid. I saw this as a neat form of compile-time duck-typing.</p>
+
+<p>I know I'm not the only one confused by this distinction and I didn't find Zig's documentation useful. Internally, it seems like the difference between an ad-hoc generated compile-time struct (which we still have) and an anonymous struct was pretty significant. So removing anonymous struct helped to simplify the code and removed edge cases. But for those of us not working on Zig's compiler, it still <em>feels</em> like anonymous structs exists, it's just that inferred type coercion from an anonymous struct to a concrete struct has been removed.</p>
+
+<p>Do note that we're strictly talking about type coercion. Nothing has changed with respect to type inference. For example, if we make a small change to the above, we can get the code to run again:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    // change this:
+    //   const user = .{.id = 2, .name = "Leto"};
+    //   printUser(user);
+    //
+    // to this:
+
+    printUser(.{.id = 2, .name = "Leto"});
+}
+{% endhighlight %}
+
+<p>Above we're not creating a temporary variable, so we also aren't creating an ad-hoc struct. Rather, we're  using the shorthand form to initialize a <code>User</code> (where <code>.{...}</code> is the same as <code>User{...}</code>, where the type is inferred).</p>
+
+<p>Of course, the other way to fix this code would have been to give <code>user</code> an explicit type:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    const user = User{.id = 2, .name = "Leto"};
+    printUser(user);
+}
+{% endhighlight %}
+
+<p>But in my experience, places where anonymous structs were being leveraged involved complex (i.e. generic) types. For example, in httpz, where this was a small issue, the route configuration was a generic type whose details weren't something the library user really cared about. Using an anonymous struct and having it automatically coerced was pretty convenient.</p>

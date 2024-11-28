@@ -80,14 +80,14 @@ fn empty() User {
 }
 {% endhighlight %}
 
-<p>It's the same syntax, but when the type can be inferred, it can be replaced with a dot. This works for any type, like arrays. These equivalent:
+<p>It's the same syntax, but when the type can be inferred, it can be replaced with a dot. This works for any type, like arrays. These are equivalent:
 
 {% highlight zig %}
 const a = [5]i64{1, 2, 3, 4, 5};
 const b: [5]i64 = .{1, 2, 3, 4, 5};
 {% endhighlight %}
 
-<p>In this example the second form is ugly/silly. But the "figure what I want" operator only works when Zig can automatically infer the type. In these simple one-line assignments, we can only showcase the operator by also specifying the type, which defeats the purpose. However, if we go back to our corrected <code>add</code> function, we see how useful it can be:</p>
+<p>In this example the second form is ugly/silly. But the "figure what I want" operator only works when Zig can automatically infer the type. In simple one-line assignments, we can only showcase the operator by also specifying the type, which defeats the purpose. However, if we go back to our corrected <code>add</code> function, we see how useful it can be:</p>
 
 {% highlight zig %}
 fn add(values: []const i64) i64 {

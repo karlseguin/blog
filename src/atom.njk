@@ -2,7 +2,7 @@
 layout: null
 permalink: "/atom.xml"
 ---
-{%- set posts = all_posts(collections.all, aolium).slice(0, 20) -%}
+{%- set posts = all_posts(collections.all).slice(0, 20) -%}
 <?xml version="1.0" encoding="utf-8"?>
 <?xml-stylesheet href="/assets/feed.xsl" type="text/xsl"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -20,11 +20,7 @@ permalink: "/atom.xml"
 		<updated>{{ post.date | dateToRfc3339 }}</updated>
 		<id>{{ post.url }}</id>
 		<content type="html">
-			{%- if post.type == 'link' %}
-			&lt;a href="{{ post.url }}"&gt;{{ post.url }}&lt;/a&gt;
-			{%- else -%}
 			{{ post.content | htmlToAbsoluteUrls(post.root) }}
-			{%- endif -%}
 			&lt;p&gt;&lt;a href="{{ post.web_url }}#new_comment"&gt;Leave a comment&lt;/a&gt;&lt;/p&gt;
 		</content>
 	</entry>
