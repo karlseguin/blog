@@ -1,0 +1,72 @@
+---
+layout: post
+date: 2024-12-09
+title: "Gluing JSON"
+description: "Directly manipulating JSON serialization for better performance"
+tags: [performance]
+---
+
+<p>If I asked you to respond to an HTTP request with a JSON serialize list of products, somewhere in your code, you'd probably have (or whatever the equivalent is in your stack):</p>
+
+{% highlight go %}
+body, err := json.Marshal(products)
+{% endhighlight %}
+
+<p>There's an alternative to this approach that I'm rather fond of: gluing pre-serialized JSON pieces together:</p>
+
+{% highlight go %}
+if (len(productJSON)) == 0 {
+    return []byte("[]")
+}
+
+var buffer bytes.Buffer
+buffer.WriteByte('[')
+buffer.Write(productJSON[0])
+for _, json := range productJSON[1:] {
+    buffer.WriteByte(',')
+    buffer.Write(json)
+}
+buffer.WriteByte(']')
+return buffer.Bytes()
+{% endhighlight %}
+
+<p>Rather than serializing an array of <code>products</code>, we're given an array of pre-serialized JSON for each product. We then glue them together to form a valid JSON array. This might seem like a cop-out: something, somewhere is still JSON serializing products in order for our <code>productJSON</code> to exist. So is there really value in in this approach?</p>
+
+<p>For some systems, gluing pre-serialized messages can provide two benefits: performance and flexibility. With respect to performance, we can create and store the serialized version of a product on write - trading write performance and storage space for better read performance. It'll depend on the data and the language being used, but gluing JSON can be anywhere from 2x-10x faster.</p>
+
+<p>That might sound like a weird way to implement a cache. Surely, it would be simpler to use the first approach along with an output cache. It <em>would</em> be simpler, but it wouldn't be suitable in all cases. Pre-serialized messages can offer more flexibility. First of all, cache invalidation and staleness aren't really an issue. Secondly, the individual pieces can be glued together to form different messages.</p>
+
+<p>Say you have a busy store and decide to have pre-serialized JSON messages for each product. Every place where a product is shown, such as a search results, recommendations, past orders, product detail, etc, can use the same pre-serialized JSON message.</p>
+
+<p>If you're concerned about personalization, that is, the JSON representation of a product changes based on the user, I suggest that the definition of a Product should not change. Instead, you should favor something like:</p>
+
+
+{% highlight json %}
+{
+    "product": {"id": 9001, ...},
+    "last_bought": "2023-01-22T14:26:42.002Z"
+    "recommendations": [
+    ]
+}
+{% endhighlight %}
+
+<p>Finally, while gluing JSON might be a little ugly and possibly error prone, its well suited to be encapsulated in a library. This is particularly useful if you want to mix and match pre-serialized JSON data with non-serialized data. For example, a library could generated the above:</p>
+
+{% highlight json %}
+writer := jsonwriter.New()
+writer.RootObject(func() {
+  // RawField will write the value as-is, with no escaping or any special encoding
+  writer.RawField("product", preSerializedProduct)
+
+  // Field will JSON encode the value
+  writer.Field("last_bought", lastBought)
+
+  writer.Array("recommendations", func() {
+    for _, rec := range recommendations {
+        writer.Raw(rec)
+    }
+  });
+})
+{% endhighlight %}
+
+<p>Is this something every app should do? No. Is it something people are going to think is pretty hackish? Probably. But until I find a better alternative, I'm going to keep doing it.</p>
