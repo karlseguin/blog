@@ -1,0 +1,90 @@
+---
+layout: post
+date: 2024-12-19
+title: "Sorting Strings in Zig"
+description: "How to sort an array of strings in Zig."
+tags: [zig]
+---
+
+<p>First, the code:</p>
+
+{% highlight zig %}
+std.mem.sort([]const u8, values, {}, stringLessThan);
+
+fn stringLessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+    return std.mem.order(u8, lhs, rhs) == .lt;
+}
+{% endhighlight %}
+
+<p><code>std.mem.sort</code> takes 4 arguments: the type of value we're sorting, the list of values to sort, an arbitrary context, and a function. The last argument, the function, is what determines how two values should be ordered with respect to each other. Above we're doing a byte-by-byte comparison of two strings. If we wanted to do an case insensitive comparison of ASCII values, we'd replace <code>std.mem.order</code> with <code>std.ascii.orderIgnoreCase</code>.</p>
+
+<p>The third parameter is an application-specific context. This gets passed into our ordering function. It can be anything we want. Oftentimes, as above, we don't need a context, so we pass void (<code>{}</code>). However, imagine we wanted to boost certain values. In other words, we want to sort a list of strings, but have certain values, if present, appear at the front:</p>
+
+{% highlight zig %}
+var boost = std.StringHashMap(u32).init(allocator);
+try boost.put("Keemun", 100);
+try boost.put("Silver Needle", 25);
+
+std.mem.sort([]const u8, values, boost, stringLessThan);
+
+fn stringLessThan(boost: std.StringHashMap(u32), lhs: []const u8, rhs: []const u8) bool {
+    const lhs_boost = boost.get(lhs) orelse 0;
+    const rhs_boost = boost.get(rhs) orelse 0;
+    if (lhs_boost > rhs_boost)  {
+        return true;
+    }
+    if (lhs_boost < rhs_boost)  {
+        return false;
+    }
+
+    return std.mem.order(u8, lhs, rhs) == .lt;
+}
+{% endhighlight %}
+
+
+<p>This concept of an application-specific context is something you'll often see in Zig libraries (including the standard library). It fills the gap caused by not having easy closures. In the above code, we can't create a closure that captures <code>boost</code>; instead, we create a function and pass <code>boost</code> as an argument. Pretty simple.</p>
+
+<p>You might see the above code written differently:</p>
+
+{% highlight zig %}
+std.mem.sort([]const u8, values, {}, struct {
+    fn lessThan(_: void, lhs: []const u8, rhs: []const u8) bool {
+        return std.mem.order(u8, lhs, rhs) == .lt;
+    }
+}.lessThan);
+{% endhighlight %}
+
+<p>This might look a bit like a closure, but it isn't. We still need to pass our context in the 3rd parameter of <code>std.mem.sort</code> and accept it as the first parameter of our custom <code>lessThan</code> function. The above code creates an anonymous structure. An anonymous structure is like any other structure, but instead of having an explicit name, we leave it up to the compiler. The compiler will generate something like <code>blog.main__struct_6782</code>. Without an explicit name, we can't really make use of it, except for where it's defined - which is what our above code is doing.</p>
+
+<h3 id=std_sort><a href="#std_sort" aria-hidden=true>std.sort</a></h3>
+<p>In addition to <code>std.mem.sort</code>, there's also <code>std.mem.sortUnstable</code>. The "stability" of a sort has to do with how equal values are treated. <code>std.mem.sort</code> is a stable sort, which means that if two values are equal, the original order is preserved. When using an unstable sort, there's no guarantee about how equal values are sorted with respect to each other.</p>
+
+<p>For scalar values like strings and integers, sort stability probably doesn't matter. If you have "blue", "red", "green", "blue", you'll end up with "blue", "blue", "green", "red". There isn't anything to distinguish one "blue" from another, so whether or not the sorting function put the "blue" which was originally last at the front of the sorted array won't matter. But imagine you're sorting a <code>User</code> structure based on the <code>user.name</code>, in such cases, you <em>might</em> want to preserve the original value of equal users (but in my experience, even in these cases you probably won't care about it).</p>
+
+<p>Both <code>std.mem.sort</code> and <code>std.mem.sortUnstable</code> are wrappers to functions found in the <code>std.sort</code> namespace. Specifically, <code>std.mem.sort</code> calls <code>std.sort.block</code> and <code>std.mem.sortUnstable</code> calls <code>std.sort.pdq</code>. The <code>std.sort</code> namespace has a few other sorting methods. Here's are basic results from sorting 1000 string values:</p>
+
+{% highlight text %}
+std.sort.block
+8359 iterations   358870.91ns per iterations
+worst: 989333ns   median: 357375ns    stddev: 26749.47ns
+
+std.sort.pdq
+11804 iterations  254196.41ns per iterations
+worst: 308333ns   median: 253459ns    stddev: 3892.63ns
+
+std.sort.heap
+7115 iterations   421603.49ns per iterations
+worst: 469083ns   median: 420542ns    stddev: 7155.60ns
+
+std.sort.insertion
+693 iterations    4326253.39ns per iterations
+worst: 4465917ns  median: 4337208ns   stddev: 166829.84ns
+{% endhighlight %}
+
+<p>Now, if we cut the list to only 5 values, we'll get different results, with the insertion sort being the fastest. The sorting algorithm you use will depend on the type and size of data you have, and, for some algorithms, how sorted the data already is - and let's not forget whether or not you need a stable sort. Unless you have specific reason not to, <code>std.mem.sortUnstable</code> (which just calls <code>std.sort.pqd</code>) is probably the best default to use.</p>
+
+<p>Finally, you might notice the <code>std.sort.asc</code> and <code>std.sort.desc</code> functions. You can use them when you're trying to sort integers or floats: they are like our <code>stringLessThan</code> function, taking a <code>void</code> context, but use the less than operator (<code>&lt;</code>) to compare two values:</p>
+
+{% highlight zig %}
+std.mem.sort(i32, values, {}, std.sort.asc(i32));
+{% endhighlight %}
