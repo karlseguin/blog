@@ -42,7 +42,7 @@ tags: [learning]
 <br>and,
 <br><code>0, 14, 's', 'e', 't', ' ','p','o','w','e','r', ' ', '9', '0', '0', '0'</code>.</p>
 
-<p>(Notice that the first message starts with <code>0, 9</code> because the message excluding the lenght-prefix itself, is 9 bytes long. Similarly, the second message starts with <code>0, 14</code> because it is 14 bytes long.)</p>
+<p>(Notice that the first message starts with <code>0, 9</code> because the message excluding the length-prefix itself, is 9 bytes long. Similarly, the second message starts with <code>0, 14</code> because it is 14 bytes long.)</p>
 
 <p>WebSocket uses the first 7 bits of its 2nd byte to support a variable-length length prefix. When those bits are equal or less than 125, then the length of the payload is this value itself. When the bits equal 126, then the next 2 bytes indicate the length of the payload. When the bits equal 127, the next 8 bytes indicate the length of the payload.</p>
 

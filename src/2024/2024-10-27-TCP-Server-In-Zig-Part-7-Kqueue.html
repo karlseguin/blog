@@ -95,7 +95,7 @@ pub fn main() !void {
 
 <p>Like with <code>epoll</code>, we can attach arbitrary information via the <code>udata</code> field. Above we're using the file descriptor, but in a more complete example we'd likely use <code>@intFromPtr</code> to get a <code>usize</code> representation of an application-specific "Client" struct. The <code>Kevent</code> struct has two additional fields: <code>fflags</code> and <code>data</code>. These hold flags and data to use for different filters. With sockets, where we're only interested in the <code>READ</code> and <code>WRITE</code> filters, these should be set to zero. In a future part, we'll see a brief example of a different filter which does leverage the <code>fflags</code> field.</li>
 
-<p>With <code>epoll</code> the monitors we add, modify are identified by the 3rd parameter we pass to <code>epoll_ctl</code>. In all the code we've seen so far, that was either the listening socket or the client socket, but more generally, it's the file descriptor to monitor. With <code>kqueue</code> the identifier is the combination of the <code>ident</code> and <code>filter</code> fields. With <code>epoll</code> we toggled a client from read-mode to write-mode by modifying the existing notifier (identified by the socket) with the <code>CTL_MOD</code> operation. In <code>kqueue</code> we'd need delete the read monitor and then add a write monitor. Or, and this is what we do in the full example given at the end, we add both a read and write monitor, but disable the write monitor. We can toggle the mode by disabling the active one and enabling the disabled one:</p>
+<p>With <code>epoll</code> the monitors we add, modify are identified by the 3rd parameter we pass to <code>epoll_ctl</code>. In all the code we've seen so far, that was either the listening socket or the client socket, but more generally, it's the file descriptor to monitor. With <code>kqueue</code> the identifier is the combination of the <code>ident</code> and <code>filter</code> fields. With <code>epoll</code> we toggled a client from read-mode to write-mode by modifying the existing notifier (identified by the socket) with the <code>CTL_MOD</code> operation. In <code>kqueue</code> we'd need to delete the read monitor and then add a write monitor. Or, and this is what we do in the full example given at the end, we add both a read and write monitor, but disable the write monitor. We can toggle the mode by disabling the active one and enabling the disabled one:</p>
 
 {% highlight text %}
 Read Mode:
@@ -196,7 +196,7 @@ pub fn main() !void {
 
 <div class=pager>
   <a class=prev href=/TCP-Server-In-Zig-Part-6-Epoll/>Epoll</a>
-  <a class=next href=/TCP-Server-In-Zig-Part-8-Epoll-and-Kqueue/>Epoll & Klueue</a>
+  <a class=next href=/TCP-Server-In-Zig-Part-8-Epoll-and-Kqueue/>Epoll & Kqueue</a>
 </div>
 
 <h3 id=appendix-a><a href="#appendix-a" aria-hidden=true>Appendix A - Code</a></h3>
@@ -411,7 +411,7 @@ const Client = struct {
     // client.
     to_write: []u8,
 
-    // Buffer for storing our lenght-prefixed messaged
+    // Buffer for storing our length-prefixed messaged
     write_buf: []u8,
 
     // absolute time, in millisecond, when this client should timeout if
