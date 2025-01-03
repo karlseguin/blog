@@ -1,0 +1,102 @@
+---
+layout: post
+date: 2025-01-03
+title: "Zig's @bitCast"
+tags: [zig]
+---
+
+<p>In an older post, we explored <a href=/Zig-Tiptoeing-Around-ptrCast/>Zig's <code>@ptrCast</code></a> and then looked at a concrete usage in the shape of <a href=/Zig-MemoryPool-Allocator/>std.heap.MemoryPool</a>.</p>
+
+<h3 id=ptrCast><a href="#ptrCast" aria-hidden=true>@ptrCast</a></h3>
+<p>As a brief recap, when we use <code>@ptrCast</code>, we're telling the compiler to treat a pointer as a given type. For example, this code runs fine:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var user = User{.power = 9001, .name = "Goku", .active = true};
+
+    const cat: *Cat = @ptrCast(&user);
+    std.debug.print("{any}\n", .{cat});
+}
+
+const User = struct {
+    power: i64,
+    name: []const u8,
+    active: bool,
+};
+
+const Cat = struct {
+    id: i64,
+    breed: []const u8,
+};
+{% endhighlight %}
+
+<p>The compiler knows that <code>user</code> is a <code>User</code>, but we're saying "trust me and treat that memory as though it's a <code>Cat</code>". The reason this "works" is because <code>User</code> and <code>Cat</code> have a similar shape. If we swapped the order of <code>Cat</code>'s two fields, the code would almost certainly crash. Why? because <code>user.power</code> would become <code>cat.breed.len</code>, causing <code>std.debug.print</code> to try to print a 9001 long string, reaching into memory it does not have access to.</p>
+
+<p>It's possible that you'll never use <code>@ptrCast</code>, but I find it a fascinating example of how the compiler works.</p>
+
+<h3 id=bitCast><a href="#bitCast" aria-hidden=true>@bitCast</a></h3>
+<p>As the name implies, <code>@ptrCast</code> works with pointers, but what if we want to do something for no-pointers? Unfortunately, if we modify the above, removing the pointers and using <code>@bitCast</code> instead of <code>@ptrCast</code>, we get a compile-time error:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    const user = User{.power = 9001, .name = "Goku"};
+    const cat: Cat = @bitCast(user);
+    std.debug.print("{any}\n", .{cat});
+}
+{% endhighlight %}
+
+<p><em>cannot @bitCast to 'Cat'; struct does not have a guaranteed in-memory layout</em></p>
+
+<p>I don't think there's a technical reason the above doesn't work. It's just that, given Zig structures don't have a guaranteed memory layout, it isn't a good idea and thus is forbidden (although, I can't quite figure out why <code>@ptrCast</code> allows it but <code>@bitCat</code> doesn't!)</p>
+
+<p>This <em>does</em> work though:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    const n: i64 = 1234567890;
+    const f: f64 = @bitCast(n);
+    std.debug.print("{}\n", .{f});
+}
+{% endhighlight %}
+
+<p>And prints <code>6.09957582e-315</code>. If we try this between a boolean an integer, we'll get an error:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    const b = true;
+    const n: i64 = @bitCast(b);
+    std.debug.print("{d}\n", .{n});
+}
+{% endhighlight %}
+
+<p><em>@bitCast size mismatch: destination type 'i64' has 64 bits but source type 'bool' has 1 bits</em></p>
+
+<p>If we change the type of <code>n</code> from <code>i64</code> to <code>u1</code>, it works:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    const b = false;
+    const n: u1 = @bitCast(b);
+    std.debug.print("{d}\n", .{n});
+}
+{% endhighlight %}
+
+<p>This prints <code>1</code>. If we changed <code>true</code> to <code>false</code>, we'd get <code>0</code>.</p>
+
+<p><code>@bitCast</code> tells the compiler to take a value and treat it as the given type. For example, say that we have the value <code>1000</code> as <code>u16</code>. The binary representation for that is <code>1111101000</code>. If we <code>@bitCast</code> this to an <code>f16</code>, it's the same data, the same binary <code>1111101000</code>, but interpreted as a float (which is, apparently, <code>5.96e-5</code>).</p>
+
+<p>Obviously, you generally won't <code>@bitCast</code> from ints to floats or booleans. But it is useful when dealing with binary data. For example, the 4-byte little-endian representation of the number 1000 is <code>[4]const u8{ 232, 3, 0, 0 }</code>. We can use <code>@bitCast</code> to take that binary representation and treat it as an integer:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    const data = [_]u8{232, 3, 0, 0};
+    const n: i32 = @bitCast(data);
+    std.debug.print("{}\n", .{n});
+}
+{% endhighlight %}
+
+<p>There are two important things to keep in mind. The first is that this isn't a conversion. There isn't runtime code executing that takes <code>data</code> and turns it into an integer. Rather, this is us telling the compiler to treat the data as an integer.</p>
+
+<p>Secondly, there are various ways to represent any type of data. Above, we said that 1000 is represented as <code>[_]u8{232, 3, 0, 0}</code>, but it could also be represented as <code>[_]u8{0, 0, 3, 232}</code> (e.g. using big-endian) - and there are more than just these 2 ways. So <code>@bitCast</code> only makes sense if you're sure about the bit-representation of the data. Generally, you only want to <code>@bitCast</code> data that comes from your own running program. If you're parsing an external protocol, you should use <code>std.mem.readInt</code> instead. <code>readInt</code> lets you specify the endianness of the data and, interestingly, if the endianness of the data happens the be the same endianness of the platform, it ends up just being a call to <code>@bitCast</code>.</p>
