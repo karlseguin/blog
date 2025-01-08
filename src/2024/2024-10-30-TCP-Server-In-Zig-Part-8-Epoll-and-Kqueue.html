@@ -76,7 +76,7 @@ if (filter == system.EVFILT.READ) {
 <p>You might find yourself waiting to unblock the call to <code>epoll_wait</code> or <code>kevent</code>. A simple use-case would be to initiate a shutdown. A lazy solution is to rely on a short timeout and then check a condition, something like this:</p>
 
 {% highlight zig %}
-// never wait for than 1 second.
+// never wait for less than 1 second.
 const ready_events = try self.loop.wait(1000);
 if (@atomicLoad(bool, &self.shutdown, .acquire)) {
     return;
@@ -132,7 +132,7 @@ fn shutdown(signal: posix.socket_t) void {
 <p>I've removed all of the other socket code to keep the example lean. The point is to show how to create a pipe, and how we can monitor one end, while manipulating the other from a separate thread. Our thread closes the pipe, but we could just have easily written to it. However, as far as I know, it is technically possible to get a partial write to a pipe (just like a socket). So if you're writing more than one byte to the pipe from multiple threads, you'll need to synchronize the writes (although, a partial write to a pipe might be so rare that you don't have to worry about it...I don't know).</p>
 
 <h3 id=eventfd><a href="#eventfd" aria-hidden=true>Unblocking With Eventfd</a></h3>
-<p>While <code>pipe</code> is fine for a one-time only signal like shutdown, and can be be made to work for more complex cases, both <code>epoll</code> and <code>kqueue</code> have specific mechanisms that we can leverage. For <code>epoll</code> we can use an <code>eventfd</code>:</p>
+<p>While <code>pipe</code> is fine for a one-time only signal like shutdown, and can be made to work for more complex cases, both <code>epoll</code> and <code>kqueue</code> have specific mechanisms that we can leverage. For <code>epoll</code> we can use an <code>eventfd</code>:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -229,7 +229,7 @@ fn notify(kfd: posix.fd_t) void {
 
 <p>You might be wondering about the <code>ident</code> field set to <code>1</code>. In our <a href=/TCP-Server-In-Zig-Part-7-Kqueue/>Kqueue part</a> we mentioned that a monitor is identified by its <code>ident</code> and <code>filter</code> fields. Therefore, while we might add another monitor to something with an <code>ident</code> of <code>1</code> (like a file descriptor), that would have a different <code>filter</code>, likely <code>EV.READ</code> or <code>EV.WRITE</code>.</p>
 
-<p>An <code>EVFILT.USER</code> supports special values for the <code>fflags</code> field. We're using <code>NOTE.TRIGGER</code> which is what activates the notification. But we can also store arbitrary data in the lower 24-bits of <code>fflag</code> and can manipulate the value by setting special values, like <code>NOTE.FFAND</code>, to bitwise-AND the existing <code>fflags</code> value with the one we specify. I'm have no idea how / where this feature is being used, but it's there.</p>
+<p>An <code>EVFILT.USER</code> supports special values for the <code>fflags</code> field. We're using <code>NOTE.TRIGGER</code> which is what activates the notification. But we can also store arbitrary data in the lower 24-bits of <code>fflag</code> and can manipulate the value by setting special values, like <code>NOTE.FFAND</code>, to bitwise-AND the existing <code>fflags</code> value with the one we specify. I've got no idea how / where this feature is being used, but it's there.</p>
 
 <h3 id=multithreading_accept><a href="#multithreading_accept" aria-hidden=true>Multithreading Accept</a></h3>
 <p><code>eventfd</code> and <code>EVFLT.USER</code> are useful thread-safe mechanisms for signalling our accept loop. If you do add a thread pool to process messages, you might find yourself needing to unblock the main thread's <code>epoll_wait</code> or <code>kevent</code> from within the spawned threads. And the reason you want a thread pool is to keep your accept loop lean and free to react to socket readiness.</p>
@@ -390,7 +390,7 @@ fn accept(self: *Server, listener: posix.socket_t) !void {
 }
 {% endhighlight %}
 
-<p>Whatever thread gets woke up needs to re-arm the listener after it's done accepting pending connections. As a small consolation prize for this extra system call, we no longer have to remove our listener when the server is full (because we're using <code>EV.ONESHOT</code>).</p>
+<p>Whatever thread gets woken up needs to re-arm the listener after it's done accepting pending connections. As a small consolation prize for this extra system call, we no longer have to remove our listener when the server is full (because we're using <code>EV.ONESHOT</code>).</p>
 
 <h3 id=platform_abstraction><a href="#platform_abstraction" aria-hidden=true>Platform Abstraction</a></h3>
 <p>One of the things I like most about <code>epoll</code> and <code>kqueue</code> is that they're similar, so building an abstraction for their differences isn't too difficult. We already did most of the work in the previous parts when we extracted most of the logic to an <code>Epoll</code> and <code>KQueue</code> struct. One thing that we're still missing is an abstraction over our ready events. For example, in our <code>epoll</code> code, our loop looks like:</p>
@@ -507,10 +507,10 @@ while (true) {
 }
 {% endhighlight %}
 
-<p>We'll need other change to make the two structures compatible. For example, <code>Epoll.wait</code> can't fail, while <code>KQueue.wait</code> can; the above return type needs to change to <code>!Iterator</code>.</p>
+<p>We'll need another change to make the two structures compatible. For example, <code>Epoll.wait</code> can't fail, while <code>KQueue.wait</code> can; the above return type needs to change to <code>!Iterator</code>.</p>
 
 <h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
-<p>There are various patterns and techniques that can be weaved under, above or into the fabric of a TCP server. Hopefully this series has given you a reasonable overview as well as usable code. It probably goes without saying that a lot more could be written about these topic. I do want to highlight that both <code>epoll</code> and <code>kqueue</code> support additional features, like timers. If you're using either, read their documentation thoroughly.</p>
+<p>There are various patterns and techniques that can be weaved under, above or into the fabric of a TCP server. Hopefully this series has given you a reasonable overview as well as usable code. It probably goes without saying that a lot more could be written about these topics. I do want to highlight that both <code>epoll</code> and <code>kqueue</code> support additional features, like timers. If you're using either, read their documentation thoroughly.</p>
 
 <p>If you're only expecting a handful of clients, consider the thread-per-connection approach. It isn't flashy, but it's simpler to implement and has fewer edge-cases.</p>
 
