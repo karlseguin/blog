@@ -6,37 +6,70 @@
 <meta name=viewport content="width=device-width,initial-scale=1">
 {% if description %}<meta name="description" content="{{description}}" />{% else %}<meta name="description" content="Karl Seguin's Blog - A mix of coding and creative writing" />{% endif %}
 <style>
+:root {
+  --bg: #fff;
+  --fg: #000;
+  --by: #555;
+  --a-fg: #00f;
+  --h-fg: #000;
+  --header-bg: #000;
+  --code-fg: #000;
+  --code-bg: #fffce3;
+  --code-b: #e9e9e5;
+  --aside-bg: #fffefa;
+  --pager-fg: #fd25a0;
+  --pager-hover: #eee;
+}
+
+[data-theme="dark"] {
+  --bg: #111;
+  --fg: #ddd;
+  --a-fg: #faf;
+  --h-fg: #fff;
+  --by: #ccc;
+  --header-bg: #fff;
+  --code-fg: #eee;
+  --code-bg: #333;
+  --code-b: transparent;
+  --aside-bg: #222;
+  --pager-fg: #faf;
+  --pager-hover: #333;
+}
+
 * {margin: 0; padding: 0; }
 *, *:before, *:after {box-sizing: border-box;}
-main {width: 800px;margin: 20px auto;}
+body{background:var(--bg);color:var(--fg);font-family:"Helvetica Neue", sans-serif;font-size: 18px;padding: 0; margin: 0}
 
-#byline{color: #555;font-size: 90%;margin: 10px 0}
-body{background:#fff;font-family:"Helvetica Neue", sans-serif;font-size: 18px;padding: 0; margin: 0}
-body > a {background:#444;color:#fff;padding:10px;text-decoration:none;display: inline-block;position: absolute;top: 0;right: 0}
+main {width: 800px;margin: 0 auto; display: flex; flex-direction: column}
+header {background: var(--header-bg); border-radius: 0 0 4px 4px; white-space: nowrap; margin-left: auto}
+header a {margin-left: auto;display: inline-block; text-decoration: none; padding:5px 20px;color: var(--bg);}
+header a:hover {color: #ff3cbc}
+
+#byline{color: var(--by);font-size: 90%;margin: 10px 0}
 
 ol, ul {margin-left: 30px;}
 li {line-height: 30px;}
 p {margin: 16px 0;line-height: 32px;}
 blockquote{line-height: 32px; border-left: 10px solid #ddd; margin: 0; padding-left: 25px}
-aside{padding: 0 10px; border-radius: 4px;background:#fffefa;border: 1px solid #b1dfe1;}
-h1, h2, h3 {outline: 0;margin: 30px 0 5px;}
+aside{padding: 0 10px; border-radius: 4px;background:var(--aside-bg);border: 1px solid #b1dfe1;}
+h1, h2, h3 {outline: 0;margin: 30px 0 5px;color:var(--h-fg)}
 h1 {font-size: 28px;}
 h2 {font-size: 24px;}
 h3 {font-size: 20px;}
-h1 a, h2 a, h3 a, h4 a, h5 a { color: #000; text-decoration: none }
+h1 a, h2 a, h3 a, h4 a, h5 a { color:var(--h-fg) !important; text-decoration: none }
 h1 a:before, h2 a:before, h3 a:before {width: 1em;content: "§";color: #999;display: none;text-decoration: none;margin-left: -1em;}
 h1 a:hover:before, h2 a:hover:before, h3 a:hover:before {display: inline-block;}
 
-
-p code, li code {padding: 0px 3px;border-radius: 5px;background: #fffce3;border: 1px solid #e9e9e5;}
+p code, li code {padding: 0px 3px;border-radius: 5px;background: var(--code-bg);border: 1px solid var(--code-b);color: var(--code-fg);}
 code br {border: 1px solid red}
+article a {color: var(--a-fg);}
 
-.pager {display: flex;}
+.pager {display: flex;margin-bottom: 20px}
 .pager:last-of-type {margin-top: 50px;}
 
 .pager span, .pager   a {flex: 50%;line-height:50px;}
-.pager a {color: #fd25a0; padding: 0 10px; border-radius: 4px; border: 1px solid #ccc; text-decoration: none; }
-.pager a:hover{background: #eee; border-color: #bbb;}
+.pager a {color: var(--pager-fg); padding: 0 10px; border-radius: 4px; border: 1px solid #ccc; text-decoration: none; }
+.pager a:hover{background: var(--pager-hover); border-color: #bbb;}
 .pager .prev {margin-right: 10px;}
 .pager a.prev:not(:empty):before{content: '« '}
 .pager a.next:not(:empty):after{content: ' »'}
@@ -50,19 +83,44 @@ code[class*=language-],pre[class*=language-]{font-size: 16px;background:#f9f9f9;
   .pager .home {flex: auto}
   .pager a{text-align: center !important; margin: 0 !important}
   .pager .next{}
-	body > a {position: relative;}
-  main{width: 100%; padding: 10px}
+  main{width: 100%; padding: 0 10px 10px}
   code[class*="language-"],
   pre[class*="language-"], pre{margin-left: 0}
 }
+
 </style>
 <link href=/atom.xml rel=alternate type=application/atom+xml>
 
-<a href=/>home</a>
+<script>
+  if (localStorage.getItem('theme') === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+</script>
+
 <main>
+<header>
+  <a href=/>home</a><a href=# id=theme>dark</a>
+</header>
 <article>
   <h1>{{ title }}</h1>
   <div id=byline>{{ page.date | date: "%b %d, %Y" }}</div>
   {{ content }}
 </article>
 </main>
+
+<script>
+const t = document.getElementById('theme');
+const de = document.documentElement;
+t.addEventListener('click', () => {
+  if (t.innerText == 'dark') {
+    de.setAttribute('data-theme', 'dark');
+    localStorage.setItem('theme', 'dark');
+    t.innerText = 'light';
+  } else {
+    de.removeAttribute('data-theme', 'dark');
+    localStorage.removeItem('theme');
+    t.innerText = 'dark';
+  }
+});
+if (de.getAttribute('data-theme')) t.innerText = 'light';
+</script>

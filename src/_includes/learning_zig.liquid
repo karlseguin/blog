@@ -5,10 +5,41 @@
 <meta name=referrer content=origin>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <style>
+:root {
+  --bg: #fff;
+  --fg: #333;
+  --a-fg: #00f;
+  --h-bg: #000;
+  --h-fg: #000;
+  --c-fg: #000;
+  --c-bg: #fffce3;
+  --c-b: #e9e9e5;
+  --p-fg: #fd25a0;
+  --p-hover: #eee;
+}
+
+[data-theme="dark"] {
+  --bg: #111;
+  --fg: #ddd;
+  --h-fg: #fff;
+  --h-bg: #fff;
+  --a-fg: #faf;
+  --c-fg: #eee;
+  --c-bg: #333;
+  --c-b: transparent;
+  --p-fg: #faf;
+  --p-hover: #333;
+}
+
 * {margin: 0; padding: 0; }
 *, *:before, *:after {box-sizing: border-box;}
-body {color: #333;background: #fff;font: 20px "Helvetica Neue", sans-serif;}
-main {width: 800px;margin: 20px auto;}
+body {color: var(--fg);background: var(--bg);font: 20px "Helvetica Neue", sans-serif;}
+
+main {width: 800px;margin: 0 auto; display: flex; flex-direction: column}
+main a {color: var(--a-fg);}
+header {background: var(--h-bg); border-radius: 0 0 4px 4px; white-space: nowrap; margin-left: auto}
+header a {margin-left: auto; display: inline-block; text-decoration: none; padding:5px 20px; color: var(--bg);}
+header a:hover {color: #ff3cbc}
 
 ol {margin-left: 20px;}
 ol.inline {margin-left: 40px;}
@@ -23,22 +54,22 @@ h1 {font-size: 28px;}
 h2 {font-size: 24px;}
 h3 {font-size: 20px;}
 h1 + p, h2 + p, h3 + p {margin-top: 0;}
-h1 a, h2 a, h3 a {color: #000; text-decoration: none;}
+h1 a, h2 a, h3 a {color: var(--h-fg) !important; text-decoration: none;}
 h1 a:before, h2 a:before, h3 a:before {width: 1em;content: "§";color: #999;display: none;text-decoration: none;margin-left: -1em;}
 h1 a:hover:before, h2 a:hover:before, h3 a:hover:before {display: inline-block;}
 
-.pager {display: flex;font-size: 18px}
+.pager {display: flex;font-size: 18px;}
 .pager:last-of-type {margin-top: 50px;}
 .pager span {flex:40%;}
-.pager a {flex: 40%;color: #fd25a0;padding: 0 10px;line-height: 50px;border-radius: 4px;border: 1px solid #ccc;text-decoration: none;}
-.pager a:hover {background: #eee;border-color: #bbb;}
+.pager a {flex: 40%;color: var(--p-fg);padding: 0 10px;line-height: 50px;border-radius: 4px;border: 1px solid #ccc;text-decoration: none;}
+.pager a:hover {background: var(--p-hover);border-color: #bbb;}
 .pager .prev {margin-right: 10px;}
 .pager .home {text-align: center; flex: 100px}
 .pager .next {text-align: right;margin-left: 10px;}
 .pager .prev:not(:empty):before {content: "« ";}
 .pager .next:not(:empty):after {content: " »";}
 
-p code, li code, aside code {padding: 0px 3px;border-radius: 5px;background: #fffce3;border: 1px solid #e9e9e5;}
+p code, li code, aside code {padding: 0px 3px;border-radius: 5px;background: var(--c-bg); color: var(--c-fg);border: 1px solid var(--c-b);}
 
 /**
  * Dracula Theme originally by Zeno Rocha [@zenorocha]
@@ -59,4 +90,31 @@ pre[class*=language-] {font-size: 16px;margin-bottom: 30px;}
   pre[class*="language-"], pre{margin-left: 0}
 }
 </style>
-<main>{{ content }}</main>
+<script>
+  if (localStorage.getItem('theme') === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  }
+</script>
+<main>
+  <header>
+    <a href=/>home</a><a href=# id=theme>dark</a>
+  </header>
+  {{ content }}
+</main>
+
+<script>
+const t = document.getElementById('theme');
+const de = document.documentElement;
+t.addEventListener('click', () => {
+  if (t.innerText == 'dark') {
+    de.setAttribute('data-theme', 'dark');
+    localStorage.setItem('theme', 'dark');
+    t.innerText = 'light';
+  } else {
+    de.removeAttribute('data-theme', 'dark');
+    localStorage.removeItem('theme');
+    t.innerText = 'dark';
+  }
+});
+if (de.getAttribute('data-theme')) t.innerText = 'light';
+</script>

@@ -8,17 +8,33 @@
 <link href=atom.xml rel=alternate type=application/atom+xml>
 
 <style>
+	:root {
+	--bg: #fff;
+	--fg: #333;
+	--a: #00f;
+	--a-h: #000;
+	--b: #666;
+}
+
+[data-theme="dark"] {
+	--bg: #111;
+	--fg: #ddd;
+	--a: #99b7ff;
+	--a-h: #49b7ff;
+	--b: #ccc;
+}
+
 *{padding:0;margin:0;}
-body{font-family:sans-serif;font-size: 20px;}
-a{text-decoration:none;color:#3063df;}
-a:hover{text-decoration:underline;color:#000;}
+body{font-family:sans-serif;font-size: 20px; background: var(--bg); color: var(--fg)}
+a{text-decoration:none;color:var(--a);}
+a:hover{text-decoration:underline;color:var(--a-h);}
 
 header{font-size: 85%; list-style:none; display: flex; justify-content: right;}
 header a{display: inline-block; padding: 10px 20px}
 
 main{margin: 5px auto;padding: 10px 0 0 20px;max-width: 760px}
 main > a {display: flex; padding: 7px 10px; line-height: 28px;}
-main > a > b {font-weight: normal;font-size: 18px;color: #666;margin-left: auto;white-space: nowrap}
+main > a > b {font-weight: normal;font-size: 18px;color: var(--b);margin-left: auto;white-space: nowrap}
 
 @media screen and (max-width: 800px) {
 	main{margin-right: 10px}
@@ -26,7 +42,13 @@ main > a > b {font-weight: normal;font-size: 18px;color: #666;margin-left: auto;
 	div.s{margin: 10px 0}
 }
 </style>
-<header><a href=https://bsky.app/profile/karlseguin.com>bsky</a><a href=atom.xml>rss</a><a href=mailto:blog@karlseguin.com>contact</a><a href=https://www.github.com/karlseguin>github</a></header>
+<script>
+	if (localStorage.getItem('theme') === 'dark') {
+		document.documentElement.setAttribute('data-theme', 'dark');
+	}
+</script>
+
+<header><a href=https://bsky.app/profile/karlseguin.com>bsky</a><a href=atom.xml>rss</a><a href=mailto:blog@karlseguin.com>contact</a><a href=https://www.github.com/karlseguin>github</a><a href=# id=theme>dark</a></header>
 <main>
 {%- set posts = all_posts(collections.all) -%}
 {%- for post in posts %}
@@ -35,3 +57,20 @@ main > a > b {font-weight: normal;font-size: 18px;color: #666;margin-left: auto;
 {%- endif -%}
 {%- endfor -%}
 </main>
+
+<script>
+const t = document.getElementById('theme');
+const de = document.documentElement;
+t.addEventListener('click', () => {
+	if (t.innerText == 'dark') {
+		de.setAttribute('data-theme', 'dark');
+		localStorage.setItem('theme', 'dark');
+		t.innerText = 'light';
+	} else {
+		de.removeAttribute('data-theme', 'dark');
+		localStorage.removeItem('theme');
+		t.innerText = 'dark';
+	}
+});
+if (de.getAttribute('data-theme')) t.innerText = 'light';
+</script>
