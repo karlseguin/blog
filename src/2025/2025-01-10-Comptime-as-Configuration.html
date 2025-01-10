@@ -1,0 +1,75 @@
+---
+layout: post
+date: 2025-01-10
+title: "Comptime as Configuration"
+tags: [zig]
+---
+
+<p>If you look at my <a href="https://github.com/karlseguin/http.zig">httpz</a> library, you'll notice that <code>httpz.Server(T)</code> is a generic. The type passed to <code>Server</code> serves two purposes. The first is to support an application-specific context - whatever instance of <code>T</code> passed into <code>Server(T).init</code> gets passed back to your custom HTTP handlers.</p>
+
+<p>But the other purpose of <code>T</code> is to act as a configuration object. For example, if you want to circumvent most of httpz' request processing, you can define a <code>T.handle</code> method:</p>
+
+{% highlight zig %}
+const App = struct {
+  pub fn handle(app: *App, req: *Request, res: *Response) void {
+     // circumvent's httpz routing, middleware, error handling and dispatching
+  }
+};
+{% endhighlight %}
+
+<p>This is how <a href="https://www.jetzig.dev/">Jetzig</a> uses httpz. In my <a href=/Basic-MetaProgramming-in-Zig/>Basic MetaProgramming</a> post, we looked at how a few of Zig's built-in functions and <code>std.meta</code> namespace can help us write this kind of code. For the specific case of the <code>handle</code> override, it looks something like:</p>
+
+{% highlight zig %}
+if (comptime std.meta.hasFn(Handler, "handle")) {
+    if (comptime @typeInfo(@TypeOf(Handler.handle)).@"fn".return_type != void) {
+        @compileError(@typeName(Handler) ++ ".handle must return 'void'");
+    }
+    self.handler.handle(&req, &res);
+    return;
+}
+{% endhighlight %}
+
+<p>The return-type check is there to make it clear that the custom <code>handle</code> cannot return an error (or anything else). There are a few different possible overrides in httpz, but they're more or less variations of the above.</p>
+
+<p>More recently, in <a href="https://github.com/karlseguin/ztl">Zig Template Language</a>, I extended this pattern to include scalar configuration:</p>
+
+{% highlight zig %}
+const AppTemplate = struct {
+    pub const ZtlConfig = struct {
+        pub const escape_by_default = true;
+        pub const deduplicate_string_literals = true;
+    };
+
+    // can also define custom functions
+};
+{% endhighlight %}
+
+<p>To get a specific configuration value, you do:</p>
+
+{% highlight zig %}
+const Defaults = struct {
+    pub const escape_by_default: bool = false;
+    pub const deduplicate_string_literals: bool = true;
+};
+
+pub fn extract(comptime A: type, comptime field_name: []const u8) @TypeOf(@field(Defaults, field_name)) {
+    const App = switch (@typeInfo(A)) {
+        .@"struct" => A,
+        .pointer => |ptr| ptr.child,
+        .void => void,
+        else => @compileError("Template App must be a struct, got: " ++ @tagName(@typeInfo(A))),
+    };
+
+    if (App != void and @hasDecl(App, "ZtlConfig") and @hasDecl(App.ZtlConfig, field_name)) {
+        return @field(App.ZtlConfig, field_name);
+    }
+
+    return @field(Defaults, field_name);
+}
+{% endhighlight %}
+
+<p>One reason I went with this approach is that, as with httpz, the type is needed anyways. Like httpz, it's possible to extend the functionality of ztl and add a application-specific context. The obviously downside is that the user of the library has to create a comptime-known configuration.</p>
+
+<p>The benefit of this approach is the opportunity for some optimization. In most cases, that's simply being able to do conditional checks at compile-time rather than runtime. But some optimizations can be a little more meaningful. For example, ztl's VM will use a <code>u8</code> or a <code>u16</code> depending on the <code>max_locals</code> configuration, and because <code>max_call_frames</code> is known at compile time, the VM's call stack can be allocated on the stack.</p>
+
+<p>I'm not suggestion that all configuration should be like this. However, if you're building a library and want to provide hooks for users to override or add behavior, I think doing feature detection on a provided <code>T: type</code> is a good approach. Unless you have really good reason to, you probably should not do this for normal options - it makes your library much more rigid by requiring that the user of your library know the options at comptime.</p>
