@@ -1,0 +1,157 @@
+---
+layout: post
+date: 2025-01-15
+title: "Peeking Behind Zig Interfaces by Creating a Dummy std.Random Implementation"
+tags: [zig]
+---
+
+<p>Zig doesn't have an <code>interface</code> keyword or some simple way to create interfaces. Nonetheless, types like <code>std.mem.Allocator</code> and <code>std.Random</code> are often cited as examples that, with a bit of elbow grease, Zig offers every thing needed to create them.</p>
+
+<p>We've looked at <a href="/Zig-Interfaces/">Zig Interfaces</a> in the past. If you want to understand how they work and how to write your own, I recommend you read that post first. But I recently needed to create a dummy <code>std.Random</code> implementation (for testing purposes) and felt that the experience was a nice refresher.</p>
+
+<p>When I think about an interface, I think about a contract with no implementation. But if we look at most types in Zig's standard library which people call an "interface", it's usually something different. Interfaces in Zig have a tendency to expose their own behavior which enhance an underlying implementation's algorithm. For example, the <code>std.io.Reader</code> "interface" has an <code>readAtLeast</code> method. <code>readAtLeast</code> is implemented directly in <code>std.io.Reader</code>. It uses the underlying implementation's <code>read</code> method as part of its implementation. (that underlying implementation could be a file, or a socket, etc).</p>
+
+<p><code>std.Random</code> is no different and methods like <code>intRangeAtMost</code> are implemented within the <code>std.Random</code> type itself. These method utilize behavior for the underlying implementation. In order to write our own [mock] implementation, we need to know what method(s) <code>std.Random</code> needs us to implement. If you're already comfortable in Zig, you can probably look at the documentation for <code>std.Random</code> and figure it out, although it isn't explicitly stated. You'd see that it has two fields:</p>
+
+<ol>
+    <li><code>ptr: *anyopaque</code>,</li>
+    <li><code>fillFn: *const fn (ptr: *anyopaque, buf: []u8) void</code></li>
+</ol>
+
+<p>and realize that this interface requires a single <code>fill</code> function.</p>
+
+<p>Another way to try to divine the requirements would be to look at an existing implementation. For example, if we look at <code>std.Random.DefaultPrng</code>, we'll be brought to the <code>std.Random.Xoshiro256</code> type, where we can find the <code>random</code> method. This is the method we call on an implementation to get the an <code>std.Random</code> interface. Just like you call <code>allocator</code> on a GPA to get an <code>std.mem.Allocator</code>. The implementation of <code>random</code> is:</p>
+
+{% highlight zig %}
+pub fn random(self: *Xoshiro256) std.Random {
+    return std.Random.init(self, fill);
+}
+{% endhighlight %}
+
+<p>This tells us that, if we want to create am <code>std.Random</code>, we can use its <code>init</code> function. <code>std.Random.init</code> has the following signature:</p>
+
+{% highlight zig %}
+pub fn init(
+    pointer: anytype,
+    comptime fillFn: fn (ptr: @TypeOf(pointer), buf: []u8
+) void) Random
+{% endhighlight %}
+
+
+<p>Thus, <code>init</code> expects a pointer of any type as well as a function pointer. Knowing this, we can take a stab at writing our dummy implementation:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var dr = DummyRandom{};
+    var random = dr.random();
+
+    std.debug.print("{d}\n", .{random.int(u8)});
+}
+
+const DummyRandom = struct {
+    pub fn fill(_: *DummyRandom, buf: []u8) void {
+        @memset(buf, 0);
+    }
+
+    pub fn random(self: *DummyRandom) std.Random {
+        return std.Random.init(self, fill);
+    }
+};
+{% endhighlight %}
+
+<p>This code works, but can we make it less verbose? In normal cases, such as with the real <code>Xoshiro256</code> implementation, the underlying instance exists because it maintains some state (such as a seed). That's why <code>std.Random</code> maintains a <code>pointer</code> to the instance and then passes back to the given <code>fill</code> function. Our implementation is dumb though. Do we really need the <code>DummyRandom</code> structure and an instance of it?</p>
+
+<aside><p>The following assumes a familiarity with Zig's <code>*anyopaque</code>, <code>@ptrCast</code> and <code>@cosntCast</code>. These are all topics we've covered before in <a href="/Zig-Interfaces/">Zig Interfaces</a>, <a href="Zig-Tiptoeing-Around-ptrCast/">Tiptoeing Around @ptrCast</a> and <a href="/Zigs-ConstCast/">Zig's @constCast</a>.</p></aside>
+
+<p>If we try to pass <code>void</code> as our type, and use an anonymous struct, we can tighten up the code:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var random = std.Random.init({}, struct {
+        pub fn fill(_: void, buf: []u8) void {
+            @memset(buf, 0);
+        }
+    }.fill);
+
+    std.debug.print("{d}\n", .{random.int(u8)});
+}
+{% endhighlight %}
+
+<p>But it won't compile. We get the following error: <em>access of union field 'pointer' while field 'void' is active</em>. Looking at the implementation of <code>std.Random.init</code> we see all of these compile-time check:</p>
+
+{% highlight zig %}
+pub fn init(pointer: anytype, comptime fillFn: fn (ptr: @TypeOf(pointer), buf: []u8) void) Random {
+    const Ptr = @TypeOf(pointer);
+    assert(@typeInfo(Ptr) == .pointer); // Must be a pointer
+    assert(@typeInfo(Ptr).pointer.size == .One); // Must be a single-item pointer
+    assert(@typeInfo(@typeInfo(Ptr).pointer.child) == .@"struct"); // Must point to a struct
+{% endhighlight %}
+
+<p>Essentially, we <em>must</em> pass a pointer to a structure, e.g. a pointer to a <code>Xoshiro256</code> or <code>DummyRandom</code> or whatever. From what I can tell, there's no good reason for this restriction. <code>std.Random</code> only uses the provided <code>pointer</code> to pass it back to the provided <code>fill</code> function - it shouldn't care if it's a struct, an integer, or void.</p>
+
+<p>To get around this, we'll need to circumvent <code>init</code> and set the fields directly:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var random = std.Random{
+        .ptr = {},
+        .fillFn = struct {
+            pub fn fill(_: *anyopaque, buf: []u8) void {
+                @memset(buf, 0);
+            }
+        }.fill,
+    };
+    std.debug.print("{d}\n", .{random.int(u8)});
+}
+{% endhighlight %}
+
+<p>This also gives us an error: <em>expected type '*anyopaque', found 'void'</em>. That seems right to me. The <code>ptr</code> field is of type <code>*anyopaque</code>, and we're trying to assign <code>void</code>. We can't just <code>@ptrCast({})</code>, because <code>@ptrCast</code> expects a pointer, but what if we try <code>@ptrCast(&{})</code>?</p>
+
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var random = std.Random{
+        // added @ptrCast and switch {} to &{}
+        .ptr = @ptrCast(&{}),
+        .fillFn = struct {
+            pub fn fill(_: *anyopaque, buf: []u8) void {
+                @memset(buf, 0);
+            }
+        }.fill,
+    };
+    std.debug.print("{d}\n", .{random.int(u8)});
+}
+{% endhighlight %}
+
+<p>We get a different error: <em>@ptrCast discards const qualifier</em>. So now our problem is that our void pointer, <code>&{}</code> is a <code>const</code>, but the <code>ptr</code> field is an <code>*anyopaque</code> <strong>not</strong> an <code>*const anyopque</code>.</p>
+
+<p>Since we're already using <code>@ptrCast</code>, which is always questionable, why not add an even more questionable <code>@constCast</code>?:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var random = std.Random{
+        // added @constCast
+        .ptr = @constCast(@ptrCast(&{})),
+        .fillFn = struct {
+            pub fn fill(_: *anyopaque, buf: []u8) void {
+                @memset(buf, 0);
+            }
+        }.fill,
+    };
+    std.debug.print("{d}\n", .{random.int(u8)});
+}
+{% endhighlight %}
+
+<p>This code works. It's safe because our <code>fill</code> implementation never uses it and thus the invalid <code>const</code> discard is never a factor. But it's unsafe because, in theory, <code>std.Random</code> could one day change and use <code>self.ptr</code> itself or assume that it's a pointer to a struct - which is what its <code>init</code> function enforces.</p>
+
+<p>Creating our <code>DummyRandom</code> and going through <code>std.Random.init</code> is safer and the <em>right way.</em> But, creating <code>std.Random</code> directly is more fun.</p>

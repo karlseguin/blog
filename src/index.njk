@@ -34,12 +34,14 @@ header a{display: inline-block; padding: 10px 20px}
 
 main{margin: 5px auto;padding: 10px 0 0 20px;max-width: 760px}
 main > a {display: flex; padding: 7px 10px; line-height: 28px;}
-main > a > b {font-weight: normal;font-size: 18px;color: var(--b);margin-left: auto;white-space: nowrap}
+b {font-weight: normal;font-size: 18px;color: var(--b);margin-left: auto;white-space: nowrap}
 
 @media screen and (max-width: 800px) {
 	main{margin-right: 10px}
 	ul a{padding: 10px}
 	div.s{margin: 10px 0}
+	main > a{flex-direction:column}
+	b {margin-left: 0}
 }
 </style>
 <script>
