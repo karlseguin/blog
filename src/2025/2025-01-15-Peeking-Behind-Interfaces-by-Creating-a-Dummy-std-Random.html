@@ -28,7 +28,7 @@ pub fn random(self: *Xoshiro256) std.Random {
 }
 {% endhighlight %}
 
-<p>This tells us that, if we want to create am <code>std.Random</code>, we can use its <code>init</code> function. <code>std.Random.init</code> has the following signature:</p>
+<p>This tells us that, if we want to create an <code>std.Random</code>, we can use its <code>init</code> function. <code>std.Random.init</code> has the following signature:</p>
 
 {% highlight zig %}
 pub fn init(
@@ -63,7 +63,7 @@ const DummyRandom = struct {
 
 <p>This code works, but can we make it less verbose? In normal cases, such as with the real <code>Xoshiro256</code> implementation, the underlying instance exists because it maintains some state (such as a seed). That's why <code>std.Random</code> maintains a <code>pointer</code> to the instance and then passes back to the given <code>fill</code> function. Our implementation is dumb though. Do we really need the <code>DummyRandom</code> structure and an instance of it?</p>
 
-<aside><p>The following assumes a familiarity with Zig's <code>*anyopaque</code>, <code>@ptrCast</code> and <code>@cosntCast</code>. These are all topics we've covered before in <a href="/Zig-Interfaces/">Zig Interfaces</a>, <a href="Zig-Tiptoeing-Around-ptrCast/">Tiptoeing Around @ptrCast</a> and <a href="/Zigs-ConstCast/">Zig's @constCast</a>.</p></aside>
+<aside><p>The following assumes a familiarity with Zig's <code>*anyopaque</code>, <code>@ptrCast</code> and <code>@cosntCast</code>. These are all topics we've covered before in <a href="/Zig-Interfaces/">Zig Interfaces</a>, <a href="/Zig-Tiptoeing-Around-ptrCast/">Tiptoeing Around @ptrCast</a> and <a href="/Zigs-ConstCast/">Zig's @constCast</a>.</p></aside>
 
 <p>If we try to pass <code>void</code> as our type, and use an anonymous struct, we can tighten up the code:</p>
 
