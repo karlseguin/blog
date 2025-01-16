@@ -8,7 +8,7 @@ tags: [zig]
 
 <p>In our <a href="/Basic-MetaProgramming-in-Zig/">last blog post</a>, we saw how builtins like <code>@hasDecl</code> and functions like <code>std.meta.hasMethod</code> can be used to inspect a type to determine its capabilities. Zig's  standard library makes use of these in a few place to allow developers to opt-into specific behavior. In particular, both <code>std.fmt</code> and <code>std.json</code> provide developers the ability to define functions that control how a type is formatted and JSON serialized/deserialized.</p>
 
-<h3>format</h3>
+<h3 id=format><a href="#format" aria-hidden=true>format</a></h3>
 <p>While Zig does a good job of printing out custom types, it can be useful/necessary to tweak that output. For example, you might want to exclude a specific field from the output. If you define a public <code>format</code> method on your struct, enum or union, Zig will call it rather than using the default formatter:</p>
 
 {% highlight zig %}
@@ -36,7 +36,7 @@ const User = struct {
 <p>More specifically, the two methods that you're most likely to use are: <code>writer.print</code> and <code>writer.writeAll</code>. We used <code>print</code> above, which is a simple yet powerful way to customize the string representation. We'd use <code>writeAll</code> if we wanted to directly generate a <code>[]const u8</code>. Of course, there's nothing stopping us from using a both methods, as well as the other <code>io.Writer</code> methods like <code>writeByte</code> and <code>writeByteNTimes</code>.</p>
 
 
-<h3>jsonStringify</h3>
+<h3 id=jsonStringify><a href="#jsonStringify" aria-hidden=true>jsonStringify</a></h3>
 <p>We can control the JSON serialization of a struct, union of enum by defining a <code>jsonStringify</code> method:</p>
 
 {% highlight zig %}
@@ -77,7 +77,7 @@ const User = struct {
 
 <p>Care must be taken when using <code>print</code>, but it provides the greatest flexibility; for example it's useful if you want to format numbers a specific way.</p>
 
-<h3>jsonParse</h3>
+<h3 id=jsonParse><a href="#jsonParse" aria-hidden=true>jsonParse</a></h3>
 <p>The counterpart to the <code>jsonStringify</code> method is the <code>jsonParse</code> function:</p>
 
 {% highlight zig %}
