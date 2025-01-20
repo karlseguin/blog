@@ -86,7 +86,7 @@ fn read(stream: std.net.Stream) ![]const u8 {
 
 		<p>Zig source code is indented with 4 spaces. I personally use a tab which is objectively better for accessibility.</p>
 
-		<p>Function names are camelCase and variables are lowercase_with_underscores (aka snake case). Types are PascalCase. There is an interesting intersection between these three rules. Variables which reference a type, or functions which return a type, follow the type rule and are PascalCase. We already saw this, though you might have missed it.</p>
+		<p>Function names are camelCase and variables are snake_case. Types are PascalCase. There is an interesting intersection between these three rules. Variables which reference a type, or functions which return a type, follow the type rule and are PascalCase. We already saw this, though you might have missed it.</p>
 
 {% highlight zig %}
 std.debug.print("{any}\n", .{@TypeOf(.{.year = 2023, .month = 8})});
