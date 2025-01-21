@@ -1,0 +1,119 @@
+---
+layout: post
+date: 2025-01-21
+title: "Using SIMD to Tell if the High Bit is Set"
+tags: [zig]
+---
+
+<p>One of the first Zig-related blog posts I wrote was <a href="/SIMD-With-Zig/">an overview of SIMD with Zig</a>. I recently needed to revisit this topic when enhancing my <a href="https://github.com/karlseguin/smtp_client.zig">smtp client library</a>. Specifically, SMTP mostly expects printable ASCII characters. Almost all other characters, including UTF-8 text, must be encoded.</p>
+
+<p>I found the various SMTP and MIME RFCs confusing. So I settled on a simple approach: if the high bit of a character is set, I'll base64 encode the value. The simple approach to do detect this is:</p>
+
+{% highlight zig %}
+fn isHighBitSet(input: []const u8) bool {
+    for (input) |c| {
+        if (c > 127) {
+            return true;
+        }
+    }
+    return false;
+}
+{% endhighlight %}
+
+<p>But with SIMD, we can do this check on multiple bytes at a time. The first thing we have to do is get the ideal size for SIMD operations for our CPU:</p>
+
+{% highlight zig %}
+if (comptime std.simd.suggestVectorLength(u8)) |vector_len| {
+    // TODO
+}
+{% endhighlight %}
+
+<p>As you can tell, <code>suggestVectorLength</code> returns an optional value: some platforms don't support SIMD. On my computer, this returns <code>16</code>, which mean that I can process 16 bytes at a time. We can extend our skeleton:</p>
+
+{% highlight zig %}
+if (comptime std.simd.suggestVectorLength(u8)) |vector_len| {
+    var remaining = value;
+    while (remaining.len > vector_len) {
+        const chunk: @Vector(vector_len, u8) = remaining[0..vector_len].*;
+        // TODO
+        remaining = remaining[vector_len..];
+    }
+}
+{% endhighlight %}
+
+<p>Above we're breaking our input into <code>vector_len</code> chunks. The <code>@Vector</code> builtin returns a type (in Zig, by convention, upper-case functions return types). To see if our <code>chunk</code> has a high bit set, we use <code>@reduce</code>:</p>
+
+{% highlight zig %}
+if (@reduce(.Max, chunk) > 127) {
+    return true;
+}
+{% endhighlight %}
+
+<p>Like <code>@Vector</code>, <code>@reduce</code> is one of a handful of SIMD-specific builtins. Its job is to take an <code>std.builtin.ReduceOp</code> and a vector input (<code>.Max</code> and <code>chunk</code>) and return a scalar value. The possible  operations depend on the vector type. For example, <code>std.builtin.ReduceOp.And</code> is only valid for a vector of booleans. With <code>Max</code>, we're asking <code>@reduce</code> to return the higher value in the provided vector.</p>
+
+<p>As I said, on my computer, the code will process 16 bytes of data at a time, but our input might not be perfectly divisible by 16. Our <code>while</code> loop exits when <code>remaining.len > vector_len</code>; if our input was 35 bytes long, we'd process 2 chunks (2 * 16) and be left with 3 bytes. These last 3 bytes still need to be checked:</p>
+
+{% highlight zig %}
+fn isHighBitSet(input: []const u8) bool {
+    var remaining = value;
+    if (comptime std.simd.suggestVectorLength(u8)) |vector_len| {
+        while (remaining.len > vector_len) {
+            const chunk: @Vector(vector_len, u8) = remaining[0..vector_len].*;
+            if (@reduce(.Max, chunk) > 127) {
+                return true;
+            }
+            remaining = remaining[vector_len..];
+        }
+    }
+
+     for (remaining) |c| {
+        if (c > 127) {
+            return true;
+        }
+    }
+
+    return false;
+}
+{% endhighlight %}
+
+<p>We've made another subtle change: we moved <code>remaining</code> to the outer scope. Our code not only handles chunks that aren't perfectly divisible by <code>vector_len</code>, it also handles cases where <code>suggestVectorLength</code> return <code>null</code>.</p>
+
+<p>Finally, more recent versions of Zig have introduced different backends. Not all of these necessarily support SIMD operations. So, for completeness, we need one more check:</p>
+
+
+{% highlight zig %}
+// strange that std.simd doesn't export something like this
+const backend_supports_vectors = switch (@import("builtin").zig_backend) {
+    .stage2_llvm, .stage2_c => true,
+    else => false,
+};
+
+fn isHighBitSet(input: []const u8) bool {
+    var remaining = value;
+    if (comptime backend_supports_vectors) {
+        if (comptime std.simd.suggestVectorLength(u8)) |vector_len| {
+            while (remaining.len > vector_len) {
+                const chunk: @Vector(vector_len, u8) = remaining[0..vector_len].*;
+                if (@reduce(.Max, chunk) > 127) {
+                    return true;
+                }
+                remaining = remaining[vector_len..];
+            }
+        }
+    }
+
+     for (remaining) |c| {
+        if (c > 127) {
+            return true;
+        }
+    }
+
+    return false;
+}
+{% endhighlight %}
+
+<p>Hopefully this is something that will get cleaned up, but note that it's only really necessary if you're going to use a different backend (I'm using it because the code is in a library, and I don't know how users of my library will compile it).</p>
+
+<p>For very short strings, the SIMD version is the same as the linear version, so there's no performance difference. But for a string of <code>"a" ** 100</code> (which requires scanning the entire string), the SIMD version is ~2x faster and for a string of <code>"a" ** 1000</code>, it's ~8x faster.</p>
+
+<aside><p>If you want to learn more, check out my earlier <a href="/SIMD-With-Zig/">SIMD With Zig</a> post, which goes into greater detail with a more complicated example.</p></aside>
