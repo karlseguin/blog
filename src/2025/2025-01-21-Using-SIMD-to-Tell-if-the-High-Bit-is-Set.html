@@ -32,7 +32,7 @@ if (comptime std.simd.suggestVectorLength(u8)) |vector_len| {
 
 {% highlight zig %}
 if (comptime std.simd.suggestVectorLength(u8)) |vector_len| {
-    var remaining = value;
+    var remaining = input;
     while (remaining.len > vector_len) {
         const chunk: @Vector(vector_len, u8) = remaining[0..vector_len].*;
         // TODO
@@ -55,7 +55,7 @@ if (@reduce(.Max, chunk) > 127) {
 
 {% highlight zig %}
 fn isHighBitSet(input: []const u8) bool {
-    var remaining = value;
+    var remaining = input;
     if (comptime std.simd.suggestVectorLength(u8)) |vector_len| {
         while (remaining.len > vector_len) {
             const chunk: @Vector(vector_len, u8) = remaining[0..vector_len].*;
@@ -89,7 +89,7 @@ const backend_supports_vectors = switch (@import("builtin").zig_backend) {
 };
 
 fn isHighBitSet(input: []const u8) bool {
-    var remaining = value;
+    var remaining = input;
     if (comptime backend_supports_vectors) {
         if (comptime std.simd.suggestVectorLength(u8)) |vector_len| {
             while (remaining.len > vector_len) {
