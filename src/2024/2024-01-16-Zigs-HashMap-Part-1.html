@@ -24,7 +24,7 @@ pub fn put(self: *Self, key: K, value: V) Allocator.Error!void {
 
 <p>As I said, most of the heavy lifting is done by <code>std.HashMapUnmanaged</code>, which the other variants wrap in a field named "unmanaged".</p>
 
-<h3>Unmanaged</h3>
+<h3 id=Unmanaged><a href="#Unmanaged" aria-hidden=true>Unmanaged</a></h3>
 <p>"Unmanaged" types are sprinkled throughout the standard library. It's a naming convention which indicates that the type in question doesn't maintain an allocator. Any method that requires allocations takes an explicit allocator as a parameter. To see this in practice, consider this linked list:</p>
 
 {% highlight zig %}
@@ -141,7 +141,7 @@ pub fn LinkedList(comptime T: type) type {
 
 <p>In the name of simplicity, the rest of this post won't mentioned unamanged. Anything we see about the  <code>StringHashMap</code> or <code>AutoHashMap</code> or <code>HashMap</code> applies equally to their *Unmanaged variant.</p>
 
-<h3>HashMap vs AutoHashMap</h3>
+<h3 id=vs><a href="#vs" aria-hidden=true>HashMap vs AutoHashMap</a></h3>
 <p><code>std.HashMap</code> is a generic type which takes two type parameters: the type of the key and the type of the value. And, as we saw, hash maps require two functions: <code>hash</code> and <code>eql</code>. Combined, these functions are called the "context". Both functions operate on the key, and there isn't a single <code>hash</code> or <code>eql</code> function that'll work for all types. For example, for integer keys, <code>eql</code> is going to be <code>a_key == b_key</code> where as for <code>[]const u8</code> keys we want <code>std.mem.eql(u8, a_key, b_key)</code>.</p>
 
 <p>When we use <code>std.HashMap</code> we need to provide the context (the two functions). We'll look at this shortly, but for now we can rely on <code>std.AutoHashMap</code> which automatically generate these functions for us. It might surprise you to know that <code>AutoHashMap</code> can even generate a context for more complex keys. The following works: </p>
