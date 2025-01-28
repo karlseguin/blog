@@ -1,0 +1,230 @@
+---
+layout: post
+date: 2025-01-28
+title: "In Zig, What's a Writer?"
+tags: [zig]
+---
+
+<p>I find Zig's idea of a "writer" confusing. This is probably because there are three different types, each trying to compensate for compromises made by the others. Let's try to understand what each is and how it fits into a bigger whole.</p>
+
+<h3 id=anytype><a href="#anytype" aria-hidden=true>writer: anytype</a></h3>
+<p>The first writer that you're likely to run into is a <code>writer: anytype</code>, with the most visible cases found in the <code>std.fmt</code> package, i.e. <code>std.fmt.print</code>.</p>
+
+<p>I've written about <a href="/learning_zig/coding_in_zig/#anytype">anytype</a> before. As a quick recap, think of it as a template. For example, if we have this code:</p>
+
+{% highlight zig %}
+fn writeN(writer: anytype, data: []cont u8, n: usize) !void {
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        try writer.writeAll(data)
+    }
+}
+{% endhighlight %}
+
+<p>A copy of this function will be created for every type of <code>writer</code> that is used. Given this invocation:</p>
+
+{% highlight zig %}
+var logger = MyLogger{};
+try writeN(logger, ".", 10);
+{% endhighlight %}
+
+<p>We'd end up with this copy of <code>writeN</code>:</p>
+
+{% highlight zig %}
+// anytype -> MyLogger
+fn writeN(writer: MyLogger, data: []cont u8, n: usize) !void {
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        try writer.writeAll(data)
+    }
+}
+{% endhighlight %}
+
+<p>If <code>MyLogger</code> didn't implement the necessary <code>writeAll([]const u8) !void</code> method, we'd get a compiler error - just like we'd expect if we wrote the <code>writeN(writer: MyLogger, ...)</code> function ourselves.</p>
+
+<p><code>anytype</code> is super useful and has zero runtime overhead. But there are a few downsides. First, it can make binaries larger and compilation slower. In most cases, there's ever only one or maybe a few different types that are used, so, it isn't an issue. Second, it's a documentation black hole. A function that takes a <code>writer: anytype</code> likely expects one or many of the following methods:</p>
+
+{% highlight zig %}
+write(data: []const u8) !void
+writeAll(data: []const u8) !void
+writeByte(b: u8) !void
+writeByteNTimes(b: u8, n: usize) !void
+writeBytesNTimes(data: []const u8, n: usize) !void
+{% endhighlight %}
+
+<p>But this is just a convention based on the fact that the parameter name is <code>writer</code>. You either have to go through the source code and see how <code>writer</code> is used, or let the compiler tell you which function is expected.</p>
+
+<p>But the main issue with <code>anytype</code> is that it can only be a used as a function parameter. This isn't valid:</p>
+
+{% highlight zig %}
+const Opts = struct {
+    output: anytype
+}
+{% endhighlight %}
+
+<p>For that, we need something else.</p>
+
+
+<h3 id=anywriter><a href="#anywriter" aria-hidden=true>std.io.AnyWriter</a></h3>
+<p>The <code>std.io.AnyWriter</code> type is the closest thing Zig has to a writer interface. We've covered <a href="/Zig-Interfaces/">Zig interfaces</a> before and <code>AnyWriter</code> is essentially the simplest version we looked at, i.e.:</p>
+
+{% highlight zig %}
+pub const AnyWriter = struct {
+  context: *const anyopaque,
+  writeFn: *const fn (context: *const anyopaque, bytes: []const u8) anyerror!usize,
+
+    pub fn write(self: AnyWriter, bytes: []const u8) anyerror!usize {
+        return self.writeFn(self.context, bytes);
+    }
+};
+{% endhighlight %}
+
+<p>Unlike other languages where interfaces are purely a contract with no implementation, Zig tends to stuff a lot of behavior into its interfaces. For example, <code>AnyWriter</code> implements <code>writeAll</code> which relies on the above <code>write</code> function, and <code>writeByteNTimes</code> which relies on <code>writeAll</code>:</p>
+
+{% highlight zig %}
+pub fn writeAll(self: AnyWriter, bytes: []const u8) anyerror!void {
+    var index: usize = 0;
+    while (index != bytes.len) {
+        index += try self.write(bytes[index..]);
+    }
+}
+
+pub fn writeByteNTimes(self: AnyWriter, byte: u8, n: usize) anyerror!void {
+    var bytes: [256]u8 = undefined;
+    @memset(bytes[0..], byte);
+
+    var remaining: usize = n;
+    while (remaining > 0) {
+        const to_write = @min(remaining, bytes.len);
+        try self.writeAll(bytes[0..to_write]);
+        remaining -= to_write;
+    }
+}
+{% endhighlight %}
+
+<p>Now this approach can have <a href="https://github.com/ziglang/zig/issues/17985">performance issues</a>, since there's no way for an implementation to provide, for example, an optimized <code>writeByteNTimes</code>. Still, <code>AnyWriter</code> fills that gap around the limitations of <code>anytype</code>'s usage.</p>
+
+<h3 id=genericwriter><a href="#genericwriter" aria-hidden=true>std.io.GenericWriter</a></h3>
+<p>It would be reasonable to think that when you call <code>file.writer()</code> or <code>array_list.writer()</code>, you're getting an <code>std.io.AnyWriter</code> interface. In reality though, you're getting a <code>std.io.GenericWriter</code>, which <code>std.io.Writer</code> aliases. To understand what this type is, we need to look at the <code>writeFn</code> field of <code>AnyType</code>:</p>
+
+{% highlight zig %}
+*const fn (context: *const anyopaque, bytes: []const u8) anyerror!usize
+{% endhighlight %}
+
+<p>Specifically, notice the <code>anyerror</code> return type. Unlike an inferred error type (i.e. <code>!usize</code>) which will implicitly create an error set based on the function's possible error values, <code>anyerror</code> is an implicitly created error set for the entire project. This means that even though your specific writer's <code>write</code> function might only be able to return an <code>error.OutOfMemory</code>, the <code>AnyError</code> interface will expose any possible error your program might return. In many cases, that won't be an issue. But projects with strict reliability requirements might need/want to handle every error explicitly, especially when we're talking about something like writing data. Think of a database persisting a WAL file to disk, for example.</p>
+
+<p>Thus we have<code>std.io.GenericWriter</code> which, as part of its generic contract, takes an error type. Here's what the generic parameters look like:</p>
+
+{% highlight zig %}
+pub fn GenericWriter(
+    comptime Context: type,
+    comptime WriteError: type,
+    comptime writeFn: fn (context: Context, bytes: []const u8) WriteError!usize,
+) type {
+    ....
+}
+{% endhighlight %}
+
+<p>Notice that the <code>writeFn</code>'s return value is now a typed error - with the type being provided by the implementation.</p>
+
+<p>Let's look at some examples. Here's what an implementation that returns an <code>AnyWriter</code> might look like:</p>
+
+{% highlight zig %}
+pub const DummyWriterAny = struct {
+    fn write(_: *const anyopaque, data: []const u8) error{OutOfMemory}!usize {
+        _ = data;
+        return error.OutOfMemory;
+    }
+
+    pub fn writer(self: *DummyWriterAny) std.io.AnyWriter {
+        return .{
+            .context = self,
+            .writeFn = write,
+        };
+    }
+};
+{% endhighlight %}
+
+<p>Even though our <code>write</code> function returns an explicit error, that type information is lost when we convert our <code>DummyWriterAny</code> to a <code>AnyWriter</code>. Here's a similar implementation but for a <code>GenericWriter</code>:</p>
+
+{% highlight zig %}
+pub const DummyWriterGen = struct {
+    fn write(_: *DummyWriterGen, data: []const u8) error{OutOfMemory}!usize {
+        _ = data;
+        return error.OutOfMemory;
+    }
+
+    pub const Writer = std.io.Writer(*DummyWriterGen, error{OutOfMemory}, write);
+
+    pub fn writer(self: *DummyWriterGen) Writer {
+        return .{.context = self};
+    }
+};
+{% endhighlight %}
+
+<aside><p>Declaring a public <code>Writer</code> type within the structure isn't necessary, but it is common.</p></aside>
+
+<p>Now when we convert our <code>DummyWriterGen</code> to an <code>std.io.GenericWriter</code>, the error type is preserved.</p>
+
+<p><strong>However</strong>, it's important to realize that <code>GenericWriter</code> isn't just a better, more type-aware, version of <code>AnyWriter</code>. One is a generic the other is an interface. Specifically, a <code>GenericWriter</code> for a <code>File</code> is a different type than a <code>GenericWriter</code> for an <code>ArrayList(u8)</code>. It isn't an interface and can't be used like one.
+
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Bringing it all Together</a></h3>
+<p>For everyday programming, what all of this means is that if you have a <code>File</code>, <code>ArrayList(u8)</code>, <code>Stream</code> or any other type which has a <code>writer</code> method, you're almost certainly getting an <code>GenericWriter</code>. This writer can usually be passed to a function with a <code>writer: anytype</code>:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    var arr = std.ArrayList(u8).init(allocator);
+
+    // The first parameter to format is a writer: anytype
+    // we can pass our arr.writer() to it.
+    try std.fmt.format(arr.writer(), "over {d}!!", .{9000});
+
+    std.debug.print("{s}\n", .{arr.items});
+}
+{% endhighlight %}
+
+<p>I say "usually", because there's no guarantee; it relies on all of us agreeing that a variable named <code>writer</code> of type <code>anytype</code> only ever uses methods available to a <code>GenericWriter</code>. Sarcasm aside, it does mostly work.</p>
+
+<p>For cases where an <code>std.io.AnyWriter</code> is needed, such as storing a implementation-independent writer in a struct field, you'll need to use an <code>AnyWriter</code>, which you can easily get by calling <code>any()</code> on your <code>GenericWriter</code>:</p>
+
+{% highlight zig %}
+// a slightly dumb example
+const std = @import("std");
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
+    var arr = std.ArrayList(u8).init(allocator);
+    const opts = Opts{
+        .output = arr.writer().any(),
+    };
+    try write("hello world", opts);
+}
+
+const Opts = struct {
+    output: std.io.AnyWriter,
+};
+
+fn write(data: []const u8, opts: Opts) !void {
+    _ = try opts.output.write(data);
+}
+{% endhighlight %}
+
+<p>If I understand correctly, <a href="https://github.com/ziglang/zig/pull/17344">the motivation for this design</a>, was reducing code bloat while providing a mechanism to preserve typed errors. This is possible because <code>GenericWriter</code> relies on the various methods of <code>AnyWriter</code>, like <code>writeAll</code> and <code>writeByteNTimes</code>. So while there will be many copies of <code>GenericWriter</code> (for <code>File</code>, <code>Stream</code>, <code>ArrayList(u8)</code>, etc.), they each have a very small functions which only invoke the <code>AnyReader</code> logic and re-type the error. For example, here's <code>GenericWriter.writeAll</code>:</p>
+
+{% highlight zig %}
+pub inline fn writeAll(self: Self, bytes: []const u8) Error!void {
+    return @errorCast(self.any().writeAll(bytes));
+}
+{% endhighlight %}
+
+<p>We see that <code>@errorCast</code> does the heavy lifting, converting the <code>anyerror</code> that <code>AnyWriter.writeAll</code> returns into the narrow type-specific error for this implementation.</p>
+
+<p>Like I said, for everyday programming, you'll mostly be passing the result of <code>writer()</code> to a <code>writer: anytype</code> function parameter. And it mostly works, possibly after you've wasted time trying to figure out exactly what the requirements for the <code>writer</code> are. It's only when you can't use <code>anytype</code>, i.e. in a structure field, that this <code>GenericWriter</code> / <code>AnyReader</code> chimera becomes something you need to be aware of.</p>
+
+<p>Hopefully the situation can be improved, specifically with some of the <a href="https://github.com/ziglang/zig/issues/21566">performance</a> <a href="https://github.com/ziglang/zig/issues/17985">issues</a> and resulting poor documentation.</p>
