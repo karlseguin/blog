@@ -34,8 +34,14 @@ pub fn main() !void {
 {% highlight zig %}
   const tests = b.addTest(.{
     .root_source_file = b.path("src/main.zig"),
-    .test_runner = b.path("test_runner.zig"),  // <--- add this
-    // ... you might have other ields
+
+    // Add this line to your build.zig:
+    .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
+
+    // In previous version of Zig, you'd use:
+    // .test_runner = b.path("test_runner.zig"),
+
+    // ... you might have other fields
 });
 {% endhighlight %}
 
