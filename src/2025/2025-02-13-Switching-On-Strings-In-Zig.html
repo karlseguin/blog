@@ -1,0 +1,237 @@
+---
+layout: post
+date: 2025-02-13
+title: "Switching on Strings in Zig"
+tags: [zig]
+---
+
+<p>Newcomers to Zig will quickly learn that you can't switch on a string (i.e. <code>[]const u8</code>). The following code gives us the unambiguous error message <em>cannot switch on strings</em>:</p>
+
+{% highlight zig %}
+switch (color) {
+    "red" => {},
+    "blue" => {},
+    "green" => {},
+    "pink" => {},
+    else => {},
+}
+{% endhighlight %}
+
+<p>I've seen two explanations for why this isn't supported. The first is that there's ambiguity around string identity. Are two strings only considered equal if they point to the same address? Is a null-terminated string the same as its non-null-terminated counterpart? The other reason is that users of <code>switch</code> [apparently] expect <a href="https://en.wikipedia.org/wiki/Branch_table">certain optimizations</a> which are not possible with strings (although, presumably, these same users would know that such optimizations aren't possible with string).</p>
+
+<p>Instead, in Zig, there are two common methods for comparing strings.</p>
+
+<h3 id=mem_eql><a href="#mem_eql" aria-hidden=true>std.mem.eql</a></h3>
+<p>The most common way to compare strings is using <code>std.mem.eql</code> with <code>if / else if / else</code>:</p>
+
+{% highlight zig %}
+if (std.mem.eql(u8, color, "red") == true) {
+
+} else if (std.mem.eql(u8, color, "blue") == true) {
+
+} else if (std.mem.eql(u8, color, "green") == true) {
+
+} else if (std.mem.eql(u8, color, "pink") == true) {
+
+} else {
+
+}
+{% endhighlight %}
+
+<p>The implementation for <code>std.mem.eql</code> depends on what's being compared. Specifically, it has an optimized code path when comparing strings. Although that's what we're interested in, let's look at the non-optimized version:</p>
+
+{% highlight zig %}
+pub fn eql(comptime T: type, a: []const T, b: []const T) bool {
+    if (a.len != b.len) return false;
+    if (a.len == 0 or a.ptr == b.ptr) return true;
+
+    for (a, b) |a_elem, b_elem| {
+        if (a_elem != b_elem) return false;
+    }
+    return true;
+}
+{% endhighlight %}
+
+<p>Whether we're dealing with slices of bytes or some other type, if they're of different length, they can't be equal. Once we know that they're the same length, if they point to the same memory, then they must be equal. I'm not a fan of this second check; it might be cheap, but I think it's quite uncommon. Once those initial checks are done, we compare each element (each byte of our string) one at a time.</p>
+
+<p>The optimized version, which <em>is</em> used for strings, is <a href="https://github.com/ziglang/zig/blob/5b9b5e45cb710ddaad1a97813d1619755eb35a98/lib/std/mem.zig#L720">much more involved</a>. But it's fundamentally the same as the above with <a href="/SIMD-With-Zig/">SIMD</a> to compare multiple bytes at once.</p>
+
+<p>The nature of string comparison means that real-world performance is dependent on the values being compared. We know that if we have 100 <code>if / else if</code> branches then, at the worse case, we'll need to call <code>std.mem.eql</code> 100 times. But comparing strings of different lengths or strings which differ early will be significantly faster. For example, consider these three cases:</p>
+
+{% highlight zig %}
+{
+    const str1 = "a" ** 10_000 ++ "1";
+    const str2 = "a" ** 10_000 ++ "2";
+    _ = std.mem.eql(u8, str1, str2);
+}
+
+{
+    const str1 = "1" ++ a" ** 10_000;
+    const str2 = "2" ++ a" ** 10_000;
+    _ = std.mem.eql(u8, str1, str2);
+}
+
+{
+    const str1 = "a" ** 999_999;
+    const str2 = "a" ** 1_000_000;
+    _ = std.mem.eql(u8, str1, str2);
+}
+{% endhighlight %}
+
+<p>For me, the first comparison takes ~270ns, whereas the other two take ~20ns - despite the last one involving much larger strings. The second case is faster because the difference is early in the string allowing the <code>for</code> loop to return after only one comparison. The third case is faster because the strings are of a different length: <code>false</code> is returned by the initial <code>len</code> check.</p>
+
+<h3 id=string_to_enum><a href="#string_to_enum" aria-hidden=true>std.meta.stringToEnum</a></h3>
+<p>The <code>std.meta.stringToEnum</code> takes an enum type and a string value and returns the corresponding enum value or null. This code prints "you picked: blue"</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+const Color = enum {
+    red,
+    blue,
+    green,
+    pink,
+};
+
+pub fn main() !void {
+    const color = std.meta.stringToEnum(Color, "blue") orelse {
+        return error.InvalidChoice;
+    };
+
+    switch (color) {
+        .red => std.debug.print("you picked: red\n", .{}),
+        .blue => std.debug.print("you picked: blue\n", .{}),
+        .green => std.debug.print("you picked: green\n", .{}),
+        .pink => std.debug.print("you picked: pink\n", .{}),
+    }
+}
+{% endhighlight %}
+
+<p>If you don't need the enum type (i.e. <code>Color</code>) beyond this check, you can leverage Zig's anonymous types. This is equivalent:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    const color = std.meta.stringToEnum(enum {
+        red,
+        blue,
+        green,
+        pink,
+    }, "blue") orelse return error.InvalidChoice;
+
+    switch (color) {
+        .red => std.debug.print("you picked: red\n", .{}),
+        .blue => std.debug.print("you picked: blue\n", .{}),
+        .green => std.debug.print("you picked: green\n", .{}),
+        .pink => std.debug.print("you picked: pink\n", .{}),
+    }
+}
+{% endhighlight %}
+
+<p>It's <strong>not</strong> obvious how this should perform versus the straightforward <code>if / else if</code> approach. Yes, we now have a <code>switch</code> statement that the compiler can [hopefully] optimize, but <code>std.meta.stringToEnum</code> still has convert our input, <code>"blue"</code>, into an enum.</p>
+
+<p>The implementation of <code>std.meta.stringToEnum</code> depends on the number of possible values, i.e. the number of enum values. Currently, if there are more than 100 values, it'll fallback to using the same <code>if / else if</code> that we explored above. Thus, with more than 100 values it does the <code>if / else if</code> check PLUS the switch. This should <a href="https://github.com/ziglang/zig/issues/3863">improve in the future</a>.</p>
+
+<p>However, with 100 or fewer values, <code>std.meta.stringToEnum</code> creates a comptime <code>std.StaticStringMap</code> which can then be used to lookup the value. <code>std.StaticStringMap</code> isn't something we've looked at before. It's a specialized map that buckets keys by their length. Its advantage over Zig's <a href="/Zigs-HashMap-Part-1/">other hash maps</a> is that it can be constructed at compile-time. For our <code>Color</code> enum, the internal state of a <code>StaticStringMap</code> would look something like:</p>
+
+{% highlight text %}
+// keys are ordered by length
+keys:     ["red", "blue", "pink", "green"];
+
+// values[N] corresponds to keys[N]
+values:   [.red, .blue, .pink, .green];
+
+// What's this though?
+indexes:  [0, 0, 0, 0, 1, 3];
+{% endhighlight %}
+
+<p>It might not be obvious how <code>indexes</code> is used. Let's write our own <code>get</code> implementation, simulating the above <code>StaticStringMap</code> state:</p>
+
+{% highlight zig %}
+fn get(str: []const u8) ?Color {
+    // Simulate the state of the StaticStringMap which
+    // stringToMeta built at compile-time.
+    const keys = [_][]const u8{"red", "blue", "pink", "green"};
+    const values = [_]Color{.red, .blue, .pink, .green};
+    const indexes = [_]usize{0, 0, 0, 0, 1, 3};
+
+    if (str.len >= indexes.len) {
+        // our map has no strings of this length
+        return null;
+    }
+
+    var index = indexes[str.len];
+    while (index < keys.len) {
+        const key = keys[index];
+
+        if (key.len != str.len) {
+            // we've gone into the next bucket, everything after
+            // this is longer and thus can't be a match
+            return null;
+        }
+
+        if (std.mem.eql(u8, key, str)) {
+            return values[index];
+        }
+        index += 1;
+    }
+    return null;
+}
+{% endhighlight %}
+
+<p>Take note that <code>keys</code> are ordered by length. As a naive implementation, we could iterate through the keys until we either find a match or find a key with a longer length. Once we find a key with a longer length, we can stop searching, as all remaining candidates won't match - they'll all be too long. <code>StaticStringMap</code> goes a step further and records the index within <code>keys</code> where entries of a specific length begin. <code>indexes[3]</code> tells us where to start looking for keys with a length of 3 (at index 0). <code>indexes[5]</code> tells us where to start looking for keys with a length of 5 (at index 3).</p>
+
+<p>Above, we fallback to using <code>std.mem.eql</code> for any key which is the same length as our target string. <code>StaticStringMap</code> uses its own "optimized" version:</p>
+
+{% highlight zig %}
+pub fn defaultEql(a: []const u8, b: []const u8) bool {
+    if (a.ptr == b.ptr) return true;
+    for (a, b) |a_elem, b_elem| {
+        if (a_elem != b_elem) return false;
+    }
+    return true;
+}
+{% endhighlight %}
+
+<p>This is the same as the simple <code>std.mem.eql</code> implementation, minus the length check. This is done because the <code>eql</code> within our <code>while</code> loop is only ever called for values with matching length. On the flip side, <code>StaticStringMap</code>'s <code>eql</code> doesn't use SIMD, so it would be slower for large strings.</p>
+
+<aside><p><code>StaticStringMap</code> is a wrapper to <code>StaticStringMapWithEql</code> which accept a custom <code>eql</code> function, so if you <em>did</em> want to use it for long strings or some other purposes, you have a reasonable amount of flexibility. You even have the option to use <code>std.static_string_map.eqlAsciiIgnoreCase</code> for ASCII-aware case-insensitive comparison.</p></aside>
+
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<p>In my own benchmarks, in general, I've seen little difference between the two approaches. It does seem like <code>std.meta.stringToEnum</code> is generally as fast or faster. It also results in more concise code and is ideal if the resulting enum is useful beyond the comparison.</p>
+
+<p>You usually don't have long enum values, so the lack of SIMD-optimization isn't a concern. However, if you're considering building your own <code>StaticStringMap</code> at compile time with long keys, you should benchmark with a custom <code>eql</code> function based on <code>std.mem.eql</code>.</p>
+
+<p>We could manually bucket those <code>if / else if</code> branches ourselves, similar to what the <code>StaticStringMap</code> does. Something like:</p>
+
+{% highlight zig %}
+switch (color.len) {
+    3 => {
+        if (std.mem.eql(u8, color, "red") == true) {
+            // ...
+            return;
+        }
+    },
+    4 => {
+        if (std.mem.eql(u8, color, "blue") == true) {
+            // ...
+            return;
+        }
+        if (std.mem.eql(u8, color, "pink") == true) {
+            // ...
+            return;
+        }
+    },
+    5 => {
+        if (std.mem.eql(u8, color, "green") == true) {
+            // ...
+            return;
+        }
+    },
+    else => {},
+}
+// not found
+{% endhighlight %}
+
+<p>Ughhh. This highlights the convenience of using <code>std.meta.stringToEnum</code> to generate similar code. Also, do remember that <code>std.mem.eql</code> quickly discards strings of different lengths, which helps to explain why both approaches generally perform similarly.</p>
