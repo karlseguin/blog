@@ -259,7 +259,7 @@ try lookup.put(user.name, user);
 
 {% highlight zig %}
 defer {
-	var it = lookup.iterator();
+	var it = lookup.valueIterator();
 	while (it.next()) |value_ptr| {
 		const user = value_ptr.*;
 		allocator.free(user.name);
