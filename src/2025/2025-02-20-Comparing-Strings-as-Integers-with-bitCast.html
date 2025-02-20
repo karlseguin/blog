@@ -1,0 +1,205 @@
+---
+layout: post
+date: 2025-02-20
+title: "Comparing Strings as Integers with @bitCast"
+tags: [zig]
+---
+
+<p>In the last blog posts, we looked at <a href="/Switching-On-Strings-In-Zig/">different ways to compare strings in Zig</a>. A few posts back, we <a href="/Zigs-bitCast/#bitCast">introduced Zig's <code>@bitCast</code></a>. As a quick recap, <code>@bitCast</code> lets us force a specific type onto a value. For example, the following prints 1067282596:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+    const f: f32 = 1.23;
+    const n: u32 = @bitCast(f);
+    std.debug.print("{d}\n", .{n});
+}
+{% endhighlight %}
+
+<p>What's happening here is that Zig represents the 32-bit float value of <code>1.23</code> as: <code>[4]u8{164, 112, 157, 63}</code>. This is also how Zig represents the 32-bit unsigned integer  value of <code>1067282596</code>. Data is just bytes; it's the type system - the compiler's knowledge of what data is what type - that controls what and how that data is manipulated.</p>
+
+<p>It might seem like there's something special about bitcasting from a float to an integer; they're both numbers after all. But you can <code>@bitCast</code> from any two equivalently sized types. Can you guess what this prints?:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+    const data = [_]u8{3, 0, 0, 0};
+    const x: i32 = @bitCast(data);
+    std.debug.print("{d}\n", .{x});
+}
+{% endhighlight %}
+
+<p>The answer is <code>3</code>. Think about the above snippet a bit more. We're taking an array of bytes and telling the compiler to treat it like an integer. If we made <code>data</code> equal to <code>[_]u8{'b', 'l', 'u', 'e'}</code>, it would still work (and print <code>1702194274</code>). We're slowly heading towards being able to compare strings as-if they were integers.</p>
+
+<aside><p>If you're wondering why 3 is encoded as <code>[4]u8{3, 0, 0, 0}</code> and not <code>[4]u8{0, 0, 0, 3}</code>, I talked about binary encoding in my <a href=/TCP-Server-In-Zig-Part-2-Message-Boundaries/#binary_encoding>Learning TCP</a> series.</p></aside>
+
+<p>From the last post, we could use multiple <code>std.mem.eql</code> or, more simply, <code>std.meta.stringToEnum</code> to complete the following method:</p>
+
+{% highlight zig %}
+fn parseMethod(value: []const u8) ?Method {
+    // ...
+}
+
+const Method = enum {
+    get,
+    put,
+    post,
+    head,
+};
+{% endhighlight %}
+
+<p>We can also use <code>@bitCast</code>. Let's take it step-by-step.</p>
+
+<p>The first thing we'll need to do is switch on <code>value.len</code>. This is necessary because the three-byte "GET" will need to be <code>@bitCast</code> to a <code>u24</code>, whereas the four-byte "POST" needs to be <code>@bitCast</code> to a <code>u32</code>:</p>
+
+{% highlight zig %}
+fn parseMethod(value: []const u8) ?Method {
+    switch (value.len) {
+        3 => switch (@as(u24, @bitCast(value[0..3]))) {
+            // TODO
+            else => {},
+        },
+        4 => switch (@as(u32, @bitCast(value[0..4]))) {
+            // TODO
+            else => {},
+        },
+        else => {},
+    }
+
+    return null;
+}
+{% endhighlight %}
+
+<p>If you try to run this code, you'll get a compilation error: <em>cannot @bitCast from '*const [3]u8'</em>. <code>@bitCast</code> works on actual bits, but when we slice our <code>[]const u8</code> with a compile-time known range (<code>[0..3]</code>), we get a pointer to an array. We can't <code>@bitCast</code> a pointer, we can only <code>@bitCast</code> actual bits of data. For this to work, we need to derefence the pointer, i.e. use: <code>value[0..3].*</code>. This will turn our <code>*const [3]u8</code> into a <code>const [3]u8</code>.</p>
+
+{% highlight zig %}
+fn parseMethod(value: []const u8) ?Method {
+    switch (value.len) {
+        // changed: we now derefernce the value (.*)
+        3 => switch (@as(u24, @bitCast(value[0..3].*))) {
+            // TODO
+            else => {},
+        },
+        // changed: we now dereference the value (.*)
+        4 => switch (@as(u32, @bitCast(value[0..4].*))) {
+            // TODO
+            else => {},
+        },
+        else => {},
+    }
+
+    return null;
+}
+{% endhighlight %}
+
+ <p>Also, you might have noticed the <code>@as(u24, ...)</code> and <code>@as(u32, ...)</code>. <code>@bitCast</code>, like most of Zig's builtin functions, infers its return type. When we're assiging the result of a <code>@bitCast</code> to a variable of a known type, i.e: <code>const x: i32 = @bitCast(data);</code>, the return type of <code>i32</code> is inferred. In the above <code>switch</code>, we aren't assigning the result to a varible. We have to use <code>@as(u24, ...)</code> in order for <code>@bitCast</code> to kknow what it should be casting to (i.e. what its return type should be).</p>
+
+<p>The last thing we need to do is fill our switch blocks. Hopefully it's obvious that we can't just do:</p>
+
+{% highlight zig %}
+3 => switch (@as(u24, @bitCast(value[0..3].*))) {
+    "GET" => return .get,
+    "PUT" => return .put,
+    else => {},
+},
+...
+{% endhighlight %}
+
+<p>But you might be thinking that, while ugly, something like this might work:</p>
+
+{% highlight zig %}
+3 => switch (@as(u24, @bitCast(value[0..3].*))) {
+    @as(u24, @bitCast("GET".*)) => return .get,
+    @as(u24, @bitCast("PUT".*)) => return .put,
+    else => {},
+},
+...
+{% endhighlight %}
+
+<p>Because <code>"GET"</code> and <code>"PUT"</code> are string literals, they're null terminated and of type <code>*const [3:0]u8</code>. When we dereference them, we get a <code>const [3:0]u8</code>. It's close, but it means that the value is 4 bytes (<code>[4]u8{'G', 'E', 'T', 0}</code>) and thus cannot be <code>@bitCast</code> into a <code>u24</code>. This is ugly, but it works:</p>
+
+
+{% highlight zig %}
+fn parseMethod(value: []const u8) ?Method {
+    switch (value.len) {
+        3 => switch (@as(u24, @bitCast(value[0..3].*))) {
+            @as(u24, @bitCast(@as([]const u8, "GET")[0..3].*)) => return .get,
+            @as(u24, @bitCast(@as([]const u8, "PUT")[0..3].*)) => return .put,
+            else => {},
+        },
+        4 => switch (@as(u32, @bitCast(value[0..4].*))) {
+            @as(u32, @bitCast(@as([]const u8, "HEAD")[0..4].*)) => return .head,
+            @as(u32, @bitCast(@as([]const u8, "POST")[0..4].*)) => return .post,
+            else => {},
+        },
+        else => {},
+    }
+    return null;
+}
+{% endhighlight %}
+
+<p>That's a mouthful, so we can add small function to help:</p>
+
+{% highlight zig %}
+fn parseMethod(value: []const u8) ?Method {
+    switch (value.len) {
+        3 => switch (@as(u24, @bitCast(value[0..3].*))) {
+            asUint(u24, "GET") => return .get,
+            asUint(u24, "PUT") => return .put,
+            else => {},
+        },
+        4 => switch (@as(u32, @bitCast(value[0..4].*))) {
+            asUint(u32, "HEAD") => return .head,
+            asUint(u32, "POST") => return .post,
+            else => {},
+        },
+        else => {},
+    }
+    return null;
+}
+
+pub fn asUint(comptime T: type, comptime string: []const u8) T {
+    return @bitCast(string[0..string.len].*);
+}
+{% endhighlight %}
+
+<p>Like the verbose version, the trick is to cast our null-terminated string literal into a string slice, <code>[]const u8</code>. By passing it through the <code>asUint</code> function, we get this without needing to add the explicit <code>@as([]const u8)</code>.</p>
+
+<p>There is a more advanced version of <code>asUint</code> which doesn't take the uint type parameter (<code>T</code>). If you think about it, the uint type can be inferred from the string's length:</p>
+
+{% highlight zig %}
+pub fn asUint(comptime string: []const u8) @Type(.{
+    .int = .{
+        // bits, not bytes, hence * 8
+        .bits = string.len * 8,
+        .signedness = .unsigned,
+    },
+}) {
+    return @bitCast(string[0..string.len].*);
+}
+{% endhighlight %}
+
+<p>Which allows us to call it with a single parameter: <code>asUint("GET")</code>. This might be your first time seeing such a return type. The <code>@Type</code> builtin is the opposite of <code>@typeInfo</code>. The latter takes a type and returns information on it in the shape of a <code>std.builtin.Type</code> union. Whereas <code>@Type</code> takes the  <code>std.builtin.Type</code> and returns an actual usable type. One of these days I'll find the courage to blog about <code>std.builtin.Type</code>!</p>
+
+<p>As a final note, some people dislike the look of this sort of return type and rather encapsulate the logic in its own function. This is the same:</p>
+
+{% highlight zig %}
+pub fn asUint(comptime string: []const u8) AsUintReturn(string) {
+    return @bitCast(string[0..string.len].*);
+}
+
+// Remember that, in Zig, by convention, a function should be
+// PascalCase if it returns a type (because types are PascalCase).
+fn AsUintReturn(comptime string: []const u8) type {
+    return @Type(.{
+        .int = .{
+            // bits, not bytes, hence * 8
+            .bits = string.len * 8,
+            .signedness = .unsigned,
+        },
+    });
+}
+{% endhighlight %}
+
+<h3>Conclusion</h3>
+<p>Of the three approaches, this is the least readable and less approachable. Is it worth it? It depends on your input and the values you're comparing against. In my benchmarks, using <code>@bitCast</code> performs roughly the same as <code>std.meta.stringToEnum</code>. But there are some cases where <code>@bitCast</code> can outperform <code>std.meta.stringToEnum</code> by as much as 50%. Perhaps that's the real value of this approach: the performance is less dependent on the input or the values being matched against.</p>
