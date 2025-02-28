@@ -15,7 +15,7 @@ module.exports = function(config) {
 
 	config.addNunjucksGlobal('all_posts', function(local) {
 		const md = new Markdown();
-		local = local.filter((p) => p.data.title).reverse().map((p) => {
+		local = local.filter((p) => p.data.title && p.data.hidden !== true).reverse().map((p) => {
 			let content = p.rawInput;
 			content = content.replace(/\s*{%\s*endhighlight\s*%}/g, '</code></pre>').replace(/\s*{%\s*highlight\s*.*?%}/g, '<pre><code>');
 			return {
