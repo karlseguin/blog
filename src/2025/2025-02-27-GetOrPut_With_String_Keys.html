@@ -1,0 +1,225 @@
+---
+layout: post
+date: 2025-02-27
+title: "GetOrPut With String Keys"
+tags: [zig]
+---
+
+<p>I've previously blogged about how much I like Zig's <code>getOrPut</code> hashmap method. As a brief recap, we can visualize Zig's hashmap as two arrays:</p>
+
+{% highlight text %}
+  keys:               values:
+       --------          --------
+       | Paul  |         | 1234 |     @mod(hash("Paul"), 5) == 0
+       --------          --------
+       |      |          |      |
+       --------          --------
+       |      |          |      |
+       --------          --------
+       | Goku |          | 9001 |    @mod(hash("Goku"), 5) == 3
+       --------          --------
+       |      |          |      |
+       --------          --------
+{% endhighlight %}
+
+<p>When we call <code>get("Paul")</code>, we could think of this simplified implementation:</p>
+
+{% highlight zig %}
+fn get(map: *Self, key: K) ?V {
+  const index = map.getIndexOf(key) orelse return null;
+  return map.values[index];
+}
+{% endhighlight %}
+
+<p>And, when we call <code>getPtr("Paul")</code>, we'd have this implementation:</p>
+
+{% highlight zig %}
+fn getPtr(map: *Self, key: K) ?*V {
+  const index = map.getIndexOf(key) orelse return null;
+  // notice the added '&'
+  // we're taking the address of the array index
+  return &map.values[index];
+}
+{% endhighlight %}
+
+<p>By taking the address of the value directly from the hashmap's array, we avoid copying the entire value. That can have performance implications (though not for the integer value we're using here). It also allows us to directly manipulate that slot of the array:</p>
+
+{% highlight zig %}
+const value = map.getPtr("Paul") orelse return;
+value.* = 10;
+{% endhighlight %}
+
+<p>This is a powerful feature, but a dangerous one. If the underlying array changes, as can happen when items are added to the map, <code>value</code> would become invalid. So, while <code>getPtr</code> is useful, it requires mindfulness: try to minimize the scope of such references.</p>
+
+<aside><p>Currently, Zig's HashMap doesn't shrink when items are removed, so, for now, removing items doesn't invalidate any pointers into the hashmap. But expect that to change at some point.</p></aside>
+
+<h3 id=getOrPut><a href="#getOrPut" aria-hidden=true>GetOrPut</a></h3>
+<p><code>getOrPut</code> builds on the above concept. It returns a pointer to the value <strong>and</strong> the key, as well as creating the entry in the hashmap if necessary. For example, given that we already have an entry for "Paul", if we call <code>map.getOrPut("Paul")</code>, we'd get back a <code>value_ptr</code> that points to a slot in the hahmap's <code>values</code> array, as well as a<code>key_ptr</code> that points to a slot in the hashmap's <code>keys</code> array. If the requested key <em>doesn't</em> exist, we get back the same two pointers, and it's our responsibility to set the value.</p>
+
+<p>If I asked you to increment counters inside of a hashmap, without <code>getOrPut</code>, you'd end up with two hash lookups:</p>
+
+{% highlight go %}
+// Go
+count, exists := counters["hits"]
+if exists == false {
+  counters["hits"] = 1
+} else {
+  counters["hits"] = count + 1;
+}
+{% endhighlight %}
+
+<p>With <code>getOrPut</code>, it's a single hash lookup:</p>
+
+{% highlight zig %}
+const gop = try counters.getOrPut("hits");
+if (gop.found_existing) {
+  gop.value_ptr.* += 1;
+} else {
+  gop.value_ptr.* = 1;
+}
+{% endhighlight %}
+
+
+<h3 id=stringKeys><a href="#stringKeys" aria-hidden=true>getOrPut With String Keys</a></h3>
+<p>It seems trivial, but the most important thing to understand about <code>getOrPut</code> is that it will set the key for you if the entry has to be created. In our last example, notice that even when <code>gop.found_existing == false</code>, we never set <code>key_ptr</code> - <code>getOrPut</code> automatically sets it to the key we pass in, i.e. <code>"hits"</code>.</p>
+
+<p>If we were to put a breakpoint after <code>getOrPut</code> returns but before we set the value, we'd see that our two arrays look something like:</p>
+
+{% highlight text %}
+  keys:               values:
+       --------          --------
+       |      |          |      |
+       --------          --------
+       | hits  |         | ???? |
+       --------          --------
+       |      |          |      |
+       --------          --------
+{% endhighlight %}
+
+<p>Where the entry in the <code>keys</code> array is set, but the corresponding entry in <code>values</code> is left undefined. You'll note that <code>getOrPut</code> doesn't take a value. I assume this is because, in some cases, the value might be expensive to derive, so the current API lets us avoid calculating it when <code>gop.found_existing == true</code>.</p>
+
+<p>This is important for keys that need to be owned by the hashmap. Most commonly strings, but this applies to any other key which we'll "manage". Taking a step back, if we wanted to track hits in a hashmap, and, most likely, we wanted the lifetime of the keys to be tied to the hashmap, you'd do something like:</p>
+
+{% highlight zig %}
+fn register(allocator: Allocator, map: *std.StringHashMap(u32), name: []const u8) !void {
+  const owned = try allocator.dupe(u8, name);
+  try map.put(owned, 0);
+}
+{% endhighlight %}
+
+<p>Creating your "owned" copy of <code>name</code>, frees the caller from having to maintain <code>name</code> beyond the call to <code>register</code>. Now, if this key is removed, or the entire map cleaned up, we need to free the keys. That's why I like the name "owned", it means the hash map "owns" the key (i.e. is responsible for freeing it):</p>
+
+{% highlight zig %}
+var it = map.keyIterator();
+while (it.next()) |key_ptr| {
+  allocator.free(key_ptr.*);
+}
+map.deinit(allocator);
+{% endhighlight %}
+
+<p>The interaction between key ownership and <code>getOrPut</code> is worth thinking about. If we try to merge this ownership idea with our incrementing counter code, we might try:</p>
+
+{% highlight zig %}
+fn hit(allocator: Allocator, map: *std.StringHashMap(u32), name: []const u8) !void {
+  const owned = try allocator.dupe(u8, name);
+  const gop = try map.getOrPut(owned);
+  if (gop.found_existing) {
+    gop.value_ptr.* += 1;
+  } else {
+    gop.value_ptr.* = 1;
+  }
+}
+{% endhighlight %}
+
+<p>But this code has a potential memory leak, can you spot it? (see <a href="#appendix-a">Appendix A</a> for a complete runnable example) When <code>gop.found_existing == true</code>, <code>owned</code> is never used and never freed. One bad option would be to free <code>owned</code> when the entry already exists:</p>
+
+{% highlight zig %}
+fn hit(allocator: Allocator, map: *std.StringHashMap(u32), name: []const u8) !void {
+  const owned = try allocator.dupe(u8, name);
+  const gop = try map.getOrPut(owned);
+  if (gop.found_existing) {
+    // This line was added. But this is a bad solution
+    allocator.free(owned);
+    gop.value_ptr.* += 1;
+  } else {
+    gop.value_ptr.* = 1;
+  }
+}
+{% endhighlight %}
+
+<p>It works, but we needlessly <code>dupe</code> <code>name</code> if the entry already exists. Rather than prematurely duping the key in case the entry doesn't exist, we want to delay our <code>dupe</code> until we know it's needed. Here's a better option:</p>
+
+{% highlight zig %}
+fn hit(allocator: Allocator, map: *std.StringHashMap(u32), name: []const u8) !void {
+  // we use `name` for the lookup.
+  const gop = try map.getOrPut(name);
+  if (gop.found_existing) {
+    gop.value_ptr.* += 1;
+  } else {
+    // this line was added
+    gop.key_ptr.* = try allocator.dupe(u8, name);
+    gop.value_ptr.* = 1;
+  }
+}
+{% endhighlight %}
+
+<p>It might seem reckless to pass <code>name</code> into <code>getOrPut</code>. We need the key to remain valid as long as the map entry exists. Aren't we undermining that requirement? Let's walk through the code. When <code>hit</code> is called for a new <code>name</code>, <code>gop.found_existing</code> will be false. <code>getOrPut</code> will insert <code>name</code> in our <code>keys</code> array. This is bad because we have no <code>guarantee</code> that <code>name</code> will be valid for as long as we need it to be. But the problem is immediately remedied when we overwrite <code>key_ptr.*</code>.</p>
+
+<p>On subsequent calls for an existing <code>name</code>, when <code>gop.found_existing == true</code>, the <code>name</code> is only used as a lookup. It's no different than doing a <code>getPtr</code>; <code>name</code> only has to be valid for the call to <code>getOrPut</code> because <code>getOrPut</code> doesn't keep a reference to it when an existing entry is found.</p>
+
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<p>This post was a long way to say: don't be afraid to write to <code>key_ptr.*</code>. Of course you can screw up your map this way. Consider this example:</p>
+
+{% highlight zig %}
+fn hit(allocator: Allocator, map: *std.StringHashMap(u32), name: []const u8) !void {
+    // we use `name` for the lookup.
+    const gop = try map.getOrPut(name);
+    if (gop.found_existing) {
+      gop.value_ptr.* += 1;
+    } else {
+      // what's this?
+      gop.key_ptr.* = "HELLO";
+      gop.value_ptr.* = 1;
+    }
+}
+{% endhighlight %}
+
+<p>Because the key is used to organize the map - find where items go and where they are, jamming random keys where they don't belong is going to cause issues. But it can also be used correctly and safely, as long as you understand the details.</p>
+
+<h3 id=appendix-a><a href="#appendix-a" aria-hidden=true>Appendix A - Memory Leak</a></h3>
+<p>This code <code>should</code> report a memory leak.</p>
+
+{% highlight zig %}
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+
+pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.detectLeaks();
+
+    // I'm using the Unmanaged variant because the Managed ones are likely to
+    // be removed (which I think is a mistake). Using Unmanaged makes this
+    // snippet more future-proof. I explain unmanaged here:
+    // https://www.openmymind.net/Zigs-HashMap-Part-1/#Unmanaged
+    var map: std.StringHashMapUnmanaged(u32) = .{};
+    try hit(allocator, &map, "teg");
+    try hit(allocator, &map, "teg");
+
+    var it = map.keyIterator();
+    while (it.next()) |key_ptr| {
+      allocator.free(key_ptr.*);
+    }
+    map.deinit(allocator);
+}
+
+fn hit(allocator: Allocator, map: *std.StringHashMapUnmanaged(u32), name: []const u8) !void {
+    const owned = try allocator.dupe(u8, name);
+    const gop = try map.getOrPut(allocator, owned);
+    if (gop.found_existing) {
+      gop.value_ptr.* += 1;
+    } else {
+      gop.value_ptr.* = 1;
+    }
+}
+{% endhighlight %}
