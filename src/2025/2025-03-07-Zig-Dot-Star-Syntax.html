@@ -1,0 +1,287 @@
+---
+layout: post
+date: 2025-03-07
+title: "Zig's dot star syntax (value.*)"
+tags: [zig]
+---
+
+<p>Maybe I'm the only one, but it always takes my little brain a split second to understand what's happening whenever I see, or have to write, something like <code>value.* = .{...}</code>.</p>
+
+<p>If we take a step back, a variable is just a convenient name for an address on the stack. When this function executes:</p>
+
+{% highlight zig %}
+fn isOver9000(power: i64) bool {
+    return power > 9000;
+}
+{% endhighlight %}
+
+<p>Say, with a <code>power</code> of 593, we could visualize its stack as:</p>
+
+{% highlight text %}
+power ->  -------------
+          |    593    |
+          -------------
+{% endhighlight %}
+
+<p>If we changed our function to take a pointer to an integer:</p>
+
+{% highlight zig %}
+// i64 changed to *i64
+fn isOver9000(power: *i64) bool {
+    return power > 9000;
+}
+{% endhighlight %}
+
+<p>Our <code>power</code> argument would still be a label for a stack address, but instead of directly containing an number, the stack value would itself be an address. That's the <em>indirection</em> of pointers:</p>
+
+{% highlight text %}
+power ->  -------------
+          | 1182145c0 |------------------------
+          -------------                        |
+                                               |
+          .............  empty space           |
+          .............  or other data         |
+                                               |
+          -------------                        |
+          |    593    | <----------------------
+          -------------
+{% endhighlight %}
+
+<p>But this code doen't work: it's trying to compare a <code>comptime_int</code> (<code>9000</code>) with an <code>*i64</code>. We need to make another change to the function:</p>
+
+{% highlight zig %}
+// i64 changed to *i64
+fn isOver9000(power: *i64) bool {
+    // power changed to power.*
+    return power.* > 9000;
+}
+{% endhighlight %}
+
+<p><code>power.*</code> is how we dereference a pointer. Dereferencing means to get the value pointed to by a pointer. From our above visualization, you could say that the <code>.*</code> follows the arrow to get the value, <code>593</code>.</p>
+
+<p>This same syntax works for writing as well. The following is valid:</p>
+
+{% highlight zig %}
+fn isOver9000(power: *i64) bool {
+    power.* = 9001;
+    return true;
+}
+{% endhighlight %}
+
+<p>Like before, the dereferencing operator (<code>.*</code>), "follows" the pointer, but now that it's on the receiving end of an assignment, we write the value into the pointed add memory.</p>
+
+<p>This is all true for more complex types. Let's say we have a <code>User</code> struct with an <code>id</code> and a <code>name</code>:</p>
+
+{% highlight zig %}
+const User = struct {
+    id: i32,
+    name: []const u8,
+};
+
+var user = User{
+    .id = 900,
+    .name = "Teg"
+};
+{% endhighlight %}
+
+<p>The <code>user</code> variable is a label for the location of the [start of] the user:</p>
+
+{% highlight text %}
+user  ->  -------------
+          |    900    |
+          -------------
+          |     3     |
+          -------------
+          | 3c9414e99 | -----------------------
+          -------------                        |
+                                               |
+          .............  empty space           |
+          .............  or other data         |
+                                               |
+          -------------                        |
+          |     T     | <----------------------
+          -------------
+          |     e     |
+          -------------
+          |     g     |
+          -------------
+{% endhighlight %}
+
+<p>A slice in Zig, like our <code>[]const u8</code>, is a length (<code>3</code>) and a pointer to the values. Now, if we were to take the address of <code>user</code>, via <code>&user</code>, we introduce a level of indirection. For example, imagine this code:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+const User = struct {
+    id: i32,
+    name: []const u8,
+};
+
+pub fn main() !void {
+    var user = User{
+        .id = 900,
+        .name = "Teg"
+    };
+    updateUser(&user);
+    std.debug.print("{d}\n", .{user.id});
+}
+
+fn updateUser(user: *User) void {
+    user.id += 100000;
+}
+{% endhighlight %}
+
+<p>The <code>user</code> parameter of our <code>updateUser</code> function is pointing to the  <code>user</code> on <code>main</code>'s stack:</p>
+
+{% highlight text %}
+updateUser
+user  ->   -------------
+           |  83abcc30 |------------------------
+           -------------                        |
+                                                |
+           .............  empty space           |
+           .............  or other data         |
+                                                |
+main                                            |
+user  ->   -------------                        |
+           |    900    | <----------------------
+           -------------
+           |     3     |
+           -------------
+           | 3c9414e99 | -----------------------
+           -------------                        |
+                                                |
+           .............  empty space           |
+           .............  or other data         |
+                                                |
+           -------------                        |
+           |     T     | <----------------------
+           -------------
+           |     e     |
+           -------------
+           |     g     |
+           -------------
+{% endhighlight %}
+
+<p>Because we're referencing <code>main</code>'s <code>user</code> (rather than a copy), any changes we make will be reflected in <code>main</code>. But, we aren't limited to operating on fields of <code>user</code>, we can operate on its entire memory.</p>
+
+<p>Of course, we can create a copy of the id field (assignment are always copies, just an matter of knowing <em>what</em> we're copying):</p>
+
+{% highlight zig %}
+fn updateUser(user: *User) void {
+    const id = user.id
+    // ....
+}
+{% endhighlight %}
+
+<p>And now the stack for our function looks like:</p>
+
+{% highlight text %}
+user  ->  -------------
+          |  83abcc30 |
+id    ->  -------------
+          |    900    |
+          -------------
+{% endhighlight %}
+
+<p>But we can also copy the entire user:</p>
+
+{% highlight zig %}
+fn updateUser(user: *User) void {
+    const copy = user.*;
+    // ....
+}
+{% endhighlight %}
+
+<p>Whch gives us something like:</p>
+
+{% highlight text %}
+updateUser
+user  ->  -------------
+          |  83abcc30 |---------------------
+copy  ->  -------------                     |
+          |    900    |                     |
+          -------------                     |
+          |     3     |                     |
+          -------------                     |
+          | 3c9414e99 | --------------------|--
+          -------------                     |  |
+                                            |  |
+          .............  empty space        |  |
+          .............  or other data      |  |
+                                            |  |
+main                                        |  |
+user   -> -------------                     |  |
+          |    900    | <-------------------   |
+          -------------                        |
+          |     3     |                        |
+          -------------                        |
+          | 3c9414e99 | -----------------------|
+          -------------                        |
+                                               |
+          .............  empty space           |
+          .............  or other data         |
+                                               |
+          -------------                        |
+          |     T     | <----------------------
+          -------------
+          |     e     |
+          -------------
+          |     g     |
+          -------------
+{% endhighlight %}
+
+<p>Notice that it didn't create a copy of the value 'Teg'. You could call this copying "shallow": it copied the <code>900</code>, the <code>3</code> (name length) and the <code>3c9414e99</code> (address of the name pointer).</p>
+
+<p>Just like our simpler example above, we can also assign using the dereferencing operator:</p>
+
+{% highlight zig %}
+fn updateUser(user: *User) void {
+    // using type inference
+    // could be more explicit and do
+    // user.* = User{....}
+
+    user.* = .{
+        .id = 5,
+        .name = "Paul",
+    };
+}
+{% endhighlight %}
+
+
+<p>This doesn't copy anything; it writes into the address that we were given, the address of the main's <code>user</code>:</p>
+
+{% highlight text %}
+updateUser
+user  ->  -------------
+          |  83abcc30 |------------------------
+          -------------                        |
+                                               |
+          .............  empty space           |
+          .............  or other data         |
+                                               |
+main                                        |  |
+user  ->  -------------                        |
+          |     5     | <----------------------
+          -------------
+          |     4     |
+          -------------
+          | 9bf4a990  | -----------------------
+          -------------                        |
+                                               |
+          .............  empty space           |
+          .............  or other data         |
+                                               |
+          -------------                        |
+          |     P     | <----------------------
+          -------------
+          |     a     |
+          -------------
+          |     u     |
+          -------------
+          |     l     |
+          -------------
+{% endhighlight %}
+
+
+<p>If you're still not fully comfortable with this, and if you haven't done so already, you might be interested in the <a href="/learning_zig/pointers/">pointers</a> and <a href="/learning_zig/stack_memory/">stack memory</a> parts of my learning zig series.</p>
