@@ -1,0 +1,151 @@
+---
+layout: post
+date: 2025-03-15
+title: "ArenaAllocator.free and Nested Arenas"
+tags: [zig]
+---
+<p>What happens when you <code>free</code> with an ArenaAllocator? You might be tempted to look at the documentation for <a href="https://ziglang.org/documentation/master/std/#std.mem.Allocator.free">std.mem.Alloctor.free</a> which says "Free an array allocated with alloc". But this is the one thing we're sure it <em>won't</em> do.</p>
+
+<p>In its current implementation, calling <code>free</code> usually does nothing: the freed memory isn't made available for subsequent allocations by the arena, and it certainly isn't released back to the operating system. However, under specific conditions <code>free</code> will make the memory re-usable by the arena. The only way to really "free" the memory is to call <code>deinit</code>.</p>
+
+<p>The only case when we're guaranteed that the memory will be reusable by the arena is when it was the last allocation made:</p>
+
+{% highlight zig %}
+const str1 = try arena.dupe(u8, "Over 9000!!!");
+arena.free(str1);
+{% endhighlight %}
+
+<p>Above, whatever memory was allocated to duplicate our string will be available for subsequent allocations made with <code>arena</code>. In the following case, the two calls to <code>arena.free</code> do nothing:</p>
+
+{% highlight zig %}
+const str1 = try arena.dupe(u8, "ab");
+const str2 = try arena.dupe(u8, "12");
+arena.free(str1);
+arena.free(str2);
+{% endhighlight %}
+
+<p>In order to  "fix" this code, we'd need to reverse the order of the two frees:</p>
+
+{% highlight zig %}
+const str1 = try arena.dupe(u8, "ab");
+const str2 = try arena.dupe(u8, "12");
+arena.free(str2);  //swapped this line with the next
+arena.free(str1);
+{% endhighlight %}
+
+<p>Now, when we call <code>arena.free(str2)</code>, the memory allocated for <code>str2</code> will be available to subsequent allocations. But what happens when we call <code>arena.free(str1)</code>? The answer, again, is: <em>it depends</em>. It has to do with the internal state of the arena. Simplistically, an <code>ArenaAllocator</code> keeps a linked list of memory buffers. Imagine something like:</p>
+
+{% highlight text %}
+buffer_list.head -> ------------
+                    |   next   | -> null
+                    |   ----   |
+                    |          |
+                    |          |
+                    |          |
+                    |          |
+                    |          |
+                    ------------
+{% endhighlight %}
+
+<p>Our linked list has a single node along with 5 bytes of available space. After we allocate <code>str1</code>, it looks like:</p>
+
+{% highlight text %}
+buffer_list.head -> ------------
+                    |   next   | -> null
+                    |   ----   |
+            str1 -> |    a     |
+                    |    b     |
+                    |          |
+                    |          |
+                    |          |
+                    ------------
+{% endhighlight %}
+
+<p>Then, when we allocate <code>str2</code>, it looks like:</p>
+
+{% highlight text %}
+buffer_list.head -> ------------
+                    |   next   | -> null
+                    |   ----   |
+            str1 -> |    a     |
+                    |    b     |
+            str2 -> |    1     |
+                    |    2     |
+                    |          |
+                    ------------
+{% endhighlight %}
+
+<p>When we free <code>str2</code>, it goes back to how it was before:</p>
+
+{% highlight text %}
+buffer_list.head -> ------------
+                    |   next   | -> null
+                    |   ----   |
+            str1 -> |    a     |
+                    |    b     |
+                    |          |
+                    |          |
+                    |          |
+                    ------------
+{% endhighlight %}
+
+<p>Which means that when we <code>arena.free(str1)</code>, it <strong>will</strong> make that memory available again. However, if instead of allocating two strings, we allocate three:</p>
+
+{% highlight zig %}
+const str1 = try arena.dupe(u8, "ab");
+const str2 = try arena.dupe(u8, "12");
+const str3 = try arena.dupe(u8, "()");
+arena.free(str3);
+arena.free(str2);
+arena.free(str1);
+{% endhighlight %}
+
+<p>Our first buffer doesn't have enough space for the new string, so a new node is prepended to our linked list:</p>
+
+{% highlight text %}
+buffer_list.head -> ------------    ------------
+                    |   next   | -> |   next   | -> null
+                    |   ----   |    |   ----   |
+            str3 -> |    (     |    |    a     | <- str1
+                    |    )     |    |    b     |
+                    |          |    |    1     | <- str2
+                    |          |    |    2     |
+                    |          |    |          |
+                    ------------    ------------
+{% endhighlight %}
+
+<p>When we call <code>arena.free(str3)</code>, the memory for that allocation will be made available, but subsequent frees, even if they're in the correct order (i.e. freeing <code>str2</code> then <code>str1</code>) will be noops. The ArenaAllocator doesn't have the capability to go back to act on anything but the head of our linked list, even if it's empty.</p>
+
+<p>In short, when we <code>free</code> the last allocation, that memory will <em>always</em> be made available. But subsequent <code>frees</code> only behave this way if (a) they're also in order and (b) happen to be allocate within the same internal memory node.</p>
+
+<h3 id=nested><a href="#nested" aria-hidden=true>Nested Arenas</a></h3>
+<p>Zig's allocator are said to be composable. When we create an <code>ArenaAllocator</code>, we pass a single parameter: an allocator. That parent allocator <sup>(1)</sup> can be any other type of allocator. You can, for example, create an <code>ArenaAllocator</code> on top of a <code>FixedBufferAllocator</code>. You can also create an <code>ArenaAllocator</code> on top of another <code>ArenaAllocator</code>.</p>
+
+<aside><p><sup>(1)</sup> Zig calls this the "child allocator", but that doesn't make any sense to me.</p></aside>
+
+<p>This kind of thing often happens within libraries, where an API takes an <code>std.mem.Allocator</code> and the library creates an <code>ArenaAllocator</code>. And what happens when the provided allocator was already an arena? Libraries aside, I'm mean something like:</p>
+
+{% highlight zig %}
+var parent_arena = ArenaAllocator.init(gpa_allocator);
+const parent_allocator = parent_arena.allocator();
+
+var inner_arena = ArenaAllocator.init(parent_allocator);
+const inner_allocator = inner_arena.allocator();
+
+_ = try inner_allocator.dupe(u8, "Over ");
+_ = try inner_allocator.dupe(u8, "9000!");
+
+inner_arena.deinit();
+{% endhighlight %}
+
+<p>It does work, but at best, when <code>deinit</code> is called, the memory will be made available to be re-used by <code>inner_arena</code>. Except in simple cases, allocations made by <code>inner_arena</code> are likely to span multiple buffers of <code>parent_arena</code>, and of course you can still make allocations directly in <code>parent_arena</code> which can generate its own new buffers or simply make the ordering requirement impossible to fulfill. For example, if we make an allocation in <code>parent_arena</code> before <code>inner_arena.deinit();</code> is called:</p>
+
+{% highlight zig %}
+_ = try parent_allocator.dupe(u8, "!!!");
+inner_arena.deinit();
+{% endhighlight %}
+
+<p>Then the <code>deinit</code> does nothing.</p>
+
+<p>So while nesting ArenaAllocator's works, I don't think there's any advantage over using a single Arena. And, I think in many cases where you have an "inner_arena", like in a library, it's better if the caller provides a non-Arena parent allocator so that all the memory is really freed when the library is done with it. Of course, there's a transparency issue here. Unless the library documents exactly how it's using your provided allocator, or unless you explore the code - and assuming the implementation doesn't change - it's had hard to know what you should use.</p>
+
