@@ -302,12 +302,25 @@ const b = a[1..4];
 
 		<p>I'd love to be able to tell you that <code>b</code> is a slice with a length of 3 and a pointer to <code>a</code>. But because we "sliced" our array using values that are known at compile time, i.e. <code>1</code> and <code>4</code>, our length, <code>3</code>, is also known at compile time. Zig figures all this out and thus <code>b</code> isn't a slice, but rather a pointer to an array of integers with a length of 3. Specifically, its type is <code>*const [3]i32</code>. So this demonstration of a slice is foiled by Zig's cleverness.</p>
 
-		<p>In real code, you'll likely use slices more than arrays. For better or worse, programs tend to have more runtime information than compile time information. In a small example though, we have to trick the compiler to get what we want:</p>
+		<p>In real code, you'll likely use slices more than arrays. For better or worse, programs tend to have more runtime information than compile time information. There's an easy way and a hard way to get an actual slice from this specific example. The easy way is to give <code>b</code> an explicit slice-type:</p>
 
 {% highlight zig %}
 const a = [_]i32{1, 2, 3, 4, 5};
+const b: []const i32 = a[1..4];
+{% endhighlight %}
+
+		<p>The hard way (at least in a micro-example) is to make one of the range values runtime-known:</p>
+
+{% highlight zig %}
+const a = [_]i32{1, 2, 3, 4, 5};
+
+// because `end` is declared var, it isn't compiled-time known
 var end: usize = 3;
+
+// but because it's a `var` we need to mutate it, else the compiler
+// will insist we make it `const`.
 end += 1;
+
 const b = a[1..end];
 {% endhighlight %}
 
