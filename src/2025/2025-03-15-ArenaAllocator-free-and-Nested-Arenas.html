@@ -4,7 +4,7 @@ date: 2025-03-15
 title: "ArenaAllocator.free and Nested Arenas"
 tags: [zig]
 ---
-<p>What happens when you <code>free</code> with an ArenaAllocator? You might be tempted to look at the documentation for <a href="https://ziglang.org/documentation/master/std/#std.mem.Allocator.free">std.mem.Alloctor.free</a> which says "Free an array allocated with alloc". But this is the one thing we're sure it <em>won't</em> do.</p>
+<p>What happens when you <code>free</code> with an ArenaAllocator? You might be tempted to look at the documentation for <a href="https://ziglang.org/documentation/master/std/#std.mem.Allocator.free">std.mem.Allocator.free</a> which says "Free an array allocated with alloc". But this is the one thing we're sure it <em>won't</em> do.</p>
 
 <p>In its current implementation, calling <code>free</code> usually does nothing: the freed memory isn't made available for subsequent allocations by the arena, and it certainly isn't released back to the operating system. However, under specific conditions <code>free</code> will make the memory re-usable by the arena. The only way to really "free" the memory is to call <code>deinit</code>.</p>
 
@@ -147,5 +147,5 @@ inner_arena.deinit();
 
 <p>Then the <code>deinit</code> does nothing.</p>
 
-<p>So while nesting ArenaAllocator's works, I don't think there's any advantage over using a single Arena. And, I think in many cases where you have an "inner_arena", like in a library, it's better if the caller provides a non-Arena parent allocator so that all the memory is really freed when the library is done with it. Of course, there's a transparency issue here. Unless the library documents exactly how it's using your provided allocator, or unless you explore the code - and assuming the implementation doesn't change - it's had hard to know what you should use.</p>
+<p>So while nesting ArenaAllocator's works, I don't think there's any advantage over using a single Arena. And, I think in many cases where you have an "inner_arena", like in a library, it's better if the caller provides a non-Arena parent allocator so that all the memory is really freed when the library is done with it. Of course, there's a transparency issue here. Unless the library documents exactly how it's using your provided allocator, or unless you explore the code - and assuming the implementation doesn't change - it's hard to know what you should use.</p>
 
