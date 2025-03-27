@@ -1,0 +1,145 @@
+---
+layout: post
+date: 2025-03-27
+title: "Allocator.resize"
+tags: [zig]
+---
+
+<p>There are four important methods on Zig's <code>std.mem.Allocator</code> interface that Zig developers must be comfortable with:</p>
+
+<ul>
+  <li><code>alloc(T, n)</code> - which creates an array of <code>n</code> items of type <code>T</code>,</li>
+  <li><code>free(ptr)</code> - which frees memory allocate with <code>alloc</code> (although, this <a href="/ArenaAllocator-free-and-Nested-Arenas/">is implementation specific</a>),</li>
+  <li><code>create(T)</code> - which creates a single item of type <code>T</code>, and
+  <li><code>destroy(ptr)</code> - which destroys an item created with <code>create</code></li>
+</ul>
+
+<p>While you might never need to use them, the <code>Allocator</code> interface also has other methods which, if nothing else, can be useful to be aware of and informative to learn a bit about.</p>
+
+<p>In particularly, the <code>resize</code> method is used to try and resize an existing allocation to a larger (or smaller) size. The main promise of <code>resize</code> is that it's guaranteed <em>not</em> to move the pointer. However, to satisfy that guarantee, resize is allowed to fail, in which case nothing changes.</p>
+
+<p>We can imagine a simple allocation:</p>
+
+
+{% highlight text %}
+// var buf = try allocator.alloc(u8, 5);
+// buf[0] = 'h'
+
+           0x102e00000
+           -------------------------------
+buf.ptr -> |  h  |     |     |     |     |
+          --------------------------------
+{% endhighlight %}
+
+<p>Now, if we were to call <code>allocator.resize(buf, 7)</code>, there are be two possible outcomes. The first is that the call returns <code>false</code>, indicating that the resize operation fails, and thus nothing changed::</p>
+
+{% highlight text %}
+           0x102e00000
+           -------------------------------
+buf.ptr -> |  h  |     |     |     |     |
+          --------------------------------
+{% endhighlight %}
+
+
+<p>However, when <code>resize</code> succeeds and returns <code>true</code>, the allocated space has grown without having relocated (i.e. moved) the pointer:</p>
+
+{% highlight text %}
+           0x102e00000
+           -------------------------------------------
+buf.ptr -> |  h  |     |     |     |     |     |     |
+          --------------------------------------------
+{% endhighlight %}
+
+<p>Now under what circumstances <code>resize</code> succeeds and fails is a black box. It depends on a lot of factors and is going to be allocator-specific. For example, for me, this code prints <code>false</code> indicating that the resize failed:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    const allocator = gpa.allocator();
+    _ = gpa.detectLeaks();
+
+    const buf = try allocator.alloc(usize, 10);
+    std.debug.print("{any}\n", .{allocator.resize(buf, 20)});
+    allocator.free(buf);
+}
+{% endhighlight %}
+
+<p>Because we're using a <code>GeneralPurposeAllocator</code> (that name is deprecated in Zig 0.14 in favor of <code>DebugAllocator</code>) we could dive into its internals and try to leverage knowledge of its implementation to force a resize to succeed, but a simpler option is to resize our buffer to <code>0</code>:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    const allocator = gpa.allocator();
+    _ = gpa.detectLeaks();
+
+    const buf = try allocator.alloc(usize, 10);
+    // change 20 -> 0
+    std.debug.print("{any}\n", .{allocator.resize(buf, 0)});
+    allocator.free(buf);
+}
+{% endhighlight %}
+
+<p>Success, the code now prints <code>true</code>, indicating that the resize succeeded. However, I also get <strong>segfault</strong>. Can you guess what we're doing wrong?</p>
+
+<p>In our above visualization, we saw how a successful resize does not move our pointer. We can confirm this by looking at the address of <code>buf.ptr</code> before and after our resize. This code still segfaults, but it prints out the information first:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    const allocator = gpa.allocator();
+    _ = gpa.detectLeaks();
+
+    const buf = try allocator.alloc(usize, 10);
+    std.debug.print("address before resize: {*}\n", .{buf.ptr});
+    std.debug.print("resize succeeded: {any}\n", .{allocator.resize(buf, 0)});
+    std.debug.print("address after resize: {*}\n", .{buf.ptr});
+    allocator.free(buf);
+}
+{% endhighlight %}
+
+<p>So far, we've only considered the <code>ptr</code> of our slice, but, like the criminal justice system, a slice is represented by two separate yet equally important groups: a <code>ptr</code> and a <code>len</code>. If we change our code to also look at the <code>len</code> of <code>buf</code>, the issue might become more obvious:</p>
+
+{% highlight zig %}
+// change the 1st and 3rd line to also print buf.len:
+std.debug.print("address & len before resize: {*} {d}\n", .{buf.ptr, buf.len});
+std.debug.print("resize succeeded: {any}\n", .{allocator.resize(buf, 0)});
+std.debug.print("address & len after resize: {*} {d}\n", .{buf.ptr, buf.len});
+{% endhighlight %}
+
+<p>This is what I get:</p>
+
+{% highlight text %}
+address & len before resize: usize@100280000 10
+resize succeeded: true
+address & len after resize: usize@100280000 10
+Segmentation fault at address 0x100280000
+{% endhighlight %}
+
+<p>While it isn't the cleanest output, notice that even after we successfully resize our ptr, the length remains unchanged (i.e. <code>10</code>). Herein lies our bug problem. <code>resize</code> updates the underlying memory, it doesn't update the length of the slice. That's something we need to take care of. Here's a non-crashing version:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    const allocator = gpa.allocator();
+    _ = gpa.detectLeaks();
+
+    var buf = try allocator.alloc(usize, 10);
+    if (allocator.resize(buf, 0)) {
+        std.debug.print("resize succeeded!\n", .{});
+        buf.len = 0;
+    } else {
+        // we need to handle the case where resize doesn't succeed
+    }
+
+    allocator.free(buf);
+}
+{% endhighlight %}
+
+<p>What's left out of the above code is handling the case where <code>resize</code> fails. This becomes application specific. In most cases, where we're likely resizing to a larger size, we'll generally need to fallback to calling <code>alloc</code> to create our larger memory, and then, most likely, <code>@memcpy</code> to copy data from the existing (now too small) buffer to the newly created larger one.</p>
+
