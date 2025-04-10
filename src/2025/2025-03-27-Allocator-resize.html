@@ -14,7 +14,7 @@ tags: [zig]
   <li><code>destroy(ptr)</code> - which destroys an item created with <code>create</code></li>
 </ul>
 
-<p>While you might never need to use them, the <code>Allocator</code> interface also has other methods which, if nothing else, can be useful to be aware of and informative to learn a bit about.</p>
+<p>While you might never need to use them, the <code>Allocator</code> interface has other methods which, if nothing else, can be useful to be aware of and informative to learn about.</p>
 
 <p>In particularly, the <code>resize</code> method is used to try and resize an existing allocation to a larger (or smaller) size. The main promise of <code>resize</code> is that it's guaranteed <em>not</em> to move the pointer. However, to satisfy that guarantee, resize is allowed to fail, in which case nothing changes.</p>
 

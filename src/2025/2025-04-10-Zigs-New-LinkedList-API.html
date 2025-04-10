@@ -1,0 +1,153 @@
+---
+layout: post
+date: 2025-04-10
+title: "Zig's new LinkedList API (it's time to learn @fieldParentPtr)"
+tags: [zig]
+---
+
+<p>In a recent, post-Zig 0.14 commit, Zig's <code>SinglyLinkedList</code> and <code>DoublyLinkedList</code> saw <a href="https://github.com/ziglang/zig/commit/1639fcea43549853f1fded32aa1d711d21771e1c">significant changes</a>.</p>
+
+<p>The previous version was a generic and, with all the methods removed, looked like:</p>
+
+{% highlight zig %}
+pub fn SinglyLinkedList(comptime T: type) type {
+  return struct {
+    first: ?*Node = null,
+
+    pub const Node = struct {
+      next: ?*Node = null,
+      data: T,
+    };
+  };
+}
+{% endhighlight %}
+
+<p>The new version isn't generic. Rather, you embed the linked list node with your data. This is known as an intrusive linked list and tends to perform better and require fewer allocations. Except in trivial examples, the data that we store in a linked list is typically stored on the heap. Because an intrusive linked list has the linked list node embedded in the data, it doesn't need its own allocation. Before we jump into an example, this is what the new structure looks like, again, with all methods removed:</p>
+
+{% highlight zig %}
+pub const SinglyLinkedList = struct {
+  first: ?*Node = null,
+
+  pub const Node = struct {
+    next: ?*Node = null,
+  };
+};
+{% endhighlight %}
+
+<p>Much simpler, and, notice that this has no link or reference to any of our data. Here's a working example that shows how you'd use it:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const SinglyLinkedList = std.SinglyLinkedList;
+
+pub fn main() !void {
+    // GeneralPurposeAllocator is being renamed
+    // to DebugAllocator. Let's get used to that name
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    const allocator = gpa.allocator();
+
+    var list: SinglyLinkedList = .{};
+
+    const user1 = try allocator.create(User);
+    defer allocator.destroy(user1);
+    user1.* = .{
+        .id = 1,
+        .power = 9000,
+        .node = .{},
+    };
+    list.prepend(&user1.node);
+
+    const user2 = try allocator.create(User);
+    defer allocator.destroy(user2);
+    user2.* = .{
+        .id = 2,
+        .power = 9001,
+        .node = .{},
+    };
+    list.prepend(&user2.node);
+
+    var node = list.first;
+    while (node) |n| {
+        std.debug.print("{any}\n", .{n});
+        node = n.next;
+    }
+}
+
+const User = struct {
+    id: i64,
+    power: u32,
+    node: SinglyLinkedList.Node,
+};
+{% endhighlight %}
+
+<p>To run this code, you'll need a nightly release from within the last week. What do you think the output will be? You should see something like:</p>
+
+{% highlight text %}
+SinglyLinkedList.Node{ .next = SinglyLinkedList.Node{ .next = null } }
+SinglyLinkedList.Node{ .next = null }
+{% endhighlight %}
+
+<p>We're only getting the nodes, and, as we can see here and from the above skeleton structure of the new <code>SinglyLinkedList</code>, there's nothing about our users. Users have nodes, but there's seemingly nothing that links a node back to its containing user. Or is there?</p>
+
+<p>In the past, we've described how <a href="/learning_zig/pointers/">the compiler uses the type information</a> to figure out how to access fields. For example, when we execute <code>user1.power</code>, the compiler knows that that:</p>
+
+<ol>
+  <li><code>id</code> is +0 bytes from the start of the structure,
+  <li><code>power</code> is +8 bytes from the start of the structure (because id is an i64), and
+  <li><code>power</code> is an i32
+</ol>
+
+<p>With this information, the compiler knows how to access <code>power</code> from <code>user1</code> (i.e. jump forward 8 bytes, read 4 bytes and treat it as an i32). But if you think about it, that's can be reversed. If we know the address of <code>power</code>, then the address of <code>user</code> has to be <code>address_of_power - 8</code>. We can prove this:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var user = User{
+        .id = 1,
+        .power = 9000,
+    };
+    std.debug.print("address of user: {*}\n", .{&user});
+
+    const address_of_power = &user.power;
+    std.debug.print("address of power: {*}\n", .{address_of_power});
+
+    const power_offset = 8;
+    const also_user: *User = @ptrFromInt(@intFromPtr(address_of_power) - power_offset);
+    std.debug.print("address of also_user: {*}\n", .{also_user});
+
+    std.debug.print("also_user: {}\n", .{also_user});
+}
+
+const User = struct {
+    id: i64,
+    power: u32,
+};
+{% endhighlight %}
+
+<p>The magic happens on this line of code:</p>
+
+{% highlight zig %}
+const power_offset = 8;
+const also_user: *User = @ptrFromInt(@intFromPtr(address_of_power) - power_offset);
+{% endhighlight %}
+
+<p>We're turning the address of our user's power field, <code>&user.power</code> into an integer, subtracting 8 (8 bytes, 64 bits), and telling the compiler that it should treat that memory as a <code>*User</code>. This code will <em>probably</em> work for you, but it isn't safe. Specifically, unless we're using a packed or extern struct, Zig makes no guarantees about the layout of a structure. It could put <code>power</code> BEFORE <code>id</code>, in which case our <code>power_offset</code> should be 0. It could add padding after every field. It can do anything it wants. To make this code safer, we use the <code>@offsetOf</code> builtin to get the actual byte-offset of a field with respect to its struct:</p>
+
+{% highlight zig %}
+const power_offset = @offsetOf(User, "power");
+{% endhighlight %}
+
+<p>Back to our linked list, given that we have the address of a <code>node</code> and we know that it is part of the <code>User</code> structure, we <em>are</em> able to get the <code>User</code> from a node. Rather than use the above code though, we'll use the <em>slightly</em> friendlier <code>@fieldParentPtr</code> builtin. Our <code>while</code> loop changes to:</p>
+
+{% highlight zig %}
+while (node) |n| {
+  const user: *User = @fieldParentPtr("node", n);
+  std.debug.print("{any}\n", .{user});
+  node = n.next;
+}
+{% endhighlight %}
+
+<p>We give <code>@fieldParentPtr</code> the name of the field, a pointer to that field as well as a return type (which is inferred above by the assignment to a <code>*User</code> variable), and it gives us back the instance that contains that field.</p>
+
+<p>Performance aside, I have mixed feelings about the new API. My initial reaction is that I dislike exposing, what I consider, a complicated builtin like <code>@fieldParentPtr</code> for something as trivial as using a linked list. However, while <code>@fieldParentPtr</code> seems esoteric, it's quite useful and developers should be familiar with it because it can help solve problems which are otherwise problematic.</p>
