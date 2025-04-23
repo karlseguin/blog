@@ -131,7 +131,7 @@ const Writer = struct {
     const gen = struct {
       pub fn writeAll(pointer: *anyopaque, data: []const u8) anyerror!void {
         const self: T = @ptrCast(@alignCast(pointer));
-        return ptr_info.Pointer.child.writeAll(self, data);
+        return ptr_info.@"pointer".child.writeAll(self, data);
       }
     };
 
@@ -165,11 +165,11 @@ fn writer(self: *File) Writer {
 
 <p>In the original version, each implementation is responsible for converting <code>*anyopaque</code> to the correct type. Essentially by including that one line of code, <code>@ptrCast(@alignCast(ptr))</code>. In this fancy version, each implementation also has its own code to do this conversion, we've just managed to embed it in the interface and leveraged Zig's comptime capabilities to generate the code for us.</p>
 
-<p>The last part of this code is the function invocation, via <code>ptr_info.Pointer.child.writeAll(self, data)</code>. <code>@typeInfo(T)</code> returns a <code>std.builtin.Type</code> which is a tagged union that describes a type. It can describe 24 different types, such as integers, optional, structs, pointers, etc. Each type has its own properties. For example, an integer has a <code>signedness</code> which other types don't. Here's what <code>@typeInfo(*File)</code></code> looks like:</p>
+<p>The last part of this code is the function invocation, via <code>ptr_info.pointer.child.writeAll(self, data)</code>. <code>@typeInfo(T)</code> returns a <code>std.builtin.Type</code> which is a tagged union that describes a type. It can describe 24 different types, such as integers, optional, structs, pointers, etc. Each type has its own properties. For example, an integer has a <code>signedness</code> which other types don't. Here's what <code>@typeInfo(*File)</code></code> looks like:</p>
 
 {% highlight zig %}
 builtin.Type{
-  .Pointer = builtin.Type.Pointer{
+  .pointer = .
     .address_space = builtin.AddressSpace.generic,
     .alignment = 4,
     .child = demo.File,
@@ -177,18 +177,18 @@ builtin.Type{
     .is_const = false,
     .is_volatile = false,
     .sentinel = null,
-    .size = builtin.Type.Pointer.Size.One
+    .size = builtin.Type.pointer.size.one
   }
 }
 {% endhighlight %}
 
-<p>The <code>child</code> field is the actual type behind the pointer. When <code>init</code> is called with a <code>*File</code>, <code>ptr_info.Pointer.child.writeAll(...)</code> translates to <code>File.writeAll(...)</code>, exactly what we want.</p>
+<p>The <code>child</code> field is the actual type behind the pointer. When <code>init</code> is called with a <code>*File</code>, <code>ptr_info.pointer.child.writeAll(...)</code> translates to <code>File.writeAll(...)</code>, exactly what we want.</p>
 
 <p>If you look at other implementations of this pattern, you might find their <code>init</code> function does a few more things. For example, you might find these two additional lines of code after <code>ptr_info</code> is created:</p>
 
 {% highlight zig %}
-if (ptr_info != .Pointer) @compileError("ptr must be a pointer");
-if (ptr_info.Pointer.size != .One) @compileError("ptr must be a single item pointer");
+if (ptr_info != .pointer) @compileError("ptr must be a pointer");
+if (ptr_info.pointer.size != .One) @compileError("ptr must be a single item pointer");
 {% endhighlight %}
 
 <p>The purpose of these is to add additional compile-time checks on the type of value passed to <code>init</code>. Essentially making sure that we passed it a pointer to a single item.</p>
@@ -196,13 +196,13 @@ if (ptr_info.Pointer.size != .One) @compileError("ptr must be a single item poin
 <p>Also, instead of calling the function via:</p>
 
 {% highlight zig %}
-ptr_info.Pointer.child.writeAll(self, data);
+ptr_info.pointer.child.writeAll(self, data);
 {% endhighlight %}
 
 <p>You might see:</p>
 
 {% highlight zig %}
-@call(.always_inline, ptr_info.Pointer.child.writeAll, .{self, data});
+@call(.always_inline, ptr_info.pointer.child.writeAll, .{self, data});
 {% endhighlight %}
 
 <p>The <code>@call</code> builtin function, is the same as calling a function directly (as we did), but gives more flexibility by allowing us to supply a <code>CallModifier</code>. As you can see, using <code>@call</code> allows us to tell the compiler to inline the function.</p>

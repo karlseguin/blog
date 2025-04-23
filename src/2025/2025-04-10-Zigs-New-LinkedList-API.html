@@ -89,7 +89,7 @@ SinglyLinkedList.Node{ .next = null }
 
 <p>We're only getting the nodes, and, as we can see here and from the above skeleton structure of the new <code>SinglyLinkedList</code>, there's nothing about our users. Users have nodes, but there's seemingly nothing that links a node back to its containing user. Or is there?</p>
 
-<p>In the past, we've described how <a href="/learning_zig/pointers/">the compiler uses the type information</a> to figure out how to access fields. For example, when we execute <code>user1.power</code>, the compiler knows that that:</p>
+<p>In the past, we've described how <a href="/learning_zig/pointers/">the compiler uses the type information</a> to figure out how to access fields. For example, when we execute <code>user1.power</code>, the compiler knows that:</p>
 
 <ol>
   <li><code>id</code> is +0 bytes from the start of the structure,
@@ -97,7 +97,7 @@ SinglyLinkedList.Node{ .next = null }
   <li><code>power</code> is an i32
 </ol>
 
-<p>With this information, the compiler knows how to access <code>power</code> from <code>user1</code> (i.e. jump forward 8 bytes, read 4 bytes and treat it as an i32). But if you think about it, that's can be reversed. If we know the address of <code>power</code>, then the address of <code>user</code> has to be <code>address_of_power - 8</code>. We can prove this:</p>
+<p>With this information, the compiler knows how to access <code>power</code> from <code>user1</code> (i.e. jump forward 8 bytes, read 4 bytes and treat it as an i32). But if you think about it, that logic is simple to reverse. If we know the address of <code>power</code>, then the address of <code>user</code> has to be <code>address_of_power - 8</code>. We can prove this:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -125,7 +125,7 @@ const User = struct {
 };
 {% endhighlight %}
 
-<p>The magic happens on this line of code:</p>
+<p>The magic happens here:</p>
 
 {% highlight zig %}
 const power_offset = 8;
