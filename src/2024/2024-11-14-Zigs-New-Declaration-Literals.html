@@ -146,7 +146,7 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){
 <p>Whereas declaration literals requires setting the field explicitly:</p>
 
 {% highlight zig %}
-var gpa = std.heap.GeneralPurposeAllocator(.{}) = .init;
+var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
 gpa.requested_memory_limit = 1_048_576;
 {% endhighlight %}
 
