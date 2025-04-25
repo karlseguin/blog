@@ -150,4 +150,6 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}) = .init;
 gpa.requested_memory_limit = 1_048_576;
 {% endhighlight %}
 
+Decl literals can also be used to ensure data <a href="https://ziglang.org/download/0.14.0/release-notes.html#Decl-Literals">invariants are not violated</a> by overriding single fields.
+
 <p>I think it's still a nice addition to the language, but one of Zig's zen is "Only one obvious way to do things" and, at this point, for me, "obvious" this is not. It isn't obvious which approach I should use in my own structs and which is being used by other structs, including the standard library.</p>
