@@ -29,7 +29,7 @@ pub fn main() !void {
 
 <p>This first parameter is called the <code>domain</code> and it'll usually be <code>INET</code> or <code>INET6</code>. We make our life a bit easier by using our <code>address</code>'s family for that parameter. The next parameter serves two purposes. First  it sets the type of socket we're creating. For TCP this will be <code>SOCK.STREAM</code>. For UDP we'd use <code>SOCK.DGRAM</code>. The second purpose is as a bitwise OR flag for different behavior. For now we don't set any flag, but we will use <code>posix.SOCK.STREAM | posix.SOCK.NONBLOCK</code> in a later part. Finally, we specify <code>TCP</code> as the protocol that we'll be using.</p>
 
-<p>At this point, we could make use our newly created socket in one of two ways. We could use <code>posix.connect</code> to create a client to connect to a server over TCP. Alternatively, and what we want, is to use <code>posix.listen</code> to flag our socket as a listening socket, a server, that can accept connections:</p>
+<p>At this point, we could use our newly created socket in one of two ways. We could use <code>posix.connect</code> to create a client to connect to a server over TCP. Alternatively, and what we want, is to use <code>posix.listen</code> to flag our socket as a listening socket, a server, that can accept connections:</p>
 
 {% highlight zig %}
 pub fn main() !void {
