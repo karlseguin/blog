@@ -13,7 +13,8 @@ permalink: "/learning_zig/stack_memory/"
 </div>
 
 <article>
-	<section>
+<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2025 and largely kept up to date. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
+
 		<h1 tabindex=-1 id=stack_memory><a href=#stack_memory aria-hidden=true>Stack Memory</a></h1>
 
 		<p>Diving into pointers provided insight into the relationship between variables, data and memory. So we're getting a sense of what the memory looks like, but we've yet to talk about how data and, by extension, memory is managed. For short lived and simple scripts, this likely doesn't matter. In an age of 32GB laptop, you can start your program, use a few hundred megabytes of RAM reading a file and parsing an HTTP response, do something amazing, and exit. On program exit, the OS knows that whatever memory it gave your program can now be used for something else.</p>
@@ -25,7 +26,6 @@ permalink: "/learning_zig/stack_memory/"
 		<p>The second area of memory is the call stack, the topic for this part. The third area is the heap, the topic for our next part.</p>
 
 		<aside>There isn't a real physical difference between the areas of memory, it's a concept created by the OS and the executable.</aside>
-	</section>
 
 	<section>
 		<h2 tabindex=-1 id=stack_frames><a href=#stack_frames aria-hidden=true>Stack Frames</a></h2>

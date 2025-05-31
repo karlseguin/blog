@@ -13,10 +13,9 @@ permalink: "/learning_zig/coding_in_zig/"
 </div>
 
 <article>
-	<section>
-		<h1 tabindex=-1 id=coding><a href=#coding aria-hidden=true>Coding In Zig</a></h1>
-		<p>With much of the language now covered, we're going to wrap things up by revisiting a few topics and looking at a few more practical aspects of using Zig. In doing so, we're going to introduce more of the standard library and present less trivial code snippets. </p>
-	</section>
+	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2025 and largely kept up to date. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
+	<h1 tabindex=-1 id=coding><a href=#coding aria-hidden=true>Coding In Zig</a></h1>
+	<p>With much of the language now covered, we're going to wrap things up by revisiting a few topics and looking at a few more practical aspects of using Zig. In doing so, we're going to introduce more of the standard library and present less trivial code snippets. </p>
 
 	<section>
 		<h2 tabindex=-1 id=danling_pointers><a href=#danling_pointers aria-hidden=true>Dangling Pointers</a></h2>
@@ -29,7 +28,7 @@ permalink: "/learning_zig/coding_in_zig/"
 const std = @import("std");
 
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	var lookup = std.StringHashMap(User).init(allocator);
@@ -88,7 +87,7 @@ Goku's power is: -1431655766
 const std = @import("std");
 
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	// User -> *const User
@@ -130,7 +129,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	var lookup = std.StringHashMap(User).init(allocator);
@@ -247,7 +246,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	var arr = std.ArrayList(User).init(allocator);
@@ -315,7 +314,7 @@ const User = struct {
 const std = @import("std");
 
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	var out = std.ArrayList(u8).init(allocator);
@@ -369,7 +368,7 @@ try l.info("server started", true);
 
 {% highlight zig %}
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	var l = Logger{.level = .info};

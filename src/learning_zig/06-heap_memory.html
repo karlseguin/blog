@@ -13,15 +13,15 @@ permalink: "/learning_zig/heap_memory/"
 </div>
 
 <article>
-	<section>
-		<h1 tabindex=-1 id=heap_memory><a href=#heap_memory aria-hidden=true>Heap Memory and Allocators</a></h1>
+	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2025 and largely kept up to date. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
 
-		<p>Everything we've seen so far has been constrained by requiring an upfront size. Arrays always have a compile-time known length (in fact, the length is part of the type). All of our strings have been string literals, which have a compile-time known length.</p>
+	<h1 tabindex=-1 id=heap_memory><a href=#heap_memory aria-hidden=true>Heap Memory and Allocators</a></h1>
 
-		<p>Furthermore, the two types of memory management strategies we've seen, global data and the call stack, while simple and efficient, are limiting. Neither can deal with dynamically sized data and both are rigid with respect to data lifetimes.</p>
+	<p>Everything we've seen so far has been constrained by requiring an upfront size. Arrays always have a compile-time known length (in fact, the length is part of the type). All of our strings have been string literals, which have a compile-time known length.</p>
 
-		<p>This part is divided into two themes. The first is a general overview of our third memory area, the heap. The other is Zig's straightforward but unique approach to managing heap memory. Even if you're familiar with heap memory, say from using C's <code>malloc</code>, you'll want to read the first part as it is quite specific to Zig.</p>
-	</section>
+	<p>Furthermore, the two types of memory management strategies we've seen, global data and the call stack, while simple and efficient, are limiting. Neither can deal with dynamically sized data and both are rigid with respect to data lifetimes.</p>
+
+	<p>This part is divided into two themes. The first is a general overview of our third memory area, the heap. The other is Zig's straightforward but unique approach to managing heap memory. Even if you're familiar with heap memory, say from using C's <code>malloc</code>, you'll want to read the first part as it is quite specific to Zig.</p>
 
 	<section>
 		<h2 tabindex=-1 id=heap><a href=#heap aria-hidden=true>The Heap</a></h2>
@@ -36,7 +36,7 @@ const std = @import("std");
 
 pub fn main() !void {
 	// we'll be talking about allocators shortly
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	// ** The next two lines are the important ones **
@@ -121,7 +121,7 @@ pub const Game = struct {
 const std = @import("std");
 
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	var arr = try allocator.alloc(usize, 4);
@@ -178,7 +178,7 @@ const std = @import("std");
 
 pub fn main() !void {
 	// again, we'll talk about allocators soon!
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	// create a User on the heap
@@ -255,7 +255,7 @@ defer allocator.free(say);
 
 		<p>The other form is when an allocator is passed to <code>init</code>, and then used internally by the object. We saw this above with our <code>Game</code> structure. This is less explicit, since you've given the object an allocator to use, but you don't know which method calls will actually allocate. This approach is more practical for long-lived objects.</p>
 
-		<p>The advantage of injecting the allocator isn't just explicitness, it's also flexibility. <code>std.mem.Allocator</code> is an interface which provides the <code>alloc</code>, <code>free</code>, <code>create</code> and <code>destroy</code> functions, along with a few others. So far we've only seen the <code>std.heap.GeneralPurposeAllocator</code>, but other implementations are available in the standard library or as third party libraries.</p>
+		<p>The advantage of injecting the allocator isn't just explicitness, it's also flexibility. <code>std.mem.Allocator</code> is an interface which provides the <code>alloc</code>, <code>free</code>, <code>create</code> and <code>destroy</code> functions, along with a few others. So far we've only seen the <code>std.heap.DebugAllocator</code>, but other implementations are available in the standard library or as third party libraries.</p>
 
 		<aside>Zig doesn't have nice syntactical sugar for creating interfaces. One pattern for interface-like behaviour are tagged unions, though that's relatively constrained compared to true interfaces. Other patterns have emerged and are used throughout the standard library, such as with <code>std.mem.Allocator</code>. If you're interested, I've written <a href=/Zig-Interfaces/>a separate blog post explaining interfaces</a>.</aside>
 
@@ -263,8 +263,8 @@ defer allocator.free(say);
 	</section>
 
 	<section>
-		<h2 tabindex=-1 id=gpa><a href=#gpa aria-hidden=true>General Purpose Allocator</a></h2>
-		<p>As the name implies, the <code>std.heap.GeneralPurposeAllocator</code> is an all around "general purpose", thread-safe allocator that can serve as your application's main allocator. For many programs, this will be the only allocator needed. On program start, an allocator is created and passed to functions that need it. The sample code from my HTTP server library is a good example:</p>
+		<h2 tabindex=-1 id=gpa><a href=#gpa aria-hidden=true>DebugAllocator</a></h2>
+		<p>As the name implies, the <code>std.heap.DebugAllocator</code> is a thread-safe allocator meant to be used during development. For many programs, this will be the only allocator needed. On program start, an allocator is created and passed to functions that need it. The sample code from my HTTP server library is a good example:</p>
 
 {% highlight zig %}
 const std = @import("std");
@@ -272,7 +272,7 @@ const httpz = @import("httpz");
 
 pub fn main() !void {
 	// create our general purpose allocator
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 
 	// get an std.mem.Allocator from it
 	const allocator = gpa.allocator();
@@ -288,27 +288,37 @@ pub fn main() !void {
 }
 {% endhighlight %}
 
-			<p>We create the <code>GeneralPurposeAllocator</code>, get an <code>std.mem.Allocator</code> from it and pass it to the <code>init</code> function of the HTTP server. In a more complex project, <code>allocator</code> would get passed to multiple parts of the code, each of those possibly passing it to their own functions, objects and dependencies.</p>
+			<p>We create the <code>DebugAllocator</code>, get an <code>std.mem.Allocator</code> from it and pass it to the <code>init</code> function of the HTTP server. In a more complex project, <code>allocator</code> would get passed to multiple parts of the code, each of those possibly passing it to their own functions, objects and dependencies.</p>
 
-			<p>You might notice that the syntax around the creation of <code>gpa</code> is a little strange. What is this: <code>GeneralPurposeAllocator(.{}){}</code>? It's all things we've seen before, just smashed together. <code>std.heap.GeneralPurposeAllocator</code> is a function, and since it's using PascalCase, we know that it returns a type. (We'll talk more about generics in the next part). Knowing that it returns a type, maybe this more explicit version will be easier to decipher:</p>
+			<aside><p>The <code>DebugAllocator</code> used to be called <code>GeneralPurposeAllocator</code>. You might still see that name in use and it's the reason the variable is named <code>gpa</code>. Call me nostalgic.</p></aside>
+
+			<p>You might notice that the syntax around the creation of <code>gpa</code> is a little strange. What is this: <code>DebugAllocator(.{}){}</code>? It's all things we've seen before, just smashed together. <code>std.heap.DebugAllocator</code> is a function, and since it's using PascalCase, we know that it returns a type. (We'll talk more about generics in the next part). Knowing that it returns a type, maybe this more explicit version will be easier to decipher:</p>
 
 {% highlight zig %}
-const T = std.heap.GeneralPurposeAllocator(.{});
+const T = std.heap.DebugAllocator(.{});
 var gpa = T{};
 
 // is the same as:
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa = std.heap.DebugAllocator(.{}){};
 {% endhighlight %}
 
-		<p>Maybe you're still unsure about the meaning of <code>.{}</code>. This is also something we've seen before: it's a struct initializer with an implicit type. What's the type and where are the fields? The type is an <code>std.heap.general_purpose_allocator.Config</code> though it isn't directly exposed like this, which is one reason we aren't explicit. No fields are set because the <code>Config</code> struct defines defaults, which we'll be using. This is a common pattern with configuration / options. In fact, we see it again a few lines down when we pass <code>.{.port = 5882}</code> to <code>init</code>. In this case, we're using the default value for all but one field, the <code>port</code>.</p>
+		<p>Maybe you're still unsure about the meaning of <code>.{}</code>. This is also something we've seen before: it's a struct initializer with an implicit type. What's the type and where are the fields? The type is an <code>std.heap.DebugAllocatorConfig</code>. No fields are set because the <code>DebugAllocatorConfig</code> struct defines defaults, which we'll be using. This is a common pattern with configuration / options. In fact, we see it again a few lines down when we pass <code>.{.port = 5882}</code> to <code>init</code>. In this case, we're using the default value for all but one field, the <code>port</code>.</p>
+
+		<p>If it's still not clear, you'll be glad to know that Zig more recently introduced something called declaration literals. While the feature isn't that complicated, we're not going to show how it actually works, but this is how it can be used to improve the readability of initializing the allocator:</p>
+
+	{% highlight zig %}
+	var gpa: std.heap.DebugAllocator = .init;
+	{% endhighlight %}
+
+	<p>Note that <code>init</code> is specif to the <code>DebugAllocator</code>. Other types tht use declarations literals might have a different (or many different) names. For example, an empty hash map is initialized using the <code>.empty</code> declaration literal.</p>
 	</section>
 
 
 	<section>
 		<h2 tabindex=-1 id=testing><a href=#testing aria-hidden=true>std.testing.allocator</a></h2>
 
-		<p>Hopefully you were sufficiently troubled when we talked about memory leaks and then eager to learn more when I mentioned that Zig could help. This help comes from the <code>std.testing.allocator</code>, which is an <code>std.mem.Allocator</code>. Currently it's implemented using the <code>GeneralPurposeAllocator</code> with added integration in Zig's test runner, but that's an implementation detail. The important thing is that if we use <code>std.testing.allocator</code> in our tests, we can catch most memory leaks.</p>
+		<p>Hopefully you were sufficiently troubled when we talked about memory leaks and then eager to learn more when I mentioned that Zig could help. This help comes from the <code>std.testing.allocator</code>, which is an <code>std.mem.Allocator</code>. Currently it's implemented using the <code>DebugAllocator</code> with added integration in Zig's test runner, but that's an implementation detail. The important thing is that if we use <code>std.testing.allocator</code> in our tests, we can catch most memory leaks.</p>
 
 		<p>You're likely already familiar with dynamic arrays, often called ArrayLists. In many dynamic programming languages all arrays are dynamic arrays. Dynamic arrays support a variable number of elements. Zig has a proper generic ArrayList, but we'll create one specifically to hold integers and to demonstrate leak detection:</p>
 
@@ -358,7 +368,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+	var gpa = std.heap.DebugAllocator(.{}){};
 	const allocator = gpa.allocator();
 
 	var list = try IntList.init(allocator);
@@ -401,8 +411,8 @@ test "IntList: add" {
 {% highlight text %}
 Test [1/1] test.IntList: add... [gpa] (err): memory address 0x101154000 leaked:
 /code/zig/learning.zig:26:32: 0x100f707b7 in init (test)
-   .items = try allocator.alloc(i64, 2),
-                               ^
+	 .items = try allocator.alloc(i64, 2),
+															 ^
 /code/zig/learning.zig:55:29: 0x100f711df in test.IntList: add (test)
  var list = try IntList.init(testing.allocator);
 
@@ -410,10 +420,10 @@ Test [1/1] test.IntList: add... [gpa] (err): memory address 0x101154000 leaked:
 
 [gpa] (err): memory address 0x101184000 leaked:
 /code/test/learning.zig:40:41: 0x100f70c73 in add (test)
-   var larger = try self.allocator.alloc(i64, len * 2);
-                                        ^
+	 var larger = try self.allocator.alloc(i64, len * 2);
+																				^
 /code/test/learning.zig:59:15: 0x100f7130f in test.IntList: add (test)
-  try list.add(@intCast(i+10));
+	try list.add(@intCast(i+10));
 {% endhighlight %}
 
 		<p>We have multiple memory leaks. Thankfully the testing allocator tells us exactly where the leaking memory was allocated. Are you able to spot the leak now? If not, remember that, in general, every <code>alloc</code> should have a corresponding <code>free</code>. Our code calls <code>free</code> once, in <code>deinit</code>. However, <code>alloc</code> is called once in <code>init</code> and then every time <code>add</code> is called and we need more space. Every time we <code>alloc</code> more space, we need to <code>free</code> the previous <code>self.items</code>:</p>
@@ -433,7 +443,7 @@ self.allocator.free(self.items);
 
 	<section>
 		<h2 tabindex=-1 id=arena><a href=#arena aria-hidden=true>ArenaAllocator</a></h2>
-		<p>The GeneralPurposeAllocator is a reasonable default because it works well in all possible cases. But within a program, you might run into allocation patterns which can benefit from more specialized allocators. One example is the need for short-lived state which can be discarded when processing is completed. Parsers often have such a requirement. A skeleton <code>parse</code> function might look like:</p>
+		<p>The DebugAllocator is a reasonable default because it works well in all possible cases. But within a program, you might run into allocation patterns which can benefit from more specialized allocators. One example is the need for short-lived state which can be discarded when processing is completed. Parsers often have such a requirement. A skeleton <code>parse</code> function might look like:</p>
 
 {% highlight zig %}
 fn parse(allocator: Allocator, input: []const u8) !Something {
@@ -486,7 +496,7 @@ fn parse(allocator: Allocator, input: []const u8) !Something {
 			<p>The same can't be said for our <code>IntList</code>. It can be used to store 10 or 10 million values. It can have a lifetime measured in milliseconds or weeks. It's in no position to decide the type of allocator to use. It's the code making use of <code>IntList</code> that has this knowledge. Originally, we managed our <code>IntList</code> like so:</p>
 
 {% highlight zig %}
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa = std.heap.DebugAllocator(.{}){};
 const allocator = gpa.allocator();
 
 var list = try IntList.init(allocator);
@@ -496,7 +506,7 @@ defer list.deinit();
 			<p>We could have opted to supply an ArenaAllocator instead:</p>
 
 {% highlight zig %}
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var gpa = std.heap.DebugAllocator(.{}){};
 const allocator = gpa.allocator();
 
 var arena = std.heap.ArenaAllocator.init(allocator);
@@ -552,15 +562,41 @@ pub fn main() !void {
 
 {% highlight text %}
 {
-  "this_is": "an anonymous struct",
-  "above": true,
-  "last_param": "are options"
+	"this_is": "an anonymous struct",
+	"above": true,
+	"last_param": "are options"
 }
 {% endhighlight %}
 
 		<p>But change our <code>buf</code> to be a <code>[120]u8</code> and you'll get an <code>OutOfMemory</code> error.</p>
 
 		<p>A common pattern with FixedBufferAllocators, and to a lesser degree ArenaAllocators, is to <code>reset</code> them and reuse them. This frees all previous allocations and allows the allocator to be reused.</p>
+	</section>
+
+<section>
+		<h2 tabindex=-1 id=c_allocator><a href=#c_allocator aria-hidden=true>Non-Debug Allocator</a></h2>
+		<p>It's possible that ever since I mentioned the <code>DebugAllocator</code>, you've been wondering what non-"debug" alternative exists? There's no reason you can't use the <code>DebugAllocator</code> in a release build, it's just doesn't have the most cutting-edge performance some systems need from an allocator. Still, because I think it's a reasonable thing to be curious about, here's a common pattern you'll find in Zig applications:</p>
+
+{% highlight zig %}
+const std = @import("std");
+const builtin = @import("builtin");
+
+pub fn main() !void {
+	var gpa = std.heap.DebugAllocator(.{}) = .empty;
+	const allocator = if (builtin.mode == .Debug) gpa.allocator()
+	                  else std.heap.c_allocator;
+
+	defer if (builtin.mode == .Debug) {
+		if (gpa.detectLeaks()) {
+			std.posix.exit(1);
+		}
+	};
+
+	// ...
+}
+{% endhighlight %}
+
+		<p>We won't go over this in detail, but the gist is that we use <code>DebugAllocator</code> in <code>Debug</code> builds and <code>std.heap.c_allocator</code> in <code>Release</code> builds. <code>std.heap.c_allocator</code> is a wrapper around malloc. The other interesting addition is that in <code>Debug</code> mode, on program exit, we leverage the <code>DebugAllocator</code>'s ability to detect and report memory leaks.</p>
 	</section>
 
 	<section>
