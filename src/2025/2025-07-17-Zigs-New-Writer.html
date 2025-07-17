@@ -1,0 +1,114 @@
+---
+layout: post
+date: 2025-07-17
+title: "Zig's new Writer"
+tags: [zig]
+---
+
+<p>As you might have heard, Zig's <code>Io</code> namespace is being reworked. Eventually, this will mean the re-introduction of async. As a first step though, the Writer and Reader interfaces and some of the related code have been revamped.</p>
+
+<blockquote><p>This post is written based on a mid-July 2025 development release of Zig. It doesn't apply to Zig 0.14.x (or any previous version) and is likely to be outdated as more of the Io namespace is reworked.</p></blockquote>
+
+<p>Not long ago, I wrote a blog post which tried to explain <a href="/In-Zig-Whats-a-Writer/">Zig's Writers</a>. At best, I'd describe the current state as "confusing" with two writer interfaces while often dealing with <code>anytype</code>. And while <code>anytype</code> is convenient, it lacks developer ergonomics. Furthermore, the current design has significant performance issues for some common cases.</p>
+
+<h3 id=drain><a href="#drain" aria-hidden=true>Drain</a></h3>
+<p>The new <code>Writer</code> interface is <code>std.Io.Writer</code>. At a minimum, implementations have to provide a <code>drain</code> function. Its signature looks like:</p>
+
+{% highlight zig %}
+fn drain(w: *Writer, data: []const []const u8, splat: usize) Error!usize
+{% endhighlight %}
+
+<p>You might be surprised that this is the method a custom writer needs to implemented. Not only does it take an array of strings, but what's that <code>splat</code> parameter? Like me, you might have expected a simpler <code>write</code> method:</p>
+
+{% highlight zig %}
+fn write(w: *Writer, data: []const u8) Error!usize
+{% endhighlight %}
+
+<p>It turns out that <code>std.Io.Writer</code> has buffering built-in. For example, if we want a <code>Writer</code> for an <code>std.fs.File</code>, we need to provide the buffer:</p>
+
+{% highlight zig %}
+var buffer: [1024]u8 = undefined;
+var writer = my_file.writer(&buffer);
+{% endhighlight %}
+
+<p>Of course, if we don't want buffering, we can always pass an empty buffer:</p>
+
+{% highlight zig %}
+var writer = my_file.writer(&.{});
+{% endhighlight %}
+
+<p>This explains why custom writers need to implement a <code>drain</code> method, and not something simpler like <code>write</code>.</p>
+
+<p>The simplest way to implement <code>drain</code>, and what a lot of the Zig standard library has been upgraded to while this larger overhaul takes place, is:</p>
+
+{% highlight zig %}
+fn drain(io_w: *Writer, data: []const []const u8, splat: usize) !usize {
+    _ = splat;
+    const self: *@This() = @fieldParentPtr("interface", io_w);
+    return self.writeAll(data[0]) catch return error.WriteFailed;
+}
+{% endhighlight %}
+
+<p>We ignore the <code>splat</code> parameter, and just write the first value in <code>data</code> (<code>data.len > 0</code> is guaranteed to be true). This turns <code>drain</code> into what a simpler <code>write</code> method would look like. Because we return the length of bytes written, <code>std.Io.Writer</code> will know that we potentially didn't write all the data and call <code>drain</code> again, if necessary, with the rest of the data.</p>
+
+<blockquote><p>If you're confused by the call to <code>@fieldParentPtr</code>, check out my post on the <a href="/Zigs-New-LinkedList-API/">upcoming linked list changes</a>.</p></blockquote>
+
+<p>The actual implementation of <code>drain</code> for the <code>File</code> is a non-trivial ~150 lines of code. It has platform-specific code and leverages <a href="/TCP-Server-In-Zig-Part-3-Minimizing-Writes-and-Reads/#writev">vectored I/O</a> where possible. There's obviously flexibility to provide a simple implementation or a more optimized one.</p>
+
+<h3 id=interface><a href="#interface" aria-hidden=true>The Interface</a></h3>
+<p>Much like the current state, when you do <code>file.writer(&buffer)</code>, you don't get an <code>std.Io.Writer</code>. Instead, you get a <code>File.Writer</code>. To get an actual <code>std.Io.Writer</code>, you need to access the <code>interface</code> field. This is merely a convention, but expect it to be used throughout the standard, and third-party, library. Get ready to see a lot of <code>&xyz.interface</code> calls!</p>
+
+<p>This simplification of <code>File</code> shows the relationship between the three types:</p>
+
+{% highlight zig %}
+pub const File = struct {
+
+  pub fn writer(self: *File, buffer: []u8) Writer{
+    return .{
+      .file = self,
+      .interface = std.Io.Writer{
+        .buffer = buffer,
+        .vtable = .{.drain = Writer.drain},
+      }
+    };
+  }
+
+  pub const Writer = struct {
+    file: *File,
+    interface: std.Io.Writer,
+    // this has a bunch of other fields
+
+    fn drain(io_w: *Writer, data: []const []const u8, splat: usize) !usize {
+      const self: *Writer = @fieldParentPtr("interface", io_w);
+      // ....
+    }
+  }
+}
+{% endhighlight %}
+
+<p>The instance of <code>File.Writer</code> needs to exist somewhere (e.g. on the stack) since that's where the <code>std.Io.Writer</code> interface exists. It's possible that <code>File</code> could directly have an <code>writer_interface: std.Io.Writer</code> field, but that would limit you to one writer per file and would bloat the <code>File</code> structure.</p>
+
+<p>We can see from the above that, while we call <code>Writer</code> an "interface", it's just a normal struct. It has a few fields beyond <code>buffer</code> and <code>vtable.drain</code>, but these are the only two with non-default values; we have to provide them. The <code>Writer</code> interface implements a lot of typical "writer" behavior, such as a <code>writeAll</code> and <code>print</code> (for formatted writing). It also has a number of methods which only a <code>Writer</code> implementation would likely care about. For example, <code>File.Writer.drain</code> has to call <code>consume</code> so that the writer's internal state can be updated. Having all of these functions listed side-by-side in the documentation confused me at first. Hopefully it's something the documentation generation will one day be able to help disentangle.</p>
+
+<h3 id=migrating><a href="#migrating" aria-hidden=true>Migrating</a></h3>
+<p>The new <code>Writer</code> has taken over a number of methods. For example, <code>std.fmt.formatIntBuf</code> no longer exists. The replacement is the <code>printInt</code> method of <code>Writer</code>. But this requires a <code>Writer</code> instance rather than the simple <code>[]u8</code> previous required.</p>
+
+<p>It's easy to miss, but the <code>Writer.fixed([]u8) Writer</code> function is what you're looking for. You'll use this for any function that was migrating to <code>Writer</code> and used to work on a <code>buffer: []u8</code>.</p>
+
+<p>While migrating, you might run into the following error: <em>no field or member function named 'adaptToNewApi' in '...'</em>. You can see why this happens by looking at the updated implementation of <code>std.fmt.format</code>:</p>
+
+{% highlight zig %}
+pub fn format(writer: anytype, comptime fmt: []const u8, args: anytype) !void {
+    var adapter = writer.adaptToNewApi();
+    return adapter.new_interface.print(fmt, args) catch |err| switch (err) {
+        error.WriteFailed => return adapter.err.?,
+    };
+}
+{% endhighlight %}
+
+<p>Because this functionality was moved to <code>std.Io.Writer</code>, any <code>writer</code> passed into <code>format</code> has to be able to upgrade itself to the new interface. This is done, again only be convention, by having the "old" writer expose an <code>adaptToNewApi</code> method which returns a type that exposes a <code>new_interface: std.Io.Writer</code> field. This is pretty easy to implement using the basic <code>drain</code> implementation, and you can find a handful of examples in the standard library, but it's of little help if you don't control the legacy writer.</p>
+
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<p>I'm hesitant to provide opinion on this change. I don't understand language design. However, while I think this is an improvement over the current API, I keep thinking that adding buffering directly to the <code>Writer</code> isn't ideal.</p>
+
+<p>I believe that most languages deal with buffering via composition. You take a reader/writer and wrap it in a BufferedReader or BufferedWriter. This approach seems both simple to understand and implement while being powerful. It can be applied to things beyond buffering and IO. Zig seems to struggle with this model. Rather than provide a cohesive and generic approach for such problems, one specific feature (buffering) for one specific API (IO) was baked into the standard library. Maybe I'm too dense to understand or maybe future changes will address this more holistically.</p>
