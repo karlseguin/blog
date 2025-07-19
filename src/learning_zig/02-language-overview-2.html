@@ -464,7 +464,7 @@ action(req, res) catch |err| {
 
 {% highlight zig %}
 action(req, res) catch |err| switch (err) {
-	error.BrokenPipe, error.ConnectionResetByPeer) => return,
+	error.BrokenPipe, error.ConnectionResetByPeer => return,
 	error.BodyTooBig => {
 		res.status = 431;
 		res.body = "Request body is too big";
