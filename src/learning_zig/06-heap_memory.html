@@ -447,18 +447,22 @@ self.allocator.free(self.items);
 
 {% highlight zig %}
 fn parse(allocator: Allocator, input: []const u8) !Something {
+	const buf = try allocator.alloc(u8, 512);
+	defer allocator.free(buf);
+
+	const nesting = try allocator.alloc(NestType, 10)
+	defer allcoator.free(nesting);
+
 	const state = State{
-		.buf = try allocator.alloc(u8, 512),
-		.nesting = try allocator.alloc(NestType, 10),
+		.buf = buf,
+		.nesting = nesting,
 	};
-	defer allocator.free(state.buf);
-	defer allocator.free(state.nesting);
 
 	return parseInternal(allocator, state, input);
 }
 {% endhighlight %}
 
-			<p>While this isn't too hard to manage, <code>parseInternal</code> might need other short lived allocations which will need to be freed. As an alternative, we could create an ArenaAllocator which allows us to free all allocations in one shot:</p>
+		<p>While this isn't too hard to manage, <code>parseInternal</code> might need other short lived allocations which will need to be freed. As an alternative, we could create an ArenaAllocator which allows us to free all allocations in one shot:</p>
 
 
 {% highlight zig %}
