@@ -357,7 +357,7 @@ pub const Logger = struct {
 };
 {% endhighlight %}
 
-		<p>The <code>out</code> parameter of our <code>info</code> function has the type <code>anytype</code>. This means that our <code>Logger</code> can log messages to any structure that has a <code>writeAll</code> method accepting a <code>[]const u8</code> and returning a <code>!void</code>. This isn't a runtime feature. Type checking happens at compile-time and for each type used, a correctly typed function is created. If we try to call <code>info</code> with a type that doesn't have all the of the necessary functions (in this case just <code>writeAll</code>), we'll get a compile time error:</p>
+		<p>The <code>out</code> parameter of our <code>info</code> function has the type <code>anytype</code>. This means that our <code>Logger</code> can log messages to any structure that has a <code>writeAll</code> method accepting a <code>[]const u8</code> and returning a <code>!void</code>. This isn't a runtime feature. Type checking happens at compile-time and for each type used, a correctly typed function is created. If we try to call <code>info</code> with a type that doesn't have all of the necessary functions (in this case just <code>writeAll</code>), we'll get a compile time error:</p>
 
 {% highlight zig %}
 var l = Logger{.level = .info};
