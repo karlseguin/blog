@@ -154,7 +154,7 @@ User 9114745905793990681 has power of 0
 		<p>The other issue, I'm sorry to say, is that it can be a hard to spot bug. In our above example, we're clearly returning the address of a local. But such behavior can hide inside of nested function and complex data types. Do you see any possible issues with the following incomplete code:</p>
 
 {% highlight zig %}
-fn read() !void {
+fn read() ![]const u8 {
 	const input = try readUserInput();
 	return Parser.parse(input);
 }
