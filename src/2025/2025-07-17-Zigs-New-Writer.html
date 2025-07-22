@@ -42,7 +42,7 @@ var writer = my_file.writer(&.{});
 <p>The simplest way to implement <code>drain</code>, and what a lot of the Zig standard library has been upgraded to while this larger overhaul takes place, is:</p>
 
 {% highlight zig %}
-fn drain(io_w: *Writer, data: []const []const u8, splat: usize) !usize {
+fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) !usize {
     _ = splat;
     const self: *@This() = @fieldParentPtr("interface", io_w);
     return self.writeAll(data[0]) catch return error.WriteFailed;
@@ -78,7 +78,7 @@ pub const File = struct {
     interface: std.Io.Writer,
     // this has a bunch of other fields
 
-    fn drain(io_w: *Writer, data: []const []const u8, splat: usize) !usize {
+    fn drain(io_w: *std.Io.Writer, data: []const []const u8, splat: usize) !usize {
       const self: *Writer = @fieldParentPtr("interface", io_w);
       // ....
     }
