@@ -592,7 +592,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub fn main() !void {
-	var gpa = std.heap.DebugAllocator(.{}) = .empty;
+	var gpa: std.heap.DebugAllocator(.{}) = .empty;
 	const allocator = if (builtin.mode == .Debug) gpa.allocator()
 	                  else std.heap.c_allocator;
 
