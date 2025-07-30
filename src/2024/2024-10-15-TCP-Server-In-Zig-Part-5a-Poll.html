@@ -178,9 +178,9 @@ pub fn main() !void {
 
     while (true) {
         // polls is the total number of connections we can monitor, but
-        // polls[0..poll_count + 1] is the actual number of clients + the listening
-        // socket that are currently connected (remember, the upper bound is exclusive)
-        var active = polls[0..poll_count + 1];
+        // polls[0..poll_count] is the actual number of clients + the listening
+        // socket that are currently connected
+        var active = polls[0..poll_count];
 
         // 2nd argument is the timeout, -1 is infinity
         _ = try posix.poll(active, -1);
@@ -281,7 +281,7 @@ pub fn main() !void {
 
 {% highlight zig %}
 while (true) {
-    var active = polls[0..poll_count + 1];
+    var active = polls[0..poll_count];
 
     // we no longer ignore the return value
     var pending = try posix.poll(active, -1);
