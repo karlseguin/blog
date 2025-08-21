@@ -129,43 +129,38 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 pub fn main() !void {
-	var gpa = std.heap.DebugAllocator(.{}){};
-	const allocator = gpa.allocator();
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
 
-	var lookup = std.StringHashMap(User).init(allocator);
-	defer lookup.deinit();
+  var lookup = std.StringHashMap(User).init(allocator);
+  defer lookup.deinit();
 
-	// stdin is an std.io.Reader
-	// the opposite of an std.io.Writer, which we already saw
-	const stdin = std.io.getStdIn().reader();
+  var buf: [30]u8 = undefined;
+  var stdin = std.fs.File.stdin().reader(&buf);
 
-	// stdout is an std.io.Writer
-	const stdout = std.io.getStdOut().writer();
+  var stdout = std.fs.File.stdout().writer(&.{});
 
-	var i: i32 = 0;
-	while (true) : (i += 1) {
-		var buf: [30]u8 = undefined;
-		try stdout.print("Please enter a name: ", .{});
-		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |line| {
-			var name = line;
-			if (builtin.os.tag == .windows) {
-				// In Windows lines are terminated by \r\n.
-				// We need to strip out the \r
-				name = @constCast(std.mem.trimRight(u8, name, "\r"));
-			}
-			if (name.len == 0) {
-				break;
-			}
-			try lookup.put(name, .{.power = i});
-		}
-	}
+  var i: i32 = 0;
+  while (true) : (i += 1) {
+    try stdout.interface.print("Please enter a name: ", .{});
+    const name = try stdin.interface.takeDelimiterExclusive('\n');
+    if (builtin.os.tag == .windows) {
+      // In Windows lines are terminated by \r\n.
+      // We need to strip out the \r
+      name = @constCast(std.mem.trimRight(u8, name, "\r"));
+    }
+    if (name.len == 0) {
+      break;
+    }
+    try lookup.put(name, .{.power = i});
+  }
 
-	const has_leto = lookup.contains("Leto");
-	std.debug.print("{any}\n", .{has_leto});
+  const has_leto = lookup.contains("Leto");
+  std.debug.print("{any}\n", .{has_leto});
 }
 
 const User = struct {
-	power: i32,
+  power: i32,
 };
 {% endhighlight %}
 
@@ -246,61 +241,55 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
-	var gpa = std.heap.DebugAllocator(.{}){};
-	const allocator = gpa.allocator();
+  var gpa: std.heap.DebugAllocator(.{}) = .init;
+  const allocator = gpa.allocator();
 
-	var arr = std.ArrayList(User).init(allocator);
-	defer {
-		for (arr.items) |user| {
-			user.deinit(allocator);
-		}
-		arr.deinit();
-	}
+  var arr: std.ArrayList(User) = .empty;
+  defer {
+    for (arr.items) |user| {
+      user.deinit(allocator);
+    }
+    arr.deinit(allocator);
+  }
 
-	// stdin is an std.io.Reader
-	// the opposite of an std.io.Writer, which we already saw
-	const stdin = std.io.getStdIn().reader();
+  var buf: [30]u8 = undefined;
+  var stdin = std.fs.File.stdin().reader(&buf);
+  var stdout = std.fs.File.stdout().writer(&.{});
 
-	// stdout is an std.io.Writer
-	const stdout = std.io.getStdOut().writer();
+  var i: i32 = 0;
+  while (true) : (i += 1) {
+    try stdout.interface.print("Please enter a name: ", .{});
+    const name = try stdin.interface.takeDelimiterExclusive('\n');
+    if (builtin.os.tag == .windows) {
+      // In Windows lines are terminated by \r\n.
+      // We need to strip out the \r
+      name = std.mem.trimRight(u8, name, "\r");
+    }
+    if (name.len == 0) {
+      break;
+    }
+    const owned_name = try allocator.dupe(u8, name);
+    try arr.append(allocator, .{.name = owned_name, .power = i});
+  }
 
-	var i: i32 = 0;
-	while (true) : (i += 1) {
-		var buf: [30]u8 = undefined;
-		try stdout.print("Please enter a name: ", .{});
-		if (try stdin.readUntilDelimiterOrEof(&buf, '\n')) |line| {
-			var name = line;
-			if (builtin.os.tag == .windows) {
-				// In Windows lines are terminated by \r\n.
-				// We need to strip out the \r
-				name = @constCast(std.mem.trimRight(u8, name, "\r"));
-			}
-			if (name.len == 0) {
-				break;
-			}
-			const owned_name = try allocator.dupe(u8, name);
-			try arr.append(.{.name = owned_name, .power = i});
-		}
-	}
+  var has_leto = false;
+  for (arr.items) |user| {
+    if (std.mem.eql(u8, "Leto", user.name)) {
+      has_leto = true;
+      break;
+    }
+  }
 
-	var has_leto = false;
-	for (arr.items) |user| {
-		if (std.mem.eql(u8, "Leto", user.name)) {
-			has_leto = true;
-			break;
-		}
-	}
-
-	std.debug.print("{any}\n", .{has_leto});
+  std.debug.print("{any}\n", .{has_leto});
 }
 
 const User = struct {
-	name: []const u8,
-	power: i32,
+  name: []const u8,
+  power: i32,
 
-	fn deinit(self: User, allocator: Allocator) void {
-		allocator.free(self.name);
-	}
+  fn deinit(self: User, allocator: Allocator) void {
+    allocator.free(self.name);
+  }
 };
 {% endhighlight %}
 
@@ -308,28 +297,7 @@ const User = struct {
 
 		<p>This is a good time to point out that Zig doesn't have properties or private fields. You can see this when we access <code>arr.items</code> to iterate through the values. The reason for not having properties is to eliminate a source of surprises. In Zig, if it looks like a field access, it <strong>is</strong> a field access. Personally, I think the lack of private fields is a mistake, but it's certainly something we can work around. I've taken to prefixing fields with underscore to signal "internal use only".</p>
 
-		<p>Because the string "type" is a <code>[]u8</code> or <code>[]const u8</code>, an <code>ArrayList(u8)</code> is the appropriate type for a string builder, like .NET's <code>StringBuilder</code> or Go's <code>strings.Builder</code>. In fact, you'll often use this when a function takes a <code>Writer</code> and you want a string. We previously saw an example which used <code>std.json.stringify</code> to output JSON to stdout. Here's how you'd use an <code>ArrayList(u8)</code> to output it into a variable:</p>
-
-{% highlight zig %}
-const std = @import("std");
-
-pub fn main() !void {
-	var gpa = std.heap.DebugAllocator(.{}){};
-	const allocator = gpa.allocator();
-
-	var out = std.ArrayList(u8).init(allocator);
-	defer out.deinit();
-
-	try std.json.stringify(.{
-		.this_is = "an anonymous struct",
-		.above = true,
-		.last_param = "are options",
-	}, .{.whitespace = .indent_2}, out.writer());
-
-	std.debug.print("{s}\n", .{out.items});
-}
-{% endhighlight %}
-
+		<p>Because the string "type" is a <code>[]u8</code> or <code>[]const u8</code>, an <code>ArrayList(u8)</code> is the appropriate type for a string builder, like .NET's <code>StringBuilder</code> or Go's <code>strings.Builder</code>.</p>
 	</section>
 
 	<section>
@@ -364,38 +332,17 @@ var l = Logger{.level = .info};
 try l.info("server started", true);
 {% endhighlight %}
 
-		<p>Giving us: <em>no field or member function named 'writeAll' in 'bool'</em>. Using the <code>writer</code> of an <code>ArrayList(u8)</code> works:</p>
+		<p>Giving us: <em>no field or member function named 'writeAll' in 'bool'</em>. But if we pass it an `*std.Io.Writer`, which <em>does</em> implement <code>writeAll</code>, the code will work:</p>
 
 {% highlight zig %}
 pub fn main() !void {
-	var gpa = std.heap.DebugAllocator(.{}){};
-	const allocator = gpa.allocator();
-
-	var l = Logger{.level = .info};
-
-	var arr = std.ArrayList(u8).init(allocator);
-	defer arr.deinit();
-
-	try l.info("sever started", arr.writer());
-	std.debug.print("{s}\n", .{arr.items});
+    var l = Logger{.level = .info};
+    var writer = std.fs.File.stdout().writer(&.{});
+    try l.info("sever started", &writer.interface);
 }
 {% endhighlight %}
 
-		<p>One massive drawback of <code>anytype</code> is documentation. Here's the signature for the <code>std.json.stringify</code> function we've used a few times:</p>
-
-{% highlight zig %}
-// I **hate** multi-line function definitions
-// But I'll make an exception for a guide which
-// you might be reading on a small screen.
-
-fn stringify(
-	value: anytype,
-	options: StringifyOptions,
-	out_stream: anytype
-) @TypeOf(out_stream).Error!void
-{% endhighlight %}
-
-		<p>The first parameter, <code>value: anytype</code> is kind of obvious. It's the value to serialize and it can be anything (actually, there are some things Zig's JSON serializer can't serialize). We can guess that the <code>out_stream</code> is <em>where</em> to write the JSON, but your guess is as good as mine about what methods it needs to implement. The only way to figure it out is to read the source code or, alternatively, pass a dummy value and use the compiler errors as our documentation. This is something that might get improved with better auto document generators. But, not for the first time, I wish Zig had interfaces.</p>
+		<p>Note that, in this case, the <code>out</code> parameter of <code>info</code> should probably be an <code>*std.Io.Writer</code>. But, prior to Zig 0.15 - which redesigned the Writer and Reader interfaces - the use of anytype for a generic writer was common. And while this specific usage will likely be phased out, you'll no doubt see and use <code>anytype</code> in much the same way; maybe just not to capture different writers.</p>
 	</section>
 
 	<section>
@@ -459,9 +406,11 @@ pub fn build(b: *std.Build) !void {
 	// setup executable
 	const exe = b.addExecutable(.{
 		.name = "learning",
-		.target = target,
-		.optimize = optimize,
-		.root_source_file = b.path("learning.zig"),
+		.root_module = b.createModule(.{
+			.target = target,
+			.optimize = optimize,
+			.root_source_file = b.path("learning.zig"),
+		}),
 	});
 	b.installArtifact(exe);
 }
@@ -490,16 +439,37 @@ run_step.dependOn(&run_cmd.step);
 		<p>To add a "test" step, you'll duplicate most of the run code we just added, but rather than <code>b.addExecutable</code>, you'll kick things off with <code>b.addTest</code>:</p>
 
 {% highlight zig %}
-const tests = b.addTest(.{
+const mod = b.createModule(.{
 	.target = target,
 	.optimize = optimize,
 	.root_source_file = b.path("learning.zig"),
 });
 
-const test_cmd = b.addRunArtifact(tests);
-test_cmd.step.dependOn(b.getInstallStep());
-const test_step = b.step("test", "Run the tests");
-test_step.dependOn(&test_cmd.step);
+{
+	// setup exe
+	const exe = b.addExecutable(.{
+			.name = "learning",
+			.root_module = mod,
+	});
+	b.installArtifact(exe);
+
+	const run_cmd = b.addRunArtifact(exe);
+	run_cmd.step.dependOn(b.getInstallStep());
+	const run_step = b.step("run", "Start learning!");
+	run_step.dependOn(&run_cmd.step);
+}
+
+{
+	// setup tests
+	const tests = b.addTest(.{
+		.root_module = mod,
+	});
+
+	const test_cmd = b.addRunArtifact(tests);
+	test_cmd.step.dependOn(b.getInstallStep());
+	const test_step = b.step("test", "Run the tests");
+	test_step.dependOn(&test_cmd.step);
+}
 {% endhighlight %}
 
 		<p>We gave this step the name of "test". Running <code>zig build --help</code> should now show another available step, "test". Since we don't have any tests, it's hard to tell whether this is working or not. Within <code>learning.zig</code>, add:</p>
@@ -561,9 +531,11 @@ pub fn build(b: *std.Build) !void {
 	const optimize = b.standardOptimizeOption(.{});
 
 	const tests = b.addTest(.{
-		.target = target,
-		.optimize = optimize,
-		.root_source_file = b.path("calc.zig"),
+		.root_module = b.addModule(.{
+			.target = target,
+			.optimize = optimize,
+			.root_source_file = b.path("calc.zig"),
+		});
 	});
 
 	const test_cmd = b.addRunArtifact(tests);
@@ -595,45 +567,20 @@ pub fn build(b: *std.Build) !void {
 	const target = b.standardTargetOptions(.{});
 	const optimize = b.standardOptimizeOption(.{});
 
-	const calc_module = b.addModule("calc", .{
+	const calc_module = b.createModule("calc", .{
 		.root_source_file = b.path("PATH_TO_CALC_PROJECT/calc.zig"),
 	});
 
-	{
-		// setup our "run" cmmand
+	const mod = b.createModule(.{
+		.target = target,
+		.optimize = optimize,
+		.root_source_file = b.path("learning.zig"),
+		.imports = &.{
+			.{.name = "calc", .module = calc_module},
+		}
+	});
 
-		const exe = b.addExecutable(.{
-			.name = "learning",
-			.target = target,
-			.optimize = optimize,
-			.root_source_file = b.path("learning.zig"),
-		});
-		// add this
-		exe.root_module.addImport("calc", calc_module);
-		b.installArtifact(exe);
-
-		const run_cmd = b.addRunArtifact(exe);
-		run_cmd.step.dependOn(b.getInstallStep());
-
-		const run_step = b.step("run", "Start learning!");
-		run_step.dependOn(&run_cmd.step);
-	}
-
-	{
-		// setup our "test" command
-		const tests = b.addTest(.{
-			.target = target,
-			.optimize = optimize,
-			.root_source_file = b.path("learning.zig"),
-		});
-		// add this
-		tests.root_module.addImport("calc", calc_module);
-
-		const test_cmd = b.addRunArtifact(tests);
-		test_cmd.step.dependOn(b.getInstallStep());
-		const test_step = b.step("test", "Run the tests");
-		test_step.dependOn(&test_cmd.step);
-	}
+	// setup our exe and test like before
 }
 {% endhighlight %}
 
@@ -660,7 +607,7 @@ _ = b.addModule("calc", .{
 
 {% highlight zig %}
 .{
-  .name = "learning",
+  .name = .learning,
   .paths = .{""},
   .version = "0.0.0",
   .dependencies = .{
@@ -679,12 +626,12 @@ _ = b.addModule("calc", .{
 {% highlight zig %}
 
 // replace this:
-const calc_module = b.addModule("calc", .{
+const calc_module = b.createModule("calc", .{
 	.root_source_file = b.path("calc/calc.zig"),
 });
 
 // with this:
-const calc_dep = b.dependency("calc", .{.target = target,.optimize = optimize});
+const calc_dep = b.dependency("calc", .{.target = target, .optimize = optimize});
 const calc_module = calc_dep.module("calc");
 {% endhighlight %}
 

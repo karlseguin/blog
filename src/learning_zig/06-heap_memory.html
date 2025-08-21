@@ -554,7 +554,7 @@ pub fn main() !void {
 
 	const allocator = fa.allocator();
 
-	const json = try std.json.stringifyAlloc(allocator, .{
+	const json = try std.json.Stringify.valueAlloc(allocator, .{
 		.this_is = "an anonymous struct",
 		.above = true,
 		.last_param = "are options",
@@ -631,25 +631,35 @@ pub fn main() !void {
 
 		<p>This API moves the memory management burden to the caller. If we had a longer <code>name</code>, or a smaller <code>buf</code>, our <code>bufPrint</code> could return an <code>NoSpaceLeft</code> error. But there are plenty of scenarios where an application has known limits, such as a maximum name length. In those cases <code>bufPrint</code> is safer and faster.</p>
 
-		<p>Another possible alternative to dynamic allocations is streaming data to an <code>std.io.Writer</code>. Like our <code>Allocator</code>, <code>Writer</code> is an interface implemented by many types, such as files. Above, we used <code>stringifyAlloc</code> to serialize JSON into a dynamically allocated string. We could have used <code>stringify</code> and provided a <code>Writer</code>:</p>
+		<p>Another possible alternative to dynamic allocations is streaming data to an <code>*std.Io.Writer</code>. Like our <code>Allocator</code>, <code>Writer</code> is an interface implemented by many types, such as files. Above, we used <code>Stringify.valueAlloc</code> to serialize JSON into a dynamically allocated string. We could have used <code>value</code> and provided a <code>Writer</code>:</p>
 
 {% highlight zig %}
 const std = @import("std");
 
 pub fn main() !void {
-	const out = std.io.getStdOut();
+	// Zig implementation of Write (and Reader) changed drastically in 0.15.
+	// The new approach has a number of benefits, but simplicity isn't one of them.
+	// This series, including this example, has been updated accordingly.
+
+	// This is our File
+	const out = std.fs.File.stdout();
+
+	// This is the write for our File. It takes an optional (`[]u8`) for buffering.
+	// We pass an empty `[]u8` and thus this won't buffer (altough, in this case
+	// where our File is stdout, the OS would likely due its own buffering anyways)
+	var writer = out.writer(&.{});
 
 	try std.json.stringify(.{
 		.this_is = "an anonymous struct",
 		.above = true,
 		.last_param = "are options",
-	}, .{.whitespace = .indent_2}, out.writer());
+	}, .{.whitespace = .indent_2}, &writer.interface);
+
+	// &writer.interface above returns an *std.Io.Writer.
 }
 {% endhighlight %}
 
 		<aside>While allocators are often given as the first parameter of a function, writers are normally the last. <span style="font-family: monospace;">ಠ_ಠ</span></aside>
-
-		<p>In many cases, wrapping our writer in an <code>std.io.BufferedWriter</code> would give a nice performance boost.</p>
 
 		<p>The goal isn't to eliminate all dynamic allocations. It wouldn't work, as these alternatives only make sense in specific cases. But now you have many options at your disposal. From stack frames to a general purpose allocator, and all the things in between, like static buffers, streaming writers and specialized allocators.</p>
 	</section>
