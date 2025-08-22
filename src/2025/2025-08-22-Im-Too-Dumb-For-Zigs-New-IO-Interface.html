@@ -1,0 +1,186 @@
+---
+layout: post
+date: 2025-08-22
+title: "I'm too dumb for Zig's new IO interface"
+tags: [zig]
+---
+
+<p>You might have heard that Zig 0.15 introduces a new IO interface, with the focus for this release being the new std.Io.Reader and std.Io.Writer types. The old "interfaces" had problems. Like <a href="https://github.com/ziglang/zig/issues/17985">this performance issue</a> that I opened. And it relied on a <a href="https://www.openmymind.net/In-Zig-Whats-a-Writer/">mix of types</a>, which always confused me, and a lot of <code>anytype</code> - which is generally great, but a poor foundation to build an interface on.</p>
+
+<p>I've been slowly upgrading my libraries, and I ran into changes to the <code>tls.Client</code> client used by my smtp library. For the life of me, I just don't understand how it works.</p>
+
+<p>Zig has never been known for its documentation, but if we look at the documentation for <code>tls.Client.init</code>, we'll find:</p>
+
+{% highlight zig %}
+pub fn init(input: *std.Io.Reader, output: *std.Io.Writer, options: Options) InitError!Client
+Initiates a TLS handshake and establishes a TLSv1.2 or TLSv1.3 session.
+{% endhighlight %}
+
+<p>So it takes one of these new Readers and a new Writer, along with some options (sneak peak, which aren't all optional). It doesn't look like you can just give it a <code>net.Stream</code>, but <code>net.Stream</code> does expose a <code>reader()</code> and <code>writer()</code> method, so that's probably a good place to start:</p>
+
+{% highlight zig %}
+const stream = try std.net.tcpConnectToHost(allocator, "www.openmymind.net", 443);
+defer stream.close();
+
+var writer = stream.writer(&.{});
+var reader = stream.reader(&.{});
+
+var tls_client = try std.crypto.tls.Client.init(
+  reader.interface(),
+  &writer.interface,
+  .{}, // options TODO
+);
+{% endhighlight %}
+
+<p>Note that <code>stream.writer()</code> returns a <code>Stream.Writer</code> and <code>stream.reader()</code> returns a <code>Stream.Reader</code> - those aren't the types our <code>tls.Client</code> expects. To convert the <code>Stream.Reader</code> to an <code>*std.Io.Reader</code>, we need to call its <code>interface()</code> method. To get a <code>&std.io.Writer</code> from an <code>Stream.Writer</code>, we need the address of its <code>interface</code> field. This doesn't seem particularly consistent. Don't forget that the <code>writer</code> and <code>reader</code> need a stable address. Because I'm trying to get the simplest example working, this isn't an issue - everything will live on the stack of <code>main</code>. In a real word example, I think it means that I'll always have to wrap the <code>tls.Client</code> into my own heap-allocated type; giving the writer and reader have a cozy stable home.</p>
+
+<p>Speaking of allocations, you might have noticed that <code>stream.writer</code> and <code>stream.reader</code> take a parameter. It's the buffer they should use. Buffering is a first class citizen of the new Io interface - who needs composition? The documentation <strong>does</strong> tell me these need to be at least <code>std.crypto.tls.max_ciphertext_record_len</code> large, so we need to fix things a bit:</p>
+
+{% highlight zig %}
+var write_buf: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+var writer = stream.writer(&write_buf);
+
+var read_buf: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+var reader = stream.reader(&read_buf);
+{% endhighlight %}
+
+<p>Here's where the code stands: </p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var gpa: std.heap.DebugAllocator(.{}) = .init;
+  const allocator = gpa.allocator();
+
+  const stream = try std.net.tcpConnectToHost(allocator, "www.openmymind.net", 443);
+  defer stream.close();
+
+  var write_buf: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+  var writer = stream.writer(&write_buf);
+
+  var read_buf: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+  var reader = stream.reader(&read_buf);
+
+  var tls_client = try std.crypto.tls.Client.init(
+      reader.interface(),
+      &writer.interface,
+      .{
+      },
+  );
+  defer tls_client.end() catch {};
+}
+{% endhighlight %}
+
+<p>But if you try to run it, you'll get a compilation error. Turns out we have to provide 4 options: the ca_bundle, a host, a <code>write_buffer</code> and a <code>read_buffer</code>. Normally I'd expect the options parameter to be for optional parameters, I don't understand why some parameters (input and output) are passed one way while <code>writer_buffer</code> and <code>read_buffer</code> are passed another.</p>
+
+<p>Let's give it what it wants AND send some data:</p>
+
+{% highlight zig %}
+
+// existing setup...
+
+var bundle = std.crypto.Certificate.Bundle{};
+try bundle.rescan(allocator);
+defer bundle.deinit(allocator);
+
+var tls_client = try std.crypto.tls.Client.init(
+  reader.interface(),
+  &writer.interface,
+  .{
+    .ca = .{.bundle = bundle},
+    .host = .{ .explicit = "www.openmymind.net" } ,
+    .read_buffer = &.{},
+    .write_buffer = &.{},
+  },
+);
+defer tls_client.end() catch {};
+
+try tls_client.writer.writeAll("GET / HTTP/1.1\r\n\r\n");
+{% endhighlight %}
+
+<p>Now, if I try to run it, the program just hangs. I don't know what <code>write_buffer</code> is, but I know Zig now loves buffers, so let's try to give it something:</p>
+
+{% highlight zig %}
+
+// existing setup...
+
+// I don't know what size this should/has to be??
+var write_buf2: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+
+var tls_client = try std.crypto.tls.Client.init(
+  reader.interface(),
+  &writer.interface,
+  .{
+    .ca = .{.bundle = bundle},
+    .host = .{ .explicit = "www.openmymind.net" } ,
+    .read_buffer = &.{},
+    .write_buffer = &write_buf2,
+  },
+);
+defer tls_client.end() catch {};
+
+try tls_client.writer.writeAll("GET / HTTP/1.1\r\n\r\n");
+{% endhighlight %}
+
+
+<p>Great, now the code doesn't hang, all we need to do is read the response. <code>tls.Client</code> exposes a <code>reader: *std.Io.Reader</code> field which is "Decrypted stream from the server to the client." That sounds like what we want, but believe it or not <code>std.Io.Reader</code> doesn't have a <code>read</code> method. It has a <code>peak</code> a <code>takeByteSigned</code>, a <code>readSliceShort</code> (which seems close, but it blocks until the provided buffer is full), a <code>peekArray</code> and a lot more, but nothing like the <code>read</code> I'd expect. The closest I can find, which I think does what I want, is to stream it to a writer:</p>
+
+{% highlight zig %}
+var buf: [1024]u8 = undefined;
+var w: std.Io.Writer = .fixed(&buf);
+const n = try tls_client.reader.stream(&w, .limited(buf.len));
+std.debug.print("read: {d} - {s}\n", .{n, buf[0..n]});
+{% endhighlight %}
+
+<p>If we try to run the code now, it crashes. We've apparently failed an assertion regarding the length of a buffer. So it seems like we also <em>have</em> to provide a <code>read_buffer</code>.</p>
+
+<p>Here's my current version (it doesn't work, but it doesn't crash!):</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+  var gpa: std.heap.DebugAllocator(.{}) = .init;
+  const allocator = gpa.allocator();
+
+  const stream = try std.net.tcpConnectToHost(allocator, "www.openmymind.net", 443);
+  defer stream.close();
+
+  var write_buf: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+  var writer = stream.writer(&write_buf);
+
+  var read_buf: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+  var reader = stream.reader(&read_buf);
+
+  var bundle = std.crypto.Certificate.Bundle{};
+  try bundle.rescan(allocator);
+  defer bundle.deinit(allocator);
+
+  var write_buf2: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+  var read_buf2: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+
+  var tls_client = try std.crypto.tls.Client.init(
+      reader.interface(),
+      &writer.interface,
+      .{
+        .ca = .{.bundle = bundle},
+        .host = .{ .explicit = "www.openmymind.net" } ,
+        .read_buffer = &read_buf2,
+        .write_buffer = &write_buf2,
+      },
+  );
+  defer tls_client.end() catch {};
+
+  try tls_client.writer.writeAll("GET / HTTP/1.1\r\n\r\n");
+
+  var buf: [std.crypto.tls.max_ciphertext_record_len]u8 = undefined;
+  var w: std.Io.Writer = .fixed(&buf);
+  const n = try tls_client.reader.stream(&w, .limited(buf.len));
+  std.debug.print("read: {d} - {s}\n", .{n, buf[0..n]});
+}
+{% endhighlight %}
+
+<p>When I looked through Zig's source code, there's <a href="https://github.com/ziglang/zig/blob/306176046e6ae5e30bc58e5f3bcf786159e367f2/lib/std/http/Client.zig#L329">only one place</a> using <code>tls.Client</code>. It helped to get me where where I am. I couldn't find any tests.</p>
+
+<p>I'll admit that during this migration, I've missed some basic things. For example, someone had to help me find <code>std.fmt.printInt</code> - the renamed version of <code>std.fmt.formatIntBuf</code>. Maybe there's a helper like: <code>tls.Client.init(allocator, stream)</code> somewhere. And maybe it makes sense that we do <code>reader.interface()</code> but <code>&writer.interface</code> - I'm reminded of Go's <code>*http.Request</code> and <code>http.ResponseWrite</code>. And maybe Zig has some consistent rule for what parameters belong in options. And I know nothing about TLS, so maybe it makes complete sense to need 4 buffers. I feel a bit more confident about the weirdness of not having a <code>read(buf: []u8) !usize</code> function on <code>Reader</code>, but at this point I wouldn't bet on me.</p>
