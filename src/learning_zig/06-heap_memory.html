@@ -457,7 +457,7 @@ fn parse(allocator: Allocator, input: []const u8) !Something {
 	defer allocator.free(buf);
 
 	const nesting = try allocator.alloc(NestType, 10)
-	defer allcoator.free(nesting);
+	defer allocator.free(nesting);
 
 	const state = State{
 		.buf = buf,
