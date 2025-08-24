@@ -112,7 +112,7 @@ fn contains(haystack: []const u32, needle: u32) bool {
 
 {% highlight zig %}
 pub fn eql(comptime T: type, a: []const T, b: []const T) bool {
-	// if they arent' the same length, the can't be equal
+	// if they aren't the same length, they can't be equal
 	if (a.len != b.len) return false;
 
 	for (a, b) |a_elem, b_elem| {
