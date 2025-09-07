@@ -1,0 +1,351 @@
+---
+layout: post
+date: 2025-09-07
+title: "Everything is a []u8"
+tags: [zig]
+---
+
+<p>If you're coming to Zig from a more hand-holding language, one of the things worth exploring is the relationship between the compiler and memory. I think code is the best way to do that, but briefly put into words: the memory that your program uses is all just bytes; it is only the compile-time information (the type system) that gives meaning to and dictates how that memory is used and interpreted. This is meaningful in Zig and other similar languages because developers are allowed to override how the compiler interprets those bytes.</p>
+
+<blockquote><p>This is something I've written about before; longtime readers might find this post repetitive.</p></blockquote>
+
+<p>Consider this code:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  std.debug.print("{d}\n", .{@sizeOf(User)});
+}
+
+const User = struct {
+  id: u32,
+  name: []const u8,
+};
+{% endhighlight %}
+
+<p>It <em>should</em> print 24. The point of this post isn't <em>why</em> it prints 24. What's important here is that when we create a <code>User</code> - whether it's on the stack or the heap - it is represented by 24 bytes of memory.</p>
+
+<p>If you examine those 24 bytes, there's nothing "User" about them. The memory isn't self-describing - that would be inefficient. Rather, it's the compiler itself that maintains meta data about memory. Very naively, we could imagine that the compiler maintains a lookup where the key is the variable name and the value is the memory address (our 24 bytes) + the type (<code>User</code>).</p>
+
+<p>The fun, and sometimes useful thing about this is that we can alter the compiler's meta data. Here's an working but impractical example:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  var user = User{.id = 9001, .name = "Goku"};
+  const tea: *Tea = @ptrCast(&user);
+  std.debug.print("{any}\n", .{tea});
+}
+
+const User = struct {
+  id: u32,
+  name: []const u8,
+};
+
+const Tea = struct {
+  price: u32,
+  type: TeaType,
+
+  const TeaType = enum {
+    black,
+    white,
+    green,
+    herbal,
+  };
+};
+{% endhighlight %}
+
+<p>First we create a <code>User</code> - nothing unusual about that. Next we use <a href="/Zig-Tiptoeing-Around-ptrCast/">@ptrCast</a> to tell the compiler to treat the memory referenced by <code>user</code> as a <code>*Tea</code>. <code>@ptrCast</code> works on addresses, which is why we give it address of (<code>&</code>) <code>user</code> and get back a pointer (<code>*</code>) to <code>Tea</code>. Here the return type of <code>@ptrCast</code> is inferred by the type it's being assigned to.</p>
+
+<p>You might have some questions like what does it print? Or, is it safe? And, is this ever useful?</p>
+
+<p>We'll dig more into the safety of this in a bit. But briefly, the main concern is about the size of our structures. If <code>@sizeOf(User)</code> is 24 bytes, we'll be able to re-interpret that memory as anything which is 24 bytes or less. The <code>@sizeOf(Tea)</code> is 8 bytes, so this is safe.</p>
+
+<p>I get different results on each run:</p>
+
+{% highlight text %}
+.{ .price = 39897726, .type = .white }
+.{ .price = 75123326, .type = .white }
+.{ .price = 6441598, .type = .white }
+.{ .price = 77826686, .type = .white }
+.{ .price = 4950654, .type = .white }
+.{ .price = 69438078, .type = .white }
+.{ .price = 78498430, .type = .white }
+.{ .price = 79022718, .type = .white }
+{% endhighlight %}
+
+<p>It's possible (but not likely) you get consistent result. I find these results surprising. If had to imagine what the 24 bytes of <code>user</code> looks like, I'd come up with:</p>
+
+{% highlight text %}
+ 41, 35, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, x, x, x, x, x, x, x, x
+{% endhighlight %}
+
+<p>Why that? Well, I'd expect the first 8 bytes to be the id, 9001, which has a byte representation of <code>41, 35, 0, 0, 0, 0, 0, 0</code>. The next 8 bytes I think would be the string length, or <code>4, 0, 0, 0, 0, 0, 0, 0</code> The last 8 bytes would be the pointer to actual string value - an address that I have no way of guessing, so I mark it with <code>x, x, x, x, x, x, x, x</code>.
+
+<blockquote><p>If you think the <code>id</code> should only take 4 bytes, given that it's a u32, good! But Zig will usually align struct fields, so it really will take 8 bytes. That isn't something we'll dive into this post though.</p></blockquote>
+
+<p>Since <code>Tea</code> is only 8 bytes and since the first 8 bytes of <code>user</code> are always the same (only the pointer to the name value changes from instance to instance and from run to run), shouldn't we always get the same <code>Tea</code> value?</p>
+
+<p>Yes, but only if I'm correct about the contents of those 24 bytes for <code>user</code>. Unless we tell it otherwise, Zig makes no guarantees about how it lays out the fields of a struct. The fact that our <code>tea</code> keeps changing, makes me believe that, for reasons I don't know, Zig decided to put the pointer to our name at the start.</p>
+
+<p>The reason you might get different results is that Zig might have organized the user's memory different based on your platform or version of Zig (or any other factor, but those are the two more realistic reasons).</p>
+
+<p>So while this code might never crash, doesn't the lack of guarantee make it useless? No. At least not in three cases.</p>
+
+<h3 id=welldefined><a href="#welldefined" aria-hidden=true>Well-Defined In-Memory Layout</a></h3>
+
+<p>While Zig usually doesn't make guarantees about how data will be organized, C programs <strong>do</strong> . In Zig, a structure declared as <code>extern</code> follows that specification. We can similarly declare a structure as <code>packed</code> which also has a well-defined memory layout (but just not necessarily the same as C's / <code>extern</code>).</p>
+
+<p><code>extern</code> and <code>packed</code> structs can only contain <code>extern</code> and <code>packed</code> fields. In order for a struct to have a well-known memory layout, all of its field must have a well-known memory layout. They can't, for example, have slices - which don't have a guaranteed layout. Still, here's a reliable and realistic example:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  var manager = Manager{.id = 4, .name = "Leto", .name_len = 4, .level = 99};
+  const user: *User = @ptrCast(&manager);
+  std.debug.print("{d}: {s}\n", .{user.id, user.name[0..user.name_len]});
+}
+
+const User = extern struct {
+  id: u32,
+  name: [*c]const u8,
+  name_len: usize,
+};
+
+const Manager = extern struct {
+  id: u32,
+  name: [*c]const u8,
+  name_len: usize,
+  level: u16,
+};
+{% endhighlight %}
+
+<p>Part of the guarantee is that the fields are laid out in the order that they're declared. Above, when I guessed at the layout of <code>user</code>, I made that assumption - but it's only valid for <code>extern</code> structs. We can be sure that the above code will print <code>4: Leto</code> because <code>Manager</code> has the same fields as <code>User</code> and in the same order. We can, and should, make this more explicit:</p>
+
+{% highlight zig %}
+const Manager = extern struct {
+  user: User,
+  level: u16,
+};
+{% endhighlight %}
+
+<p>Because the type information is only meta data of the compiler, both declarations of <code>Manager</code> are the same - they're the same size and have the same layout. There's no overhead to embedding the <code>User</code> into <code>Manager</code> this way.</p>
+
+<p>This type of memory-reinterpretation can be found in some C code and thus see in any Zig code that interacts with such a C codebase.</p>
+
+<h3 id=builtins><a href="#builtins" aria-hidden=true>Leveraging Zig Builtins</a></h3>
+<p>While we can't assume anything about the memory layout of non-extern (or packed) struct, we can leverage various built-in functions to programmatically figure things out, such as <code>@sizeOf</code>. Probably the most useful is <code>@offsetOf</code> which gives us the offset of a field in bytes.</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  std.debug.print("name offset: {d}\n", .{@offsetOf(User, "name")});
+  std.debug.print("id offset: {d}\n", .{@offsetOf(User, "id")});
+}
+
+const User = struct {
+  id: u32,
+  name: []const u8,
+};
+{% endhighlight %}
+
+<p>For me, this prints:</p>
+
+{% highlight text %}
+name offset: 0
+id offset: 16
+{% endhighlight %}
+
+<p>This helps confirm that Zig did, in fact, put the <code>name</code> before the <code>id</code>. We saw the result of that when we treated the user's memory as an instance of <code>Tea</code>. If we wanted to create a <code>Tea</code> based on  the address of <code>user.id</code> rather than <code>user</code>, we could do:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  var user = User{.id = 9001, .name = "Goku"};
+
+  // changed from &user to &user.id
+  const tea: *Tea = @ptrCast(&user.id);
+  std.debug.print("{any}\n", .{tea});
+}
+{% endhighlight %}
+
+<p>This will now always output the same result. But how would we take <code>tea</code> and get a <code>user</code> out of it? Generally speaking, this wouldn't be safe since <code>@sizeOf(Tea) &lt; @sizeOf(User)</code> - the memory created to hold an instance of <code>Tea</code>, 8 bytes, can't represent the 24 bytes need for <code>User</code>. But for this instance of <code>Tea</code>, we know that there are 24 bytes available "around" <code>tea</code>. Where exactly those 24 bytes start depends on the relative position of <code>user.id</code> to <code>user</code> itself. If we don't adjust for that offset, we risk crashing unless the offset happens to be 0. Since we know the offset is 16, not 0, this should crash:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  var user = User{.id = 9001, .name = "Goku"};
+  var tea: *Tea = @ptrCast(&user.id);
+
+  const user2: *User = @ptrCast(&tea);
+  std.debug.print("{any}\n", .{user2});
+}
+{% endhighlight %}
+
+<p>This is our <code>user</code>'s memory (as 24 contiguous bytes of memory, broken up by the 3 8-byte fields):</p>
+
+{% highlight text %}
+name.ptr => x, x, x, x, x, x, x, x
+name.len => 4, 0, 0, 0, 0, 0, 0, 0,
+name.id  => 41, 35, 0, 0, 0, 0, 0, 0
+{% endhighlight %}
+
+<p>And when we make <code>tea</code> from <code>&name.id</code>:</p>
+
+{% highlight text %}
+&nbsp;      name.ptr => x, x, x, x, x, x, x, x
+       name.len => 4, 0, 0, 0, 0, 0, 0, 0,
+tea => name.id  => 41, 35, 0, 0, 0, 0, 0, 0
+                   more memory, but not ours to play with
+{% endhighlight %}
+
+<p>If we try to cast <code>tea</code> back into a <code>*User</code>, we'll be 16 bytes off, and end up reading 16 bytes of memory adjacent to <code>tea</code> which isn't ours.</p>
+
+<p>To make this work, we need to take the address of <code>tea</code> and subtract the <code>@offset(User, "id")</code> from it:</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  var user = User{.id = 9001, .name = "Goku"};
+  const tea: *Tea = @ptrCast(&user.id);
+  const user2: *User = @ptrFromInt(@intFromPtr(tea) - @offsetOf(User, "id"));
+  std.debug.print("{any}\n", .{user2});
+}
+{% endhighlight %}
+
+<p>Because we use <code>@offsetOf</code>, it no longer matters how the structure is laid out. We're always able to find the starting address of <code>user</code> based on the address of <code>user.id</code> (which is where <code>tea</code> points to) because we know <code>@offsetOf(User, "id")</code>.</p>
+
+<h3 id=asmemory><a href="#asmemory" aria-hidden=true>As Raw Memory</a></h3>
+<p>The above example is convoluted. There's no relationship between the data of a <code>User</code> and of <code>Tea</code>. What does it mean to create <code>Tea</code> out of a user's <code>id</code>? Nothing.</p>
+
+<p>What if we forget about <code>user</code>'s data, the <code>id</code> and <code>name</code>, and treat those 24 bytes as usable space?</p>
+
+{% highlight zig %}
+const std = @import("std");
+pub fn main() !void {
+  var user = User{.id = 9001, .name = "Goku"};
+
+  const tea: *Tea = @ptrCast(&user);
+  tea.* = .{.price = 2492, .type = .black};
+
+  std.debug.print("{any}\n", .{tea});
+}
+{% endhighlight %}
+
+<p><code>user</code> and <code>tea</code> still share the same memory. We cannot safely use <code>user</code> after writing to <code>tea.*</code> - that write might have stored data that cannot safely be interpreted as a <code>User</code>. Specifically in this case, the write to tea has probably made <code>name.ptr</code> point to invalid memory. But if we're done with <code>user</code> and know it won't be used again, we just saved a few bytes of memory by re-using its space.</p>
+
+<p>This can go on forever. We can safely re-use the space to create another <code>User</code>, as long as we're 100% sure that we're done with <code>tea:</code>:</p>
+
+{% highlight zig %}
+pub fn main() !void {
+  var user = User{.id = 9001, .name = "Goku"};
+
+  const tea: *Tea = @ptrCast(&user);
+  tea.* = .{.price = 2492, .type = .black};
+  std.debug.print("{any}\n", .{tea});
+
+  const user2: *User = @ptrCast(@alignCast(tea));
+  user2.* = .{.id = 32, .name = "Son Goku"};
+  std.debug.print("{any}\n", .{user2});
+}
+{% endhighlight %}
+
+<p>We can re-use those 24 bytes to represent anything that takes 24 bytes of memory or less.</p>
+
+<p>The best practical example of this is <code>std.heap.MemoryPool(T)</code>. The <code>MemoryPool</code> is an allocator that can create a single type, <code>T</code>. That might not sound particularly useful, but using what we've learned so far, it can efficiently at re-use memory of discarded values.</p>
+
+<p>We'll build a simplified version to see how it works, starting with a basic API - one without any recycling ability. Further, rather than make it generic, we'll make a <code>UserPool</code> specific for <code>User</code>:</p>
+
+{% highlight zig %}
+pub const UserPool = struct {
+  allocator: Allocator,
+
+  pub fn init(allocator: Allocator) UserPool {
+    return .{
+      .allocator = allocator,
+    };
+  }
+
+  pub fn create(self: *UserPool) !*User {
+    return self.allocator.create(User);
+  }
+
+  pub fn destroy(self; *UserPool, user: *User) void {
+    self.allocator.destroy(user);
+  }
+};
+{% endhighlight %}
+
+<p>As-is, this is just a wrapper that limits what the allocator is able to create. Not particularly useful. But what if instead of destroying a <code>user</code> we made it available to subsequent <code>create</code>? One way to do that would be to hold an <code>std.SinglyLinkedList</code>. But for that to work, we'd need to make additional allocations - the linked list node has to exist somewhere. But why? The <code>@sizeOf(User)</code> is large enough to be used as-is, and whenever a <code>user</code> is destroyed, we're being told that memory is free to be used. If an application <em>did</em> use a <code>user</code> after destroying it, it would be undefined behavior, just like it is with any other allocator. Let's add a bit of decoration to our <code>UserPool</code>:</p>
+
+{% highlight zig %}
+pub const UserPool = struct {
+  allocator: Allocator,
+  free_list: ?*FreeEntry = null,
+
+  const FreeEntry = struct {
+      next: ?*FreeEntry,
+  };
+
+  // rest is unchanged . . . for now.
+};
+{% endhighlight %}
+
+<p>We've added a linked list to our <code>UserPool</code>. Every <code>FreeEntry</code> points to another <code>*FreeEntry</code> or <code>null</code>, including the initial one referenced by <code>free_list</code>. Now we change <code>destroy</code>:</p>
+
+{% highlight zig %}
+pub const UserPool = struct {
+  // ...
+
+  pub fn destroy(self: *UserPool, user: *User) void {
+    const entry: *FreeEntry = @ptrCast(user);
+    entry.* = .{ .next = self.free_list };
+    self.free_list = entry;
+  }
+};
+{% endhighlight %}
+
+<p>We use the ideas we've explored above to create a simple linked list. All that's left is to change <code>create</code> to leverage it:</p>
+
+{% highlight zig %}
+pub const UserPool = struct {
+  // ...
+
+  pub fn create(self: *UserPool) !*User {
+    if (self.free_list) |entry| {
+      self.free_list = entry.next;
+      return @ptrCast(entry);
+    }
+    return self.allocator.create(User);
+  }
+};
+{% endhighlight %}
+
+<p>If we have a <code>FreeEntry</code>, then we can turn that into a <code>*User</code>. We make sure to advanced our <code>free_list</code> to the next entry, which might be <code>null</code>. If there isn't an available <code>FreeEntry</code>, we allocate a new one.</p>
+
+<p>As a final step, we should add a <code>deinit</code> to free the memory held by our <code>free_list</code>:</p>
+
+{% highlight zig %}
+pub const UserPool = struct {
+  // ...
+
+  pub fn deinit(self: *UserPool) void {
+    var entry = self.free_list;
+    while (entry) |e| {
+      entry = e.next;
+      const user: *User = @ptrCast(e);
+      self.allocator.destroy(user);
+    }
+    self.free_list = null;
+  }
+};
+{% endhighlight %}
+
+<p>That final <code>@ptrCast</code> from a <code>*FreeEntry</code> to a <code>*User</code> might seem unnecessary. If we're freeing the memory, why does the type matter? But allocators only know how much memory to free because the compiler tells them - based on the type. Freeing <code>e</code>, a <code>*FreeEntry</code> would only work if <code>@sizeOf(FreeEntry) == @sizeOf(User)</code> (which it isn't).</p>
+
+<p>In addition to being generic, Zig's actual <code>MemoryPool</code> is a bit more sophisticated, handling different alignments and even handling the case where <code>@sizeOf(T) < @sizeOf(FreeEntry)</code>, but our <code>UserPool</code> is pretty close.</p>
+
+<h3 id=conclusion><a href="#conclusion" aria-hidden=true>Conclusion</a></h3>
+<p>By altering the compiler's view of our program, we can do all types of things and get into all types of trouble. While these manipulations can be done safely, they rely on understanding the lack of guarantees Zig makes. If you're programming in Zig, this is the type of thing you should try to get comfortable with. Most of this is fundamental regardless of the programming language, it's just that some languages, like Zig, give you more control.</p>
+
+<p>I had initially planned on writing a version of <code>MemoryPool</code> which expanded on the standard library's. I wanted to create a pool for multiple types. For example, one that can be used for both <code>User</code> and <code>Tea</code> instances The trick, of course, would be to always allocate memory for the largest supported type (<code>User</code> in this case). But this post is already long, so I leave it as an exercise for you.</p>
