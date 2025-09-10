@@ -143,7 +143,7 @@ pub fn main() !void {
   var i: i32 = 0;
   while (true) : (i += 1) {
     try stdout.interface.print("Please enter a name: ", .{});
-    const name = try stdin.interface.takeDelimiterExclusive('\n');
+    var name = try stdin.interface.takeDelimiterExclusive('\n');
     if (builtin.os.tag == .windows) {
       // In Windows lines are terminated by \r\n.
       // We need to strip out the \r
@@ -259,7 +259,7 @@ pub fn main() !void {
   var i: i32 = 0;
   while (true) : (i += 1) {
     try stdout.interface.print("Please enter a name: ", .{});
-    const name = try stdin.interface.takeDelimiterExclusive('\n');
+    var name = try stdin.interface.takeDelimiterExclusive('\n');
     if (builtin.os.tag == .windows) {
       // In Windows lines are terminated by \r\n.
       // We need to strip out the \r
