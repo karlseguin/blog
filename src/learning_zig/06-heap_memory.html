@@ -90,7 +90,7 @@ pub const Game = struct {
 
 		// This isn't strickly necessary. Nothing following the above alloc
 		// can fail, so this errdefer will never be executed. HOWEVER, if the
-		// function changes and faliable code is added, it could be easy to foroget
+		// function changes and fallible code is added, it could be easy to forget
 		// adding this.
 		errdefer allocator.free(history);
 
