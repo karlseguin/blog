@@ -368,9 +368,6 @@ const Server = struct {
         const loop = try Epoll.init();
         errdefer loop.deinit();
 
-        const clients = try allocator.alloc(*Client, max);
-        errdefer allocator.free(clients);
-
         return .{
             .max = max,
             .loop = loop,
