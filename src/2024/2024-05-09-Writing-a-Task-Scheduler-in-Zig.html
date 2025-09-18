@@ -514,12 +514,12 @@ pub fn schedule(self: *Self, task: T, run_at: i64) !void {
 
 {% highlight zig %}
 fn run(self: *Self) void {
+  self.mutex.lock();
   while (true) {
-    self.mutex.lock();
     if (self.timeUntilNextTask()) |ms| {
       if (ms > 0) {
         const ns: u64 = @intCast(std.time.ns_per_ms * ms);
-        self.cond.timedWait(&self.mutex, ns) catch {
+        self.cond.timedWait(&self.mutex, ns) catch |err| {
           // only error possible from timedWait
           std.debug.assert(err == error.Timeout);
         };
@@ -548,6 +548,7 @@ fn run(self: *Self) void {
 
     // run it
     job.task.run();
+    self.mutex.lock();
   }
 }
 
