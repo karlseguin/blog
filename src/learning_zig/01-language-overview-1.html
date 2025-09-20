@@ -468,7 +468,7 @@ pub fn main() void {
 	<p>which prints:</p>
 
 	{% highlight text %}
-	learning.main__struct_19548{ .year = 2023, .month = 8 }
+	{ .year = 2023, .month = 8 }
 	{% endhighlight %}
 
 		<p>Here we gave our anonymous struct field names, <code>year</code> and <code>month</code>. In our original code, we didn't. In that case, the field names are automatically generated as "0", "1", "2", etc. While they're both examples of anonymous structure literal, the one without fields names is often called a <em>tuple</em>. The <code>print</code> function expects a tuple and uses the ordinal position in the string format to get the appropriate argument.</p>
