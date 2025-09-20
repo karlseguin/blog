@@ -1,0 +1,59 @@
+---
+layout: post
+date: 2025-09-20
+title: "Is Zig's New Writer Unsafe?"
+tags: [zig]
+---
+
+<p>If we wanted to take a function that takes one of Zig's new <code>*std.Io.Reader</code> and write it to stdout, we might start with something like:</p>
+
+{% highlight zig %}
+fn output(r: *std.Io.Reader) !void {
+    const stdout = std.fs.File.stdout();
+    var buffer: [???]u8 = undefined;
+    var writer = stdout.writer(&buffer);
+    _ = try r.stream(&writer.interface, .unlimited);
+    try writer.interface.flush();
+}
+{% endhighlight %}
+
+<p>But what should the size of <code>buffer</code> be? If this was a one-and-done, maybe we'd leave it empty or put some seemingly sensible default, like 1 or 4K. If it was a mission critical piece of code, maybe we'd benchmark it or make it platform dependent.</p>
+
+<p>But unless I'm missing something, whatever size of a buffer we use, this function's behavior is undefined. You see, the issue is that readers can require a specific buffer sizes on a writer (and writers can require a specific buffer size on a reader). For example, this code, with a small buffer of 64, fails an assertion in debug mode, and falls into an endless loop in release mode:</p>
+
+{% highlight zig %}
+const std = @import("std");
+
+pub fn main() !void {
+    var fixed = std.Io.Reader.fixed(&.{
+        40, 181, 47, 253, 36, 110, 149, 0, 0, 88, 111, 118, 101, 114, 32, 57,
+        48, 48, 48, 33, 10, 1, 0, 192, 105, 241, 2, 170, 69, 248, 150
+    });
+
+    var decompressor = std.compress.zstd.Decompress.init(&fixed, &.{}, .{});
+    try output(&decompressor.reader);
+}
+
+fn output(r: *std.Io.Reader) !void {
+    const stdout = std.fs.File.stdout();
+    var buffer: [64]u8 = undefined;
+    var writer = stdout.writer(&buffer);
+    _ = try r.stream(&writer.interface, .unlimited);
+    try writer.interface.flush();
+}
+{% endhighlight %}
+
+<p>Some might argue that this is a documentation challenge. It's true that the documentation for <code>zstd.Decompress</code> mentions what a <code>Writer</code>'s buffer must be. <strong>But this is not a documentation problem</strong>. There are legitimate scenarios where the nature of a <code>Reader</code> is unknown (or, at least, difficult to figure out). A type of a reader could be conditional, say based on an HTTP response header. A library developer might take a <code>Reader</code> as an input and present their own <code>Reader</code> as an output - what buffer requirement should they document?</p>
+
+<p>Worse is that the failure can be conditional on the input. For example, if we change our source to:</p>
+
+{% highlight zig %}
+var fixed = std.Io.Reader.fixed(&.{
+    40, 181, 47, 253, 36, 11, 89, 0, 0, 111, 118, 101, 114, 32, 57,
+    48, 48, 48, 33, 10, 112, 149, 178, 212,
+});
+{% endhighlight %}
+
+<p>Everything works, making this misconfiguration particularly hard to catch early.</p>
+
+<p>To me this seems almost impossible - like, I'm doing something wrong. And if I am, I'm sorry. But, if I'm not, this is a problem right?</p>
