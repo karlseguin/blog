@@ -166,7 +166,7 @@ const User = struct {
 
 		<aside><p>The initial version of this code wouldn't compile on Windows. The <code>@constCast</code> that you now see needed to be added. We've seen other builtin functions, but this one is more advanced. I debated removing the entire line, but I wanted people to be able to follow along on Windows and thus needed the trim. There were simpler solutions specific to this case, but instead I decided to stick with the unsafe <code>@constCast</code>. I've written <a href="/Zigs-ConstCast/">a blog post</a> based on this example which explains why its necessary - but it's considerably more advanced. It's the type of thing you might want to come back to after spending more time with Zig</p></aside>
 
-		<p>The code is case sensitive, but no mater how perfectly we type "Leto", <code>contains</code> always returns <code>false</code>. Let's debug this by iterating through <code>lookup</code> and dumping the keys and values:</p>
+		<p>The code is case sensitive, but no matter how perfectly we type "Leto", <code>contains</code> always returns <code>false</code>. Let's debug this by iterating through <code>lookup</code> and dumping the keys and values:</p>
 
 {% highlight zig %}
 // Place this code after the while loop
