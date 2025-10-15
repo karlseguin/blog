@@ -166,7 +166,7 @@ const User = struct {
 
 		<aside><p>The initial version of this code wouldn't compile on Windows. The <code>@constCast</code> that you now see needed to be added. We've seen other builtin functions, but this one is more advanced. I debated removing the entire line, but I wanted people to be able to follow along on Windows and thus needed the trim. There were simpler solutions specific to this case, but instead I decided to stick with the unsafe <code>@constCast</code>. I've written <a href="/Zigs-ConstCast/">a blog post</a> based on this example which explains why its necessary - but it's considerably more advanced. It's the type of thing you might want to come back to after spending more time with Zig</p></aside>
 
-		<p>The code is case sensitive, but no mater how perfectly we type "Leto", <code>contains</code> always returns <code>false</code>. Let's debug this by iterating through <code>lookup</code> and dumping the keys and values:</p>
+		<p>The code is case sensitive, but no matter how perfectly we type "Leto", <code>contains</code> always returns <code>false</code>. Let's debug this by iterating through <code>lookup</code> and dumping the keys and values:</p>
 
 {% highlight zig %}
 // Place this code after the while loop
@@ -193,7 +193,7 @@ Please enter a name:
 false
 {% endhighlight %}
 
-		<p>The values look ok, but not the keys. If you're not sure what's happening, it's probably my fault. Earlier, I intentionally misdirected your attention. I said that hash maps are often long-lived and thus require long-lived <em>values</em>. The truth is that they require long-lived values <strong>as well as</strong> long-lived keys! Notice that <code>buf</code> is defined inside our <code>while</code> loop. When we call <code>put</code>, we're giving our hash map a key that has a far shorter lifetime than the hash map itself. Moving <code>buf</code> <em>outside</em> the <code>while</code> loop solves our lifetime issue, but that buffer is reused in each iteration. It still won't work because we're mutating the underlying key data.</p>
+		<p>The values look ok, but not the keys. If you're not sure what's happening, it's probably my fault. Earlier, I intentionally misdirected your attention. I said that hash maps are often long-lived and thus require long-lived <em>values</em>. The truth is that they require long-lived values <strong>as well as</strong> long-lived keys! Notice that <code>name</code> is defined inside our <code>while</code> loop. When we call <code>put</code>, we're giving our hash map a key that has a far shorter lifetime than the hash map itself. Moving <code>name</code> <em>outside</em> the <code>while</code> loop solves our lifetime issue, but that buffer is reused in each iteration. It still won't work because we're mutating the underlying key data.</p>
 
 		<p>For our above code, there's really only one solution: our <code>lookup</code> must take ownership of the keys. We need to add one line and change another:</p>
 
