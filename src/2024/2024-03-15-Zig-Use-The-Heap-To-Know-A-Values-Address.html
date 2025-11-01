@@ -41,7 +41,6 @@ fn init(allocator: Allocator, count: usize, pool: *Pool) !void {
   errdefer allocator.free(conns);
 
   for (0..count) |i| {
-    // This won't work
     conns[i] = Conn.open(pool);
   }
 
@@ -66,7 +65,6 @@ fn init(allocator: Allocator, count: usize) !*Pool {
   };
 
   for (0..count) |i| {
-    // This won't work
     conns[i] = Conn.open(pool);
   }
 
