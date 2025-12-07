@@ -49,7 +49,7 @@ pub fn LinkedList(comptime T: type) type {
       }
     }
 
-    pub fn append(self: *Self, value: T) !void {
+    pub fn prepend(self: *Self, value: T) !void {
       const node = try self.allocator.create(Node);
       node.value = value;
       const h = self.head orelse {
@@ -69,7 +69,7 @@ pub fn LinkedList(comptime T: type) type {
 }
 {% endhighlight %}
 
-<p>Our <code>init</code> function takes and stores an <code>std.mem.Allocator</code>. This allocator is then used as needed in <code>append</code> and <code>deinit</code>. This is a common pattern in Zig. The "unmanaged" version of the above code is only slightly different:</p>
+<p>Our <code>init</code> function takes and stores an <code>std.mem.Allocator</code>. This allocator is then used as needed in <code>prepend</code> and <code>deinit</code>. This is a common pattern in Zig. The "unmanaged" version of the above code is only slightly different:</p>
 
 {% highlight zig %}
 pub fn LinkedListUnmanaged(comptime T: type) type {
@@ -86,7 +86,7 @@ pub fn LinkedListUnmanaged(comptime T: type) type {
       }
     }
 
-    pub fn append(self: *Self, allocator: Allocator, value: T) !void {
+    pub fn prepend(self: *Self, allocator: Allocator, value: T) !void {
       const node = try allocator.create(Node);
       // .. same as above
     }
@@ -97,7 +97,7 @@ pub fn LinkedListUnmanaged(comptime T: type) type {
 }
 {% endhighlight %}
 
-<p>We no longer have an <code>allocator</code> field. The <code>append</code> and <code>deinit</code> functions both take an extra parameter: <code>allocator</code>. Because we no longer need to store the allocator, we're able to initialize a <code>LinkedListUnmanaged(T)</code> exclusively with default values (i.e. <code>head: ?*Node = null</code>) and are able to remove the <code>init</code> function altogether. This isn't a requirement of unamanged types, but it is common. To create a <code>LinkedListUnmanaged(i32)</code>, you'd do:</p>
+<p>We no longer have an <code>allocator</code> field. The <code>prepend</code> and <code>deinit</code> functions both take an extra parameter: <code>allocator</code>. Because we no longer need to store the allocator, we're able to initialize a <code>LinkedListUnmanaged(T)</code> exclusively with default values (i.e. <code>head: ?*Node = null</code>) and are able to remove the <code>init</code> function altogether. This isn't a requirement of unamanged types, but it is common. To create a <code>LinkedListUnmanaged(i32)</code>, you'd do:</p>
 
 {% highlight zig %}
 var ll = LinkedListUnmanaged(i32){};
@@ -126,8 +126,8 @@ pub fn LinkedList(comptime T: type) type {
       self.unmanaged.deinit(self.allocator);
     }
 
-    pub fn append(self: *Self, value: T) !void {
-      return self.unmanaged.append(self.allocator, value);
+    pub fn prepend(self: *Self, value: T) !void {
+      return self.unmanaged.prepend(self.allocator, value);
     }
 
     pub const Node = LinkedListUnmanaged(T).Node;
