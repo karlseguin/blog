@@ -418,7 +418,7 @@ pub const User = struct {
 
 			<p>This code won't compile: <em>struct 'learning.User' depends on itself</em>. This fails because every type has to have a known compile-time size.</p>
 
-			<p>We didn't run into this problem when we added <code>name</code> even though names can be different lengths. The issue isn't with the size of values, it's with the size of the types themselves. Zig needs this knowledge to do everything we talked about above, like accessing a field based on its offset position. <code>name</code> was a slice, a <code>[]const u8</code>, and that has a known size: 16 bytes - 8 bytes for <code>len</code> and 8 bytes for <code>ptr</code>.</p>
+			<p>We didn't run into this problem when we added <code>name</code> even though names can be different lengths. The issue isn't with the size of values, it's with the size of the types themselves. Zig needs this knowledge to do everything we talked about above, like accessing a field based on its offset position. <code>name</code> was a slice, a <code>[]const u8</code>, and that has a known size: 16 bytes. 8 bytes for <code>len</code> and 8 bytes for <code>ptr</code>.</p>
 
 			<p>You might think this is going to be a problem with any optional or union. But for both optionals and unions, the largest possible size is known and Zig can use that. A recursive structure has no such upper-bound, the structure could recurse once, twice or millions of times. That number would vary from <code>User</code> to <code>User</code> and would not be known at compile time.</p>
 
