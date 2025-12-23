@@ -314,7 +314,7 @@ var gpa = std.heap.DebugAllocator(.{}){};
 		<p>If it's still not clear, you'll be glad to know that Zig more recently introduced something called declaration literals. While the feature isn't that complicated, we're not going to show how it actually works, but this is how it can be used to improve the readability of initializing the allocator:</p>
 
 	{% highlight zig %}
-	var gpa: std.heap.DebugAllocator = .init;
+	var gpa: std.heap.DebugAllocator(.{}) = .init;
 	{% endhighlight %}
 
 	<p>Note that <code>init</code> is specific to the <code>DebugAllocator</code>. Other types that use declaration literals might have a different (or many different) names. For example, an empty hash map is initialized using the <code>.empty</code> declaration literal.</p>
