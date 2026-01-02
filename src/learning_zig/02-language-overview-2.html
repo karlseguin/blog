@@ -512,7 +512,7 @@ pub fn loadLast() !?Save {
 {% highlight zig %}
 const std = @import("std");
 
-pub fn main() void {
+pub fn main() !void {
 	// This is the line you want to focus on
 	const save = (try Save.loadLast()) orelse Save.blank();
 	std.debug.print("{any}\n", .{save});
