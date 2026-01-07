@@ -401,12 +401,12 @@ test "IntList: add" {
 		try list.add(@intCast(i+10));
 	}
 
-	try testing.expectEqual(@as(usize, 5), list.pos);
-	try testing.expectEqual(@as(i64, 10), list.items[0]);
-	try testing.expectEqual(@as(i64, 11), list.items[1]);
-	try testing.expectEqual(@as(i64, 12), list.items[2]);
-	try testing.expectEqual(@as(i64, 13), list.items[3]);
-	try testing.expectEqual(@as(i64, 14), list.items[4]);
+	try testing.expectEqual(5, list.pos);
+	try testing.expectEqual(10, list.items[0]);
+	try testing.expectEqual(11, list.items[1]);
+	try testing.expectEqual(12, list.items[2]);
+	try testing.expectEqual(13, list.items[3]);
+	try testing.expectEqual(14, list.items[4]);
 }
 {% endhighlight %}
 
