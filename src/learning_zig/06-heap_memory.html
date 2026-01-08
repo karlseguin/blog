@@ -410,8 +410,6 @@ test "IntList: add" {
 }
 {% endhighlight %}
 
-		<aside><code>@as</code> is a built-in that performs type coercion. If you're wondering why our test had to use so many of them, you aren't the only one. Technically it's because the second parameter, the "actual", is coerced to the first, the "expected". In the above, our "expected" are all <code>comptime_int</code>, which causes issues. Many, myself included, find this a <a href="https://github.com/ziglang/zig/issues/4437">strange and unfortunate behavior</a>.</aside>
-
 		<p>If you're following along, place the test in the same file as <code>IntList</code> and <code>main</code>. Zig tests are normally written in the same file, often near the code, they're testing. When we use <code>zig test learning.zig</code> to run our test, we get an amazing failure:</p>
 
 {% highlight text %}
