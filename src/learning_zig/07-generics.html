@@ -25,15 +25,15 @@ permalink: "/learning_zig/generics/"
 const std = @import("std");
 
 pub fn main() !void {
-var arr: IntArray(3) = undefined;
-arr[0] = 1;
-arr[1] = 10;
-arr[2] = 100;
-std.debug.print("{any}\n", .{arr});
+	var arr: IntArray(3) = undefined;
+	arr[0] = 1;
+	arr[1] = 10;
+	arr[2] = 100;
+	std.debug.print("{any}\n", .{arr});
 }
 
 fn IntArray(comptime length: usize) type {
-return [length]i64;
+	return [length]i64;
 }
 {% endhighlight %}
 
@@ -45,17 +45,17 @@ return [length]i64;
 const std = @import("std");
 
 pub fn main() !void {
-var arr: IntArray(3) = undefined;
-arr.items[0] = 1;
-arr.items[1] = 10;
-arr.items[2] = 100;
-std.debug.print("{any}\n", .{arr.items});
+	var arr: IntArray(3) = undefined;
+	arr.items[0] = 1;
+	arr.items[1] = 10;
+	arr.items[2] = 100;
+	std.debug.print("{any}\n", .{arr.items});
 }
 
 fn IntArray(comptime length: usize) type {
-return struct {
-	items: [length]i64,
-};
+	return struct {
+		items: [length]i64,
+	};
 }
 {% endhighlight %}
 
@@ -65,23 +65,23 @@ return struct {
 const std = @import("std");
 
 pub fn main() !void {
-var arr = IntArray(3).init();
-arr.items[0] = 1;
-arr.items[1] = 10;
-arr.items[2] = 100;
-std.debug.print("{any}\n", .{arr.items});
+	var arr = IntArray(3).init();
+	arr.items[0] = 1;
+	arr.items[1] = 10;
+	arr.items[2] = 100;
+	std.debug.print("{any}\n", .{arr.items});
 }
 
 fn IntArray(comptime length: usize) type {
-return struct {
-	items: [length]i64,
+	return struct {
+		items: [length]i64,
 
-	fn init() IntArray(length) {
-		return .{
-			.items = undefined,
-		};
-	}
-};
+		fn init() IntArray(length) {
+			return .{
+				.items = undefined,
+			};
+		}
+	};
 }
 {% endhighlight %}
 
@@ -91,19 +91,19 @@ return struct {
 
 {% highlight zig %}
 fn List(comptime T: type) type {
-return struct {
-	pos: usize,
-	items: []T,
-	allocator: Allocator,
+	return struct {
+		pos: usize,
+		items: []T,
+		allocator: Allocator,
 
-	fn init(allocator: Allocator) !List(T) {
-		return .{
-			.pos = 0,
-			.allocator = allocator,
-			.items = try allocator.alloc(T, 4),
-		};
-	}
-};
+		fn init(allocator: Allocator) !List(T) {
+			return .{
+				.pos = 0,
+				.allocator = allocator,
+				.items = try allocator.alloc(T, 4),
+			};
+		}
+	};
 }
 {% endhighlight %}
 
@@ -126,58 +126,58 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
-var gpa = std.heap.DebugAllocator(.{}){};
-const allocator = gpa.allocator();
+	var gpa = std.heap.DebugAllocator(.{}){};
+	const allocator = gpa.allocator();
 
-var list = try List(u32).init(allocator);
-defer list.deinit();
+	var list = try List(u32).init(allocator);
+	defer list.deinit();
 
-for (0..10) |i| {
-	try list.add(@intCast(i));
-}
+	for (0..10) |i| {
+		try list.add(@intCast(i));
+	}
 
-std.debug.print("{any}\n", .{list.items[0..list.pos]});
+	std.debug.print("{any}\n", .{list.items[0..list.pos]});
 }
 
 fn List(comptime T: type) type {
-return struct {
-	pos: usize,
-	items: []T,
-	allocator: Allocator,
+	return struct {
+		pos: usize,
+		items: []T,
+		allocator: Allocator,
 
-	fn init(allocator: Allocator) !List(T) {
-		return .{
-			.pos = 0,
-			.allocator = allocator,
-			.items = try allocator.alloc(T, 4),
-		};
-	}
-
-	fn deinit(self: List(T)) void {
-		self.allocator.free(self.items);
-	}
-
-	fn add(self: *List(T), value: T) !void {
-		const pos = self.pos;
-		const len = self.items.len;
-
-		if (pos == len) {
-			// we've run out of space
-			// create a new slice that's twice as large
-			var larger = try self.allocator.alloc(T, len * 2);
-
-			// copy the items we previously added to our new space
-			@memcpy(larger[0..len], self.items);
-
-			self.allocator.free(self.items);
-
-			self.items = larger;
+		fn init(allocator: Allocator) !List(T) {
+			return .{
+				.pos = 0,
+				.allocator = allocator,
+				.items = try allocator.alloc(T, 4),
+			};
 		}
 
-		self.items[pos] = value;
-		self.pos = pos + 1;
-	}
-};
+		fn deinit(self: List(T)) void {
+			self.allocator.free(self.items);
+		}
+
+		fn add(self: *List(T), value: T) !void {
+			const pos = self.pos;
+			const len = self.items.len;
+
+			if (pos == len) {
+				// we've run out of space
+				// create a new slice that's twice as large
+				var larger = try self.allocator.alloc(T, len * 2);
+
+				// copy the items we previously added to our new space
+				@memcpy(larger[0..len], self.items);
+
+				self.allocator.free(self.items);
+
+				self.items = larger;
+			}
+
+			self.items[pos] = value;
+			self.pos = pos + 1;
+		}
+	};
 }
 {% endhighlight %}
 
@@ -185,26 +185,26 @@ return struct {
 
 {% highlight zig %}
 fn List(comptime T: type) type {
-return struct {
-	pos: usize,
-	items: []T,
-	allocator: Allocator,
+	return struct {
+		pos: usize,
+		items: []T,
+		allocator: Allocator,
 
-	// Added
-	const Self = @This();
+		// Added
+		const Self = @This();
 
-	fn init(allocator: Allocator) !Self {
-		// ... same code
-	}
+		fn init(allocator: Allocator) !Self {
+			// ... same code
+		}
 
-	fn deinit(self: Self) void {
-		// .. same code
-	}
+		fn deinit(self: Self) void {
+			// .. same code
+		}
 
-	fn add(self: *Self, value: T) !void {
-		// .. same code
-	}
-};
+		fn add(self: *Self, value: T) !void {
+			// .. same code
+		}
+	};
 }
 {% endhighlight %}
 
