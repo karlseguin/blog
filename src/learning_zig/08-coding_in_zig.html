@@ -557,7 +557,7 @@ pub fn build(b: *std.Build) !void {
 // You can put this near the top of the build
 // function, before the call to addExecutable.
 
-const calc_module = b.addModule("calc", .{
+const calc_module = b.createModule("calc", .{
 	.root_source_file = b.path("PATH_TO_CALC_PROJECT/calc.zig"),
 });
 {% endhighlight %}
@@ -631,7 +631,7 @@ _ = b.addModule("calc", .{
 
 // replace this:
 const calc_module = b.createModule("calc", .{
-	.root_source_file = b.path("calc/calc.zig"),
+	.root_source_file = b.path("PATH_TO_CALC_PROJECT/calc.zig"),
 });
 
 // with this:
