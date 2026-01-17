@@ -506,7 +506,7 @@ pub fn add(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
 
 const testing = @import("std").testing;
 test "add" {
-	try testing.expectEqual(@as(i32, 32), add(30, 2));
+	try testing.expectEqual(32, add(30, 2));
 }
 {% endhighlight %}
 
