@@ -148,7 +148,7 @@ pub fn main() !void {
 
   const parsed = try readConfig(allocator, "config.json");
   defer parsed.deinit();
-  const config = parse.value;
+  const config = parsed.value;
   ...
 }
 {% endhighlight %}
