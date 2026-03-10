@@ -156,7 +156,7 @@ const Reader = struct {
 
         if (unprocessed.len < 4) {
             // We always need at least 4 bytes of data (the length prefix)
-            self.ensureSpace(4 - unprocessed.len) catch unreachable;
+            self.ensureSpace(4) catch unreachable;
             return null;
         }
 
