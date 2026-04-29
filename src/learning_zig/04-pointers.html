@@ -447,7 +447,7 @@ pub fn main() void {
 pub const User = struct {
 	id: u64,
 	power: i32,
-	// changed from ?const User -> ?*const User
+	// changed from ?User -> ?*const User
 	manager: ?*const User,
 };
 {% endhighlight %}

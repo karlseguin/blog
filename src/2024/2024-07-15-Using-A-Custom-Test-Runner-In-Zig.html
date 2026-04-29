@@ -5,9 +5,9 @@ tags: [zig]
 title: Using a custom test runner in Zig
 ---
 
-<p>Depending on what you're used to, Zig's built-in test runner might seem a little bare. For example, you might prefer a more verbose output, maybe showing your slowest tests. You might need control over the output in order to integrate it into a larger build process or want to have global setup and teardown functions. Maybe you <a href="https://github.com/ziglang/zig/issues/18111">just want to be able to write to stdout</a>. Whatever your needs, Zig makes it easy to write a custom test runner.</p>
+<aside><p><strong>Latest Version (0.16.0):</strong> I keep a <a href="https://gist.github.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b">gist</a> up to date. This also includes links to gist for previous versions.</p></aside>
 
-<aside><p>If you just want the code, I <a href="https://gist.github.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b">maintain a gist</a> that you can copy and paste into your project. It'll display timing information, slowest tests and provides hooks for global setup / teardown.</p></aside>
+<p>Depending on what you're used to, Zig's built-in test runner might seem a little bare. For example, you might prefer a more verbose output, maybe showing your slowest tests. You might need control over the output in order to integrate it into a larger build process or want to have global setup and teardown functions. Maybe you <a href="https://github.com/ziglang/zig/issues/18111">just want to be able to write to stdout</a>. Whatever your needs, Zig makes it easy to write a custom test runner.</p>
 
 <p>In Zig, a test runner is entry point for <code>zig test</code> or any test step added via <code>zig build</code>. In other words, it's code that contains a <code>pub main() !void</code> entrypoint. Here's a simple version:</p>
 
