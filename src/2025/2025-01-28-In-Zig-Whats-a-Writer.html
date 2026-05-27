@@ -15,7 +15,7 @@ tags: [zig]
 <p>I've written about <a href="/learning_zig/coding_in_zig/#anytype">anytype</a> before. As a quick recap, think of it as a template. For example, if we have this code:</p>
 
 {% highlight zig %}
-fn writeN(writer: anytype, data: []cont u8, n: usize) !void {
+fn writeN(writer: anytype, data: []const u8, n: usize) !void {
     var i: usize = 0;
     while (i < n) : (i += 1) {
         try writer.writeAll(data)
@@ -34,7 +34,7 @@ try writeN(logger, ".", 10);
 
 {% highlight zig %}
 // anytype -> MyLogger
-fn writeN(writer: MyLogger, data: []cont u8, n: usize) !void {
+fn writeN(writer: MyLogger, data: []const u8, n: usize) !void {
     var i: usize = 0;
     while (i < n) : (i += 1) {
         try writer.writeAll(data)
