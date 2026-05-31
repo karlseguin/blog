@@ -13,7 +13,7 @@ permalink: "/learning_zig/style_guide/"
 </div>
 
 <article>
-	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2025 and largely kept up to date. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
+	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2026 and largely kept up to date with Zig 0.16. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
 
 
 	<h1 tabindex=-1 id=styleguide><a href=#styleguide aria-hidden=true>Style Guide</a></h1>
@@ -67,16 +67,14 @@ fn add(a: i64, _: i64) i64 {
 
 	<section>
 		<h2 tabindex=-1 id=shadowing><a href=#shadowing aria-hidden=true>Shadowing</a></h2>
-		<p>Zig doesn't allow one identifier to "hide" another by using the same name. This code, to read from a socket, isn't valid:</p>
+		<p>Zig doesn't allow one identifier to "hide" another by using the same name. This code, to read from a <code>Reader</code>, isn't valid:</p>
 
 {% highlight zig %}
-fn read(stream: std.net.Stream) ![]const u8 {
+fn read(r: *std.Io.Reader) !void {
 	var buf: [512]u8 = undefined;
-	const read = try stream.read(&buf);
-	if (read == 0) {
-		return error.Closed;
-	}
-	return buf[0..read];
+	const read = try r.readSliceShort(&buf);
+	const data = buf[0..read];
+	// ....
 }
 {% endhighlight %}
 
@@ -87,7 +85,7 @@ fn read(stream: std.net.Stream) ![]const u8 {
 		<h2 tabindex=-1 id=naming><a href=#naming aria-hidden=true>Naming Convention</a></h2>
 		<p>Besides rules enforced by the compiler, you are, of course, free to follow whatever naming convention you prefer. But it does help to understand Zig's own naming convention since much of the code you'll interact with, from the standard library to third party libraries, makes use of it.</p>
 
-		<p>Zig source code is indented with 4 spaces. I personally use a tab which is objectively better for accessibility.</p>
+		<p>Zig source code is indented with 4 spaces.</p>
 
 		<p>Function names are camelCase and variables are snake_case. Types are PascalCase. There is an interesting intersection between these three rules. Variables which reference a type, or functions which return a type, follow the type rule and are PascalCase. We already saw this, though you might have missed it.</p>
 

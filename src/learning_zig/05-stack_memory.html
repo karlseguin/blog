@@ -13,7 +13,7 @@ permalink: "/learning_zig/stack_memory/"
 </div>
 
 <article>
-<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2025 and largely kept up to date. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
+<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2026 and largely kept up to date with Zig 0.16. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
 
 		<h1 tabindex=-1 id=stack_memory><a href=#stack_memory aria-hidden=true>Stack Memory</a></h1>
 
@@ -109,49 +109,23 @@ main: user ->    -------------  (id: 1043368d0)
 {% highlight zig %}
 const std = @import("std");
 
-pub fn main() void {
-	const user1 = User.init(1, 10);
-	const user2 = User.init(2, 20);
-
-	std.debug.print("User {d} has power of {d}\n", .{user1.id, user1.power});
-	std.debug.print("User {d} has power of {d}\n", .{user2.id, user2.power});
+pub fn main() !void {
+    std.debug.print("{s}\n", .{try classify(9000)});
 }
 
-pub const User = struct {
-	id: u64,
-	power: i32,
-
-	fn init(id: u64, power: i32) *User{
-		var user = User{
-			.id = id,
-			.power = power,
-		};
-		return &user;
-	}
-};
+fn classify(power_level: u32) ![]const u8 {
+    var buf: [20]u8 = undefined;
+    return std.fmt.bufPrint(&buf, "over: {d}\n", .{power_level});
+}
 {% endhighlight %}
 
-		<p>At quick glance, it would be reasonable to expect the following output:</p>
+		<p>At quick glance, it would be reasonable to expect this to print <code>over 9000\n</code>, but I got: <code>��������v�</code>. You'll likely get a different result. The issue is that <code>bufPrint</code> prints the string into the supplied buffer (<code>&buf</code>) and returns a slice. This slice is returned from <code>classify</code> to <code>main</code>, but that slice points to <code>buf</code> which is local to the function. This is called a dangling pointer, a pointer that references invalid memory. It's the source of many segfaults.</p>
 
-{% highlight text %}
-User 1 has power of 10
-User 2 has power of 20
-{% endhighlight %}
-
-		<p>I got:</p>
-
-{% highlight text %}
-User 2 has power of 20
-User 9114745905793990681 has power of 0
-{% endhighlight %}
-
-		<p>You might get different results, but based on my output, <code>user1</code> has inherited the values of <code>user2</code>, and <code>user2</code> values are nonsensical. The key problem with this code is that <code>User.init</code> returns the address of the local user, <code>&user</code>. This is called a dangling pointer, a pointer that references invalid memory. It's the source of many segfaults.</p>
-
-		<p>When a stack frame is popped off the call stack, any references we have to that memory are invalid. The result of trying to access that memory is undefined. You'll likely get nonsense data or a segfault. We could try to make some sense out of my output, but it isn't a behavior we would want to, or even could, rely on.</p>
+		<p>When a stack frame is popped off the call stack, any references we have to that memory are invalid. The result of trying to access that memory is undefined. You'll likely get nonsense data or a segfault. In some cases, it might still work; it isn't like that physical memory is gone and it's possible nothing has changed its value. But that's the point of "undefined", it could be anything.</p>
 
 		<p>One challenge with this type of bug is that, in languages with garbage collectors, the above code is perfectly fine. Go for example would detect that the local <code>user</code> outlives its scope, the <code>init</code> function, and would ensure its validity for as long as it's needed (how Go does this is an implementation detail, but it has a few options, including moving the data to the heap, which is what the next part is about).</p>
 
-		<p>The other issue, I'm sorry to say, is that it can be a hard to spot bug. In our above example, we're clearly returning the address of a local. But such behavior can hide inside of nested function and complex data types. Do you see any possible issues with the following incomplete code:</p>
+		<p>The other issue, I'm sorry to say, is that it can be a hard to spot bug. In our above example, once you know how <code>bufPrint</code> works (and really, how else could it work?) we're clearly returning the address of a local. But such behavior can hide inside of nested function and complex data types. Do you see any possible issues with the following incomplete code:</p>
 
 {% highlight zig %}
 fn read() ![]const u8 {
@@ -164,7 +138,7 @@ fn read() ![]const u8 {
 	</section>
 
 	<section>
-		<p>The simple way to solve our initial bug is to change <code>init</code> so that it returns a <code>User</code> rather than a <code>*User</code> (pointer to a <code>User</code>). We'd then be able to <code>return user;</code> rather than <code>return &amp;user;</code>. But that won't always be possible. Data often has to live beyond the rigid boundaries of function scopes. For that we have the third memory area, the heap, the topic of the next part.</p>
+		<p>Zig is getting increasingly good at turning these runtime errors into compiler errors. The snippet that I originally used no longer compiles under Zig 0.16; hence the example was updated (and isn't as good). There are a few ways to solve the actual bug, but the simplest in this case is to have the caller supply the buffer (<code>[]u8</code>) to write into. Then it becomes the caller's responsibility to ensure the buffer outlives the formatted value. But that won't always be possible. Data often has to live beyond the rigid boundaries of function scopes. For that we have the third memory area, the heap, the topic of the next part.</p>
 
 		<p>Before diving into the heap, know that we'll see one final example of dangling pointers before the end of this guide. At that point, we'll have covered enough of the language to give a sightly less convoluted example. I want to revisit this topic because, for developers coming from garbage collected languages, this is likely to cause bugs and frustration. It is something you <strong>will</strong> get a handle on. It comes down to being aware of where and when data exists.</p>
 	</section>

@@ -13,7 +13,7 @@ permalink: "/learning_zig/language_overview_2/"
 </div>
 
 <article>
-	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2025 and largely kept up to date. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
+	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2026 and largely kept up to date with Zig 0.16. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
 
 
 	<h1 tabindex=-1 id=language_overview><a href=#language_overview aria-hidden=true>Language Overview - Part 2</a></h1>
@@ -386,11 +386,12 @@ while (rows.next()) |row| {
 		<p>One place where this is commonly done is when creating an array to be filled by some function:</p>
 
 {% highlight zig %}
-var pseudo_uuid: [16]u8 = undefined;
-std.crypto.random.bytes(&pseudo_uuid);
+var buf: [20]u8 = undefined;
+const msg = try std.fmt.bufPrint(&buf, "over: {d}!\n", .{power_level});
+std.debug.print("{s}\n" , .{msg});
 {% endhighlight %}
 
-		<p>The above still creates an array of 16 bytes, but leaves the memory uninitialized.</p>
+		<p>The above still creates an array of 20 bytes, but leaves the memory uninitialized.</p>
 	</section>
 
 	<section>

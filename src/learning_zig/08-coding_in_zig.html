@@ -13,7 +13,7 @@ permalink: "/learning_zig/coding_in_zig/"
 </div>
 
 <article>
-	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2025 and largely kept up to date. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
+	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2026 and largely kept up to date with Zig 0.16. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
 	<h1 tabindex=-1 id=coding><a href=#coding aria-hidden=true>Coding In Zig</a></h1>
 	<p>With much of the language now covered, we're going to wrap things up by revisiting a few topics and looking at a few more practical aspects of using Zig. In doing so, we're going to introduce more of the standard library and present less trivial code snippets. </p>
 
@@ -128,28 +128,31 @@ const User = struct {
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub fn main() !void {
-  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-  const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+  // This `std.process.Init` parameter is something we haven't seen before. It's
+  // called "juicy main" and was added in Zig 0.16. It's completely opt-in, but
+  // it removes some setup boilerplate that most programs need. I'm using it
+  // here to get a default `io` instance (and, while we're at it, an allocator).
+  // `Io` is outside the scope of this tutorial.
+  const io = init.io;
+  const allocator = init.gpa;
 
   var lookup = std.StringHashMap(User).init(allocator);
   defer lookup.deinit();
 
   var buf: [30]u8 = undefined;
-  var stdin = std.fs.File.stdin().reader(&buf);
+  var stdin = std.Io.File.stdin().reader(io, &buf);
 
-  var stdout = std.fs.File.stdout().writer(&.{});
+  var stdout = std.Io.File.stdout().writer(io, &.{});
 
   var i: i32 = 0;
   while (true) : (i += 1) {
     try stdout.interface.print("Please enter a name: ", .{});
-    var name = try stdin.interface.takeDelimiterExclusive('\n');
-    stdin.interface.toss(1); // discard the delimiter
-
+    var name = try stdin.interface.takeDelimiter('\n') orelse break;
     if (builtin.os.tag == .windows) {
       // In Windows lines are terminated by \r\n.
       // We need to strip out the \r
-      name = @constCast(std.mem.trimRight(u8, name, "\r"));
+      name = @constCast(std.mem.trimEnd(u8, name, "\r"));
     }
     if (name.len == 0) {
       break;
@@ -242,9 +245,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
-pub fn main() !void {
-  var gpa: std.heap.DebugAllocator(.{}) = .init;
-  const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+  const io = init.io;
+  const allocator = init.gpa;
 
   var arr: std.ArrayList(User) = .empty;
   defer {
@@ -255,19 +258,19 @@ pub fn main() !void {
   }
 
   var buf: [30]u8 = undefined;
-  var stdin = std.fs.File.stdin().reader(&buf);
-  var stdout = std.fs.File.stdout().writer(&.{});
+  var stdin = std.Io.File.stdin().reader(io, &buf);
+  var stdout = std.Io.File.stdout().writer(io, &.{});
 
   var i: i32 = 0;
   while (true) : (i += 1) {
     try stdout.interface.print("Please enter a name: ", .{});
-    var name = try stdin.interface.takeDelimiterExclusive('\n');
+    var name = try stdin.interface.takeDelimiter('\n') orelse break;
     stdin.interface.toss(1); // discard the delimiter
 
     if (builtin.os.tag == .windows) {
       // In Windows lines are terminated by \r\n.
       // We need to strip out the \r
-      name = std.mem.trimRight(u8, name, "\r");
+      name = @constCast(std.mem.trimEnd(u8, name, "\r"));
     }
     if (name.len == 0) {
       break;
@@ -341,12 +344,26 @@ try l.info("server started", true);
 {% highlight zig %}
 pub fn main() !void {
     var l = Logger{.level = .info};
-    var writer = std.fs.File.stdout().writer(&.{});
-    try l.info("sever started", &writer.interface);
+
+    const w = LineLimiter{.max = 80};
+    try l.info("a" ** 85, &w);
 }
+
+const LineLimiter = struct {
+    max: usize,
+
+    pub fn writeAll(self: *const LineLimiter, data: []const u8) !void {
+        var remaining = data;
+        while (remaining.len > 0) {
+            const len = @min(self.max, remaining.len);
+            std.debug.print("{s}\n", .{remaining[0..len]});
+            remaining = remaining[len..];
+        }
+    }
+};
 {% endhighlight %}
 
-		<p>Note that, in this case, the <code>out</code> parameter of <code>info</code> should probably be an <code>*std.Io.Writer</code>. But, prior to Zig 0.15 - which redesigned the Writer and Reader interfaces - the use of anytype for a generic writer was common. And while this specific usage will likely be phased out, you'll no doubt see and use <code>anytype</code> in much the same way; maybe just not to capture different writers.</p>
+		<p>Note that, in this case, LineLimiter should probably implement the <code>*std.Io.Writer</code> interface to be more generally usable. But, prior to Zig 0.15 - which redesigned the Writer and Reader interfaces - the use of anytype for a generic writer was common. And while this specific usage will likely be phased out, you'll no doubt see and use <code>anytype</code> in much the same way; maybe just not to capture different writers.</p>
 	</section>
 
 	<section>
@@ -376,7 +393,7 @@ pub const User = struct {
 
 			<p>A default user can be created by calling <code>userFactory(.{})</code>, or we can override specific fields with <code>userFactory(.{.id = 100, .active = false})</code>. It's a small pattern, but I really like it. It's also a nice baby step into the world of metaprogramming.</p>
 
-			<p>More commonly <code>@TypeOf</code> is paired with <code>@typeInfo</code>, which returns an <code>std.builtin.Type</code>. This is a powerful tagged union that fully describes a type. The <code>std.json.stringify</code> function recursively uses this on the provided <code>value</code> to figure out how to serialize it.</p>
+			<p>More commonly <code>@TypeOf</code> is paired with <code>@typeInfo</code>, which returns an <code>std.builtin.Type</code>. This is a powerful tagged union that fully describes a type. The <code>std.json.Stringify.value</code> function recursively uses this on the provided <code>value</code> to figure out how to serialize it.</p>
 		</section>
 
 	<section>

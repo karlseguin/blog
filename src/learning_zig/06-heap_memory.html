@@ -13,7 +13,7 @@ permalink: "/learning_zig/heap_memory/"
 </div>
 
 <article>
-	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2025 and largely kept up to date. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
+	<aside id=uptodate><p>While this series was written in 2023, it is still relevant in 2026 and largely kept up to date with Zig 0.16. If you find an issue, you can report it <a href="https://github.com/karlseguin/blog">on github</a>.</p></aside>
 
 	<h1 tabindex=-1 id=heap_memory><a href=#heap_memory aria-hidden=true>Heap Memory and Allocators</a></h1>
 
@@ -50,10 +50,10 @@ pub fn main() !void {
 }
 
 fn getRandomCount() !u8 {
-	var seed: u64 = undefined;
-	try std.posix.getrandom(std.mem.asBytes(&seed));
-	var random = std.Random.DefaultPrng.init(seed);
-	return random.random().uintAtMost(u8, 5) + 5;
+	// TODO: use a proper seed, not 0.
+	var prng = std.Random.DefaultPrng.init(0);
+	const random = prng.random();
+	return random.uintAtMost(u8, 5) + 5;
 }
 {% endhighlight %}
 
@@ -213,7 +213,7 @@ pub const User = struct {
 
 		<p>The <code>create</code> method takes a single parameter, the type (<code>T</code>). It returns a pointer to that type or an error, i.e. <code>!*T</code>. Maybe you're wondering what would happen if we created our <code>user</code> but didn't set the <code>id</code> and/or <code>power</code>. This is like setting those fields to <code>undefined</code> and the behavior is, well, undefined.</p>
 
-		<p>When we explored dangling pointers, we had a function incorrectly return the address of the local user:</p>
+		<p>In chapter 5 we talked about dangling pointers. The original example, which has since been removed, looked like:</p>
 
 {% highlight zig %}
 pub const User = struct {
@@ -228,7 +228,7 @@ pub const User = struct {
 };
 {% endhighlight %}
 
-		<p>In this case, it might have made more sense to return a <code>User</code>. But sometimes you <em>will</em> want a function to return a pointer to something it creates. You'll do this when you want a lifetime to be free from the call stack's rigidity. To solve our dangling pointer above, we could have used <code>create</code>:</p>
+		<p>This was replaced because, as-of Zig 0.16, the compiler catches the mistake. Now, in this case, it probably made sense to return a <code>User</code> as opposed to a pointer to <code>User</code> (i.e. <code>*User</code>). But sometimes you <em>will</em> want a function to return a pointer to something it creates. You'll do this when you want a lifetime to be free from the call stack's rigidity. To solve our dangling pointer above, we could have used <code>create</code>:</p>
 
 {% highlight zig %}
 // our return type changed, since init can now fail
@@ -633,31 +633,33 @@ pub fn main() !void {
 
 {% highlight zig %}
 const std = @import("std");
-
 pub fn main() !void {
-	// Zig implementation of Write (and Reader) changed drastically in 0.15.
-	// The new approach has a number of benefits, but simplicity isn't one of them.
-	// This series, including this example, has been updated accordingly.
+    // Zig implementation of Write (and Reader) started to change drastically in
+    // 0.15 and even more in 0.16.
+    // The new approach has a number of benefits, but simplicity isn't one of them.
 
-	// This is our File
-	const out = std.fs.File.stdout();
+    var gpa = std.heap.DebugAllocator(.{}){};
+    const allocator = gpa.allocator();
 
-	// This is the write for our File. It takes an optional (`[]u8`) for buffering.
-	// We pass an empty `[]u8` and thus this won't buffer (altough, in this case
-	// where our File is stdout, the OS would likely due its own buffering anyways)
-	var writer = out.writer(&.{});
+    var buf = std.Io.Writer.Allocating.init(allocator);
+    defer buf.deinit();
 
-	try std.json.stringify(.{
-		.this_is = "an anonymous struct",
-		.above = true,
-		.last_param = "are options",
-	}, .{.whitespace = .indent_2}, &writer.interface);
+    try dump(&buf.writer);
+    std.debug.print("{s}\n", .{buf.written()});
+}
 
-	// &writer.interface above returns an *std.Io.Writer.
+fn dump(writer: *std.Io.Writer) !void {
+    try std.json.Stringify.value(.{
+        .this_is = "an anonymous struct",
+        .above = true,
+        .last_param = "are options",
+    }, .{.whitespace = .indent_2}, writer);
 }
 {% endhighlight %}
 
 		<aside>While allocators are often given as the first parameter of a function, writers are normally the last. <span style="font-family: monospace;">ಠ_ಠ</span></aside>
+
+		<p>This example still uses an <code>Allocator</code>, but that's just so you can copy+paste+run and get immediately feedback. The <code>writer</code> parameter to <code>dump</code> could be backed by a file or something else.</p>
 
 		<p>The goal isn't to eliminate all dynamic allocations. It wouldn't work, as these alternatives only make sense in specific cases. But now you have many options at your disposal. From stack frames to a general purpose allocator, and all the things in between, like static buffers, streaming writers and specialized allocators.</p>
 	</section>
