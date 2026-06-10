@@ -265,7 +265,6 @@ pub fn main(init: std.process.Init) !void {
   while (true) : (i += 1) {
     try stdout.interface.print("Please enter a name: ", .{});
     var name = try stdin.interface.takeDelimiter('\n') orelse break;
-    stdin.interface.toss(1); // discard the delimiter
 
     if (builtin.os.tag == .windows) {
       // In Windows lines are terminated by \r\n.
