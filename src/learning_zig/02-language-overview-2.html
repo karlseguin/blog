@@ -173,7 +173,7 @@ var escape_count: usize = 0;
 
 		<p>We added an explicit block around our temporary <code>i</code> variable and <code>while</code> loop. This narrows the scope of <code>i</code>. Blocks like this can be useful, though in this case it's probably overkill. Still, the above example is as close to a traditional <code>for(init; compare; step)</code> loop that Zig has.</p>
 
-		<p>A <code>while</code> can have an <code>else</code> clause, which is executed when the condition is false. It also accepts a statement to execute after each iteration. There can be multiple statements speparated with <code>;</code>. This feature was commonly used prior to <code>for</code> supporting multiple sequences. The above can be written as:</p>
+		<p>A <code>while</code> can have an <code>else</code> clause, which is executed when the condition is false. It also accepts a statement to execute after each iteration. There can be multiple statements seperated with <code>;</code>. This feature was commonly used prior to <code>for</code> supporting multiple sequences. The above can be written as:</p>
 
 {% highlight zig %}
 var i: usize = 0;
