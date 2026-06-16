@@ -173,7 +173,7 @@ var escape_count: usize = 0;
 
 		<p>We added an explicit block around our temporary <code>i</code> variable and <code>while</code> loop. This narrows the scope of <code>i</code>. Blocks like this can be useful, though in this case it's probably overkill. Still, the above example is as close to a traditional <code>for(init; compare; step)</code> loop that Zig has.</p>
 
-		<p>A <code>while</code> can have an <code>else</code> clause, which is executed when the condition is false. It also accepts a statement to execute after each iteration. There can be multiple statements speparated with <code>;</code>. This feature was commonly used prior to <code>for</code> supporting multiple sequences. The above can be written as:</p>
+		<p>A <code>while</code> can have an <code>else</code> clause, which is executed when the condition is false. It also accepts a statement to execute after each iteration. There can be multiple statements seperated with <code>;</code>. This feature was commonly used prior to <code>for</code> supporting multiple sequences. The above can be written as:</p>
 
 {% highlight zig %}
 var i: usize = 0;
@@ -428,7 +428,7 @@ pub fn main() OpenError!void {
 }
 {% endhighlight %}
 
-		<p>This is called an error union type and it indicates that our function can return either an <code>OpenError</code> error or a <code>void</code> (aka, nothing). So far we've been quite explicit: we created a error set for the possible errors our function can return, and used that error set in the error union return type of our function. But, when it comes to errors, Zig has few neat tricks up its sleeve. First, rather than specifying an error union as <code>error set!return type</code> we can let Zig infer the error set by using: <code>!return type</code>. So we could, and probably would, define our <code>main</code> as:</p>
+		<p>This is called an error union type and it indicates that our function can return either an <code>OpenError</code> error or a <code>void</code> (aka, nothing). So far we've been quite explicit: we created an error set for the possible errors our function can return, and used that error set in the error union return type of our function. But, when it comes to errors, Zig has few neat tricks up its sleeve. First, rather than specifying an error union as <code>error set!return type</code> we can let Zig infer the error set by using: <code>!return type</code>. So we could, and probably would, define our <code>main</code> as:</p>
 
 {% highlight zig %}
 pub fn main() !void
