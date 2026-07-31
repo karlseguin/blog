@@ -1,0 +1,65 @@
+---
+layout: post
+date: 2026-07-30
+title: "std.Io.Writer.Allocating ate all my memory"
+tags: [zig]
+---
+
+<p>If I told you that the following prints <strong>1665</strong>:</p>
+
+{% highlight zig %}
+var b: std.ArrayList(u8) = try .initCapacity(init.gpa, 1024);
+try b.appendSlice(init.gpa, "a" ** 1025);
+std.debug.print("{d}\n", .{b.capacity});
+{% endhighlight %}
+
+<p>Would you be able to guess what this prints?</p>
+
+{% highlight zig %}
+var w: Io.Writer.Allocating = try .initCapacity(init.gpa, 1024);
+try w.writer.writeAll("a" ** 1025);
+std.debug.print("{d}\n", .{w.writer.buffer.len});
+{% endhighlight %}
+
+<p>Like me, you might be surprised to see <strong>3204</strong>. What's even weirder is that if you split the write, you get a more reasonable <strong>1668</strong>:</p>
+
+{% highlight zig %}
+var w: Io.Writer.Allocating = try .initCapacity(init.gpa, 1024);
+try w.writer.writeAll("a" ** 1024);
+try w.writer.writeAll("a");
+std.debug.print("{d}\n", .{w.writer.buffer.len});
+{% endhighlight %}
+
+<p>What's going on here? It appears to be a bug in the <code>drain</code> implementation of <code>std.Io.Writer.Allocating</code>. <code>drain</code> is the one method a <code>Writer</code> has to implement, and, besides <code>self</code>, it takes two parameters:</p>
+
+{% highlight zig %}
+fn drain(w: *Writer, data: []const []const u8, splat: usize) Error!usiz
+{% endhighlight %}
+
+<p>It takes a list of values to write (to support vectored I/O) and a "splat" count which is the number of times the last value in <code>data</code> should be written. <code>splat</code> is particularly useful, I believe, for compression. Here's a relevant line from <code>zstd/Decompress.zig</code>:
+
+{% highlight zig %}
+try w.splatByteAll(d.literal_streams.one[0], len);
+{% endhighlight %}
+
+<p>Where <code>writer.splatByteAll</code> finds its way to calling <code>drain</code>. So we have some idea of <code>drain</code>'s parameters, but why does it grow so much. Here's a simplified version of <code>Allocating</code>'s <code>drain</code> function:</p>
+
+{% highlight zig %}
+fn drain(self: *Allocating, data: []const []const u8, splat: usize) !usize {
+  const pattern = data[data.len - 1];
+  const splat_len = pattern.len * splat;
+  const start_len = self.writer.end;
+
+  for (data) |bytes| {
+    try self.ensureUnusedCapacity(bytes.len + splat_len + 1);
+    @memcpy(self.writer.buffer[self.writer.end..][0..bytes.len], bytes);
+    self.writer.end += bytes.len;
+  }
+
+  // ...
+}
+{% endhighlight %}
+
+<p>Can you spot the issue? I couldn't, but Claude could. For the common case where <code>data.len == 1</code> and <code>splat == 1</code>, we're actually reserving 2x the memory: once for the data and once for <code>splat_len</code> which is the data again (what the code calls the <code>pattern</code>). If we called <code>drain(&.{"hello", " "}, 100)</code>, the code would need to reserve space 5 bytes for <code>"hello"</code> and 100 bytes for the <code>pattern</code> (<code>" ".len * 100</code>). But the implementation reserves the splat space for every value, including the pattern itself.</p>
+
+<p><code>ArrayList</code> doesn't suffer from this: it has no splat. If your use-case is simple, if you're just appending bytes, you might want to stick with it.</p>
