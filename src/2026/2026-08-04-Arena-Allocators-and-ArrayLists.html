@@ -1,7 +1,7 @@
 ---
 layout: post
-date: 2026-08-01
-#title: "ArenaAllocators don't play nicely with ArrayLists"
+date: 2026-08-04
+title: "ArenaAllocators don't play nicely with ArrayLists"
 tags: [zig]
 ---
 <p>A while ago, we looked at ArenaAllocators and <a href=/ArenaAllocator-free-and-Nested-Arenas/>why you should view their free as a noop.</a> The short version is that, in order for a <code>free</code> or <code>destroy</code> to actually return memory to the arena, two conditions need to be met:</p>
@@ -22,7 +22,7 @@ arena.free(a);
 
 <p>We can be certain that the memory for <code>b</code> will be returned to the arena, but can't say what will happen to <code>a</code>'s memory. Why? <code>b</code> is freed because it was the last allocation and, by definition, had to have come from the arena's current node. After <code>b</code> is freed, <code>a</code> satisfies the first requirement: it becomes the last allocated memory. However, we don't know whether the allocation of <code>b</code> caused a new node to be created; the arena's current node may or may not be the one <code>a</code> came from.</p>
 
-<p>If the node thing seems confusing, go read the original post, or just forget about it, because there's a common situation where the first simpler rule doesn't hold: <code>ArrayList</code> (or <code>Writer.Allocating</code>) growth. When data is appended to an <code>ArrayList</code> it will first try to remap the existing memory (i.e. grow-in-place). But if that fails, it'll allocate a new larger chunk, copy the memory over, and free the previous allocation. See the issue? Here's the code from <code>array_list.zig</code>:</p>
+<p>If the node thing seems confusing, go read the original post, or just forget about it, because there's a common situation where the first simpler rule isn't met: <code>ArrayList</code> (or <code>Writer.Allocating</code>) growth. When data is appended to an <code>ArrayList</code> it will first try to remap the existing memory (i.e. grow-in-place). But if that fails, it'll allocate a new larger chunk, copy the memory over, and free the previous allocation. See the issue? Here's the code from <code>array_list.zig</code>:</p>
 
 {% highlight zig %}
 const new_memory = try gpa.alignedAlloc(T, alignment, new_capacity);
@@ -30,8 +30,8 @@ const new_memory = try gpa.alignedAlloc(T, alignment, new_capacity);
 gpa.free(old_memory);
 {% endhighlight %}
 
-<p>Even if you aren't interlacing other allocations with your <code>ArrayList</code> growth, the allocate + copy + free guarantees that <code>old_memory</code> isn't the last allocation (the last allocation is <code>new_memory</code>).</p>
+<p>Even if you aren't interleaving other allocations with your <code>ArrayList</code> growth, the allocate + copy + free guarantees that <code>old_memory</code> isn't the last allocation (the last allocation is <code>new_memory</code>).</p>
 
-<p>Is there a solution? Not really, but there are two things you can do (or not, depending on your use-case). First, size your <code>ArrayList</code> (e.g. with <code>initCapacity</code>, <code>ensureTotalCapacity</code> or <code>ensureUnusedCapacity</code>). But, with an arena, the worst case is ~3x the total memory. The other thing is to avoid interleaving other allocations with your appends/writes. If you can do that, you'll hit the <code>remap</code> branch much more often and circumvent this issue. Both of those are good to keep in mind regardless of what type of <code>Allocator</code> you're using, but with an <code>ArenaAllocator</code> the worst case is ~3x the memory.</p>
+<p>Is there a solution? Not really, but there are two things you can do. First, size your <code>ArrayList</code> (e.g. with <code>initCapacity</code> or <code>ensureTotalCapacityPrecise</code>). Second, avoid interleaving other allocations with your appends/writes. If you can do that, you'll hit the <code>remap</code> branch much more often and circumvent this issue. Both of those are good to keep in mind regardless of what type of <code>Allocator</code> you're using, but with an <code>ArenaAllocator</code> the worst case is ~3x the memory.</p>
 
 <p>I know this is obvious, but I never actually thought about it. I'm probably not the only one.</p>
