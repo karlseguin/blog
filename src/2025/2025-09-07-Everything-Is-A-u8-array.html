@@ -187,15 +187,15 @@ pub fn main() !void {
 {% highlight text %}
 name.ptr => x, x, x, x, x, x, x, x
 name.len => 4, 0, 0, 0, 0, 0, 0, 0,
-name.id  => 41, 35, 0, 0, 0, 0, 0, 0
+user.id  => 41, 35, 0, 0, 0, 0, 0, 0
 {% endhighlight %}
 
-<p>And when we make <code>tea</code> from <code>&name.id</code>:</p>
+<p>And when we make <code>tea</code> from <code>&user.id</code>:</p>
 
 {% highlight text %}
 &nbsp;      name.ptr => x, x, x, x, x, x, x, x
        name.len => 4, 0, 0, 0, 0, 0, 0, 0,
-tea => name.id  => 41, 35, 0, 0, 0, 0, 0, 0
+tea => user.id  => 41, 35, 0, 0, 0, 0, 0, 0
                    more memory, but not ours to play with
 {% endhighlight %}
 
@@ -270,7 +270,7 @@ pub const UserPool = struct {
     return self.allocator.create(User);
   }
 
-  pub fn destroy(self; *UserPool, user: *User) void {
+  pub fn destroy(self: *UserPool, user: *User) void {
     self.allocator.destroy(user);
   }
 };
